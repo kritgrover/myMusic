@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
-import '../services/audio_player_service.dart';
+import '../services/player_state_service.dart';
 
 class DownloadsScreen extends StatefulWidget {
-  const DownloadsScreen({super.key});
+  final PlayerStateService playerStateService;
+  
+  const DownloadsScreen({super.key, required this.playerStateService});
 
   @override
   State<DownloadsScreen> createState() => _DownloadsScreenState();
@@ -11,7 +13,6 @@ class DownloadsScreen extends StatefulWidget {
 
 class _DownloadsScreenState extends State<DownloadsScreen> {
   final ApiService _apiService = ApiService();
-  final AudioPlayerService _playerService = AudioPlayerService();
   List<DownloadedFile> _downloads = [];
   bool _isLoading = true;
 
@@ -46,12 +47,7 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
 
   Future<void> _playFile(DownloadedFile file) async {
     try {
-      await _playerService.playFromBackend(file.filename);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Playing: ${file.filename}')),
-        );
-      }
+      await widget.playerStateService.playTrack(file.filename, trackName: file.filename);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -108,11 +104,6 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
     );
   }
 
-  @override
-  void dispose() {
-    _playerService.dispose();
-    super.dispose();
-  }
 }
 
 

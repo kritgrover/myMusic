@@ -9,6 +9,7 @@ class AudioPlayerService {
   bool _isPlaying = false;
   Duration _duration = Duration.zero;
   Duration _position = Duration.zero;
+  Duration? _pausedAt; // Position when paused
   
   AudioPlayer get player => _audioPlayer;
   
@@ -66,19 +67,34 @@ class AudioPlayerService {
   }
   
   Future<void> pause() async {
-    await _audioPlayer.pause();
+    if (_audioPlayer.state == PlayerState.playing) {
+      _pausedAt = _position;
+      await _audioPlayer.pause();
+    }
   }
   
   Future<void> resume() async {
-    await _audioPlayer.resume();
+    if (_audioPlayer.state == PlayerState.paused) {
+      // Resume from paused state
+      await _audioPlayer.resume();
+    } else if (_audioPlayer.state == PlayerState.stopped && _currentUrl != null) {
+      // If stopped, restart from last position or beginning
+      final resumePosition = _pausedAt ?? Duration.zero;
+      await _audioPlayer.play(UrlSource(_currentUrl!), position: resumePosition);
+    }
   }
   
   Future<void> stop() async {
     await _audioPlayer.stop();
     _currentUrl = null;
+    _pausedAt = null;
   }
   
   Future<void> seek(Duration position) async {
+    // Only seek if we have a valid source
+    if (_currentUrl == null) return;
+    
+    // Seek to the new position - this should maintain playing state automatically
     await _audioPlayer.seek(position);
   }
   

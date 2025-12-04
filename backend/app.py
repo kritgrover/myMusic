@@ -1,6 +1,6 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 from typing import List, Optional
 import os
@@ -18,7 +18,12 @@ app.add_middleware(
 )
 
 # Initialize download service
-download_service = DownloadService(output_dir="downloads")
+# Use absolute path for downloads directory
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DOWNLOADS_DIR = os.path.join(BASE_DIR, "downloads")
+os.makedirs(DOWNLOADS_DIR, exist_ok=True)
+
+download_service = DownloadService(output_dir=DOWNLOADS_DIR)
 
 
 class SearchRequest(BaseModel):
@@ -99,29 +104,35 @@ def list_downloads():
     try:
         downloads_dir = download_service.output_dir
         files = []
-        for filename in os.listdir(downloads_dir):
-            if filename.lower().endswith(('.mp3', '.m4a')):
-                file_path = os.path.join(downloads_dir, filename)
-                files.append({
-                    "filename": filename,
-                    "file_path": file_path,
-                    "size": os.path.getsize(file_path)
-                })
+        if os.path.exists(downloads_dir):
+            for filename in os.listdir(downloads_dir):
+                if filename.lower().endswith(('.mp3', '.m4a')):
+                    file_path = os.path.join(downloads_dir, filename)
+                    files.append({
+                        "filename": filename,
+                        "file_path": file_path,
+                        "size": os.path.getsize(file_path)
+                    })
         return {"files": files}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/downloads/{filename}")
-def get_download_file(filename: str):
-    """Serve download file for streaming"""
+def get_download_file(filename: str, request: Request):
+    """Serve download file for streaming with Range request support"""
     file_path = os.path.join(download_service.output_dir, filename)
     if not os.path.isfile(file_path):
         raise HTTPException(status_code=404, detail="File not found")
+    
+    # FileResponse automatically handles Range requests
     return FileResponse(
         file_path,
         media_type='audio/mpeg' if filename.endswith('.mp3') else 'audio/mp4',
-        filename=filename
+        filename=filename,
+        headers={
+            "Accept-Ranges": "bytes",
+        }
     )
 
 
