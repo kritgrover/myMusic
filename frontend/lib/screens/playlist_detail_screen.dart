@@ -55,7 +55,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
   }
 
   Future<void> _addSongs() async {
-    final result = await Navigator.of(context).push(
+    await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (context) => AddToPlaylistScreen(
           playlistId: _playlist.id,
@@ -64,9 +64,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
       ),
     );
 
-    if (result == true) {
-      await _loadPlaylist();
-    }
+    await _loadPlaylist();
   }
 
   Future<void> _removeTrack(PlaylistTrack track) async {
@@ -221,4 +219,3 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
     );
   }
 }
-

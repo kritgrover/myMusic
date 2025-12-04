@@ -17,7 +17,7 @@ class Playlist {
     return {
       'id': id,
       'name': name,
-      'tracks': tracks.map((track) => track.toJson()).toList(),
+      'songs': tracks.map((track) => track.toJson()).toList(),
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt.toIso8601String(),
     };
@@ -27,7 +27,7 @@ class Playlist {
     return Playlist(
       id: json['id'] ?? '',
       name: json['name'] ?? '',
-      tracks: (json['tracks'] as List<dynamic>?)
+      tracks: ((json['songs'] ?? json['tracks']) as List<dynamic>?)
               ?.map((track) => PlaylistTrack.fromJson(track))
               .toList() ??
           [],
@@ -122,4 +122,3 @@ class PlaylistTrack {
     );
   }
 }
-

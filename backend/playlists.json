@@ -1,0 +1,32 @@
+{
+    "e0b17257-d6d9-4970-93de-f8a983a3cf59": {
+        "id": "e0b17257-d6d9-4970-93de-f8a983a3cf59",
+        "name": "metal",
+        "songs": [
+            {
+                "id": "Metallica  Creeping Death HD - MegaHermansen.m4a",
+                "title": "Metallica  Creeping Death HD - MegaHermansen.m4a",
+                "artist": null,
+                "album": null,
+                "filename": "Metallica  Creeping Death HD - MegaHermansen.m4a",
+                "file_path": "",
+                "url": null,
+                "thumbnail": null,
+                "duration": null
+            },
+            {
+                "id": "Metallica Nothing Else Matters Official Music Video - Metallica.m4a",
+                "title": "Metallica Nothing Else Matters Official Music Video - Metallica.m4a",
+                "artist": null,
+                "album": null,
+                "filename": "Metallica Nothing Else Matters Official Music Video - Metallica.m4a",
+                "file_path": "",
+                "url": null,
+                "thumbnail": null,
+                "duration": null
+            }
+        ],
+        "createdAt": "2025-12-04T17:50:08.502903",
+        "updatedAt": "2025-12-04T17:50:14.676451"
+    }
+}

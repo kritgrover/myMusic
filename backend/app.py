@@ -2,8 +2,11 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Optional, Dict
 import os
+import json
+import uuid
+from datetime import datetime
 from download_service import DownloadService
 
 app = FastAPI(title="Music Download API")
@@ -21,6 +24,7 @@ app.add_middleware(
 # Use absolute path for downloads directory
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DOWNLOADS_DIR = os.path.join(BASE_DIR, "downloads")
+PLAYLISTS_FILE = os.path.join(BASE_DIR, "playlists.json")
 os.makedirs(DOWNLOADS_DIR, exist_ok=True)
 
 download_service = DownloadService(output_dir=DOWNLOADS_DIR)
@@ -49,6 +53,53 @@ class VideoInfo(BaseModel):
     duration: float
     url: str
     thumbnail: str
+
+class Song(BaseModel):
+    id: str
+    title: str
+    artist: Optional[str] = ""
+    album: Optional[str] = ""
+    filename: str
+    file_path: Optional[str] = ""
+    url: Optional[str] = ""
+    thumbnail: Optional[str] = ""
+    duration: Optional[float] = 0.0
+
+class Playlist(BaseModel):
+    id: str
+    name: str
+    songs: List[Song] = []
+    createdAt: str
+    updatedAt: str
+
+class CreatePlaylistRequest(BaseModel):
+    name: str
+
+class AddSongRequest(BaseModel):
+    id: str
+    title: str
+    artist: Optional[str] = ""
+    album: Optional[str] = ""
+    filename: str
+    file_path: Optional[str] = ""
+    url: Optional[str] = ""
+    thumbnail: Optional[str] = ""
+    duration: Optional[float] = 0.0
+
+
+# Helper functions for playlists
+def load_playlists() -> Dict:
+    if os.path.exists(PLAYLISTS_FILE):
+        try:
+            with open(PLAYLISTS_FILE, 'r') as f:
+                return json.load(f)
+        except:
+            return {}
+    return {}
+
+def save_playlists(playlists_data: Dict):
+    with open(PLAYLISTS_FILE, 'w') as f:
+        json.dump(playlists_data, f, indent=4)
 
 
 @app.get("/")
@@ -136,7 +187,90 @@ def get_download_file(filename: str, request: Request):
     )
 
 
+# Playlist Endpoints
+
+@app.get("/playlists", response_model=Dict[str, Playlist])
+def get_playlists():
+    """Get all playlists"""
+    return load_playlists()
+
+
+@app.post("/playlists", response_model=Playlist)
+def create_playlist(request: CreatePlaylistRequest):
+    """Create a new playlist"""
+    playlists = load_playlists()
+    playlist_id = str(uuid.uuid4())
+    now = datetime.now().isoformat()
+    new_playlist = {
+        "id": playlist_id,
+        "name": request.name,
+        "songs": [],
+        "createdAt": now,
+        "updatedAt": now
+    }
+    playlists[playlist_id] = new_playlist
+    save_playlists(playlists)
+    return new_playlist
+
+
+@app.get("/playlists/{playlist_id}", response_model=Playlist)
+def get_playlist(playlist_id: str):
+    """Get a specific playlist"""
+    playlists = load_playlists()
+    if playlist_id not in playlists:
+        raise HTTPException(status_code=404, detail="Playlist not found")
+    return playlists[playlist_id]
+
+
+@app.delete("/playlists/{playlist_id}")
+def delete_playlist(playlist_id: str):
+    """Delete a playlist"""
+    playlists = load_playlists()
+    if playlist_id in playlists:
+        del playlists[playlist_id]
+        save_playlists(playlists)
+        return {"success": True}
+    raise HTTPException(status_code=404, detail="Playlist not found")
+
+
+@app.post("/playlists/{playlist_id}/songs", response_model=Playlist)
+def add_song_to_playlist(playlist_id: str, song: AddSongRequest):
+    """Add a song to a playlist"""
+    playlists = load_playlists()
+    if playlist_id not in playlists:
+        raise HTTPException(status_code=404, detail="Playlist not found")
+    
+    # Check if song already exists in playlist (by filename)
+    for existing_song in playlists[playlist_id]["songs"]:
+        if existing_song["filename"] == song.filename:
+             return playlists[playlist_id] # Already exists, just return
+
+    playlists[playlist_id]["songs"].append(song.model_dump())
+    playlists[playlist_id]["updatedAt"] = datetime.now().isoformat()
+    save_playlists(playlists)
+    return playlists[playlist_id]
+
+
+@app.delete("/playlists/{playlist_id}/songs/{song_id}", response_model=Playlist)
+def remove_song_from_playlist(playlist_id: str, song_id: str):
+    """Remove a song from a playlist"""
+    playlists = load_playlists()
+    if playlist_id not in playlists:
+        raise HTTPException(status_code=404, detail="Playlist not found")
+    
+    initial_count = len(playlists[playlist_id]["songs"])
+    playlists[playlist_id]["songs"] = [
+        s for s in playlists[playlist_id]["songs"] 
+        if s["id"] != song_id
+    ]
+    
+    if len(playlists[playlist_id]["songs"]) != initial_count:
+        playlists[playlist_id]["updatedAt"] = datetime.now().isoformat()
+
+    save_playlists(playlists)
+    return playlists[playlist_id]
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
-

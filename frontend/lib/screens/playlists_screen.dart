@@ -85,16 +85,8 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
     );
 
     if (result != null && result.isNotEmpty) {
-      final newPlaylist = Playlist(
-        id: DateTime.now().millisecondsSinceEpoch.toString(),
-        name: result,
-        tracks: [],
-        createdAt: DateTime.now(),
-        updatedAt: DateTime.now(),
-      );
-
       try {
-        await _playlistService.savePlaylist(newPlaylist);
+        await _playlistService.createPlaylist(result);
         await _loadPlaylists();
         
         if (mounted) {
@@ -248,4 +240,3 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
     );
   }
 }
-

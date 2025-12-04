@@ -1,94 +1,88 @@
 import 'dart:convert';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:http/http.dart' as http;
+import '../config.dart';
 import '../models/playlist.dart';
 
 class PlaylistService {
-  static const String _playlistsKey = 'playlists';
+  final String baseUrl;
+
+  PlaylistService({String? baseUrl}) : baseUrl = baseUrl ?? AppConfig.apiBaseUrl;
 
   Future<List<Playlist>> getAllPlaylists() async {
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final playlistsJson = prefs.getString(_playlistsKey);
-      
-      if (playlistsJson == null) {
+      final response = await http.get(Uri.parse('$baseUrl/playlists'));
+
+      if (response.statusCode == 200) {
+        final Map<String, dynamic> data = jsonDecode(response.body);
+        // Backend returns Dict[str, Playlist]. Values are the playlists.
+        return data.values.map((json) => Playlist.fromJson(json)).toList();
+      } else {
         return [];
       }
-
-      final List<dynamic> playlistsList = jsonDecode(playlistsJson);
-      return playlistsList.map((json) => Playlist.fromJson(json)).toList();
     } catch (e) {
       return [];
     }
   }
 
   Future<Playlist?> getPlaylist(String id) async {
-    final playlists = await getAllPlaylists();
     try {
-      return playlists.firstWhere((p) => p.id == id);
+      final response = await http.get(Uri.parse('$baseUrl/playlists/$id'));
+      if (response.statusCode == 200) {
+        return Playlist.fromJson(jsonDecode(response.body));
+      }
+      return null;
     } catch (e) {
       return null;
     }
   }
 
-  Future<void> savePlaylist(Playlist playlist) async {
-    final playlists = await getAllPlaylists();
-    final index = playlists.indexWhere((p) => p.id == playlist.id);
-    
-    final updatedPlaylist = playlist.copyWith(
-      updatedAt: DateTime.now(),
+  Future<Playlist> createPlaylist(String name) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/playlists'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'name': name}),
     );
 
-    if (index >= 0) {
-      playlists[index] = updatedPlaylist;
+    if (response.statusCode == 200) {
+      return Playlist.fromJson(jsonDecode(response.body));
     } else {
-      playlists.add(updatedPlaylist);
+      throw Exception('Failed to create playlist: ${response.statusCode}');
     }
+  }
 
-    await _saveAllPlaylists(playlists);
+  // Deprecated: Use createPlaylist for new playlists.
+  // This is kept for compatibility if called with a new playlist object.
+  Future<void> savePlaylist(Playlist playlist) async {
+    // We assume this is only called for creation in the old flow
+    await createPlaylist(playlist.name);
   }
 
   Future<void> deletePlaylist(String id) async {
-    final playlists = await getAllPlaylists();
-    playlists.removeWhere((p) => p.id == id);
-    await _saveAllPlaylists(playlists);
+    final response = await http.delete(Uri.parse('$baseUrl/playlists/$id'));
+    if (response.statusCode != 200) {
+       throw Exception('Failed to delete playlist');
+    }
   }
 
   Future<void> addTrackToPlaylist(String playlistId, PlaylistTrack track) async {
-    final playlist = await getPlaylist(playlistId);
-    if (playlist == null) return;
-
-    final updatedTracks = List<PlaylistTrack>.from(playlist.tracks);
-    
-    // Check if track already exists
-    if (!updatedTracks.any((t) => t.id == track.id)) {
-      updatedTracks.add(track);
-    }
-
-    final updatedPlaylist = playlist.copyWith(
-      tracks: updatedTracks,
-      updatedAt: DateTime.now(),
+    final response = await http.post(
+      Uri.parse('$baseUrl/playlists/$playlistId/songs'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(track.toJson()),
     );
-
-    await savePlaylist(updatedPlaylist);
+    
+    if (response.statusCode != 200) {
+      throw Exception('Failed to add track: ${response.statusCode}');
+    }
   }
 
   Future<void> removeTrackFromPlaylist(String playlistId, String trackId) async {
-    final playlist = await getPlaylist(playlistId);
-    if (playlist == null) return;
-
-    final updatedTracks = playlist.tracks.where((t) => t.id != trackId).toList();
-    final updatedPlaylist = playlist.copyWith(
-      tracks: updatedTracks,
-      updatedAt: DateTime.now(),
+    final response = await http.delete(
+      Uri.parse('$baseUrl/playlists/$playlistId/songs/$trackId'),
     );
-
-    await savePlaylist(updatedPlaylist);
-  }
-
-  Future<void> _saveAllPlaylists(List<Playlist> playlists) async {
-    final prefs = await SharedPreferences.getInstance();
-    final playlistsJson = jsonEncode(playlists.map((p) => p.toJson()).toList());
-    await prefs.setString(_playlistsKey, playlistsJson);
+    
+    if (response.statusCode != 200) {
+      throw Exception('Failed to remove track: ${response.statusCode}');
+    }
   }
 }
-
