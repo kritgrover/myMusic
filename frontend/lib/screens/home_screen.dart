@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'search_screen.dart';
 import 'downloads_screen.dart';
+import 'playlists_screen.dart';
 import '../widgets/bottom_player.dart';
 import '../services/player_state_service.dart';
 
@@ -23,6 +24,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _screens.addAll([
       const SearchScreen(),
       DownloadsScreen(playerStateService: _playerStateService),
+      PlaylistsScreen(playerStateService: _playerStateService),
     ]);
   }
 
@@ -54,6 +56,11 @@ class _HomeScreenState extends State<HomeScreen> {
                 icon: Icon(Icons.download),
                 selectedIcon: Icon(Icons.download),
                 label: Text('Downloads'),
+              ),
+              NavigationRailDestination(
+                icon: Icon(Icons.playlist_play),
+                selectedIcon: Icon(Icons.playlist_play),
+                label: Text('Playlists'),
               ),
             ],
           ),
