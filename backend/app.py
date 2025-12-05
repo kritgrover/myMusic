@@ -233,6 +233,21 @@ def delete_playlist(playlist_id: str):
     raise HTTPException(status_code=404, detail="Playlist not found")
 
 
+class UpdatePlaylistRequest(BaseModel):
+    name: str
+
+@app.put("/playlists/{playlist_id}", response_model=Playlist)
+def update_playlist(playlist_id: str, request: UpdatePlaylistRequest):
+    """Update a playlist (e.g. rename)"""
+    playlists = load_playlists()
+    if playlist_id not in playlists:
+        raise HTTPException(status_code=404, detail="Playlist not found")
+    
+    playlists[playlist_id]["name"] = request.name
+    playlists[playlist_id]["updatedAt"] = datetime.now().isoformat()
+    save_playlists(playlists)
+    return playlists[playlist_id]
+
 @app.post("/playlists/{playlist_id}/songs", response_model=Playlist)
 def add_song_to_playlist(playlist_id: str, song: AddSongRequest):
     """Add a song to a playlist"""
@@ -240,10 +255,13 @@ def add_song_to_playlist(playlist_id: str, song: AddSongRequest):
     if playlist_id not in playlists:
         raise HTTPException(status_code=404, detail="Playlist not found")
     
-    # Check if song already exists in playlist (by filename)
+    # Check if song already exists in playlist (by ID)
     for existing_song in playlists[playlist_id]["songs"]:
-        if existing_song["filename"] == song.filename:
-             return playlists[playlist_id] # Already exists, just return
+        if existing_song.get("id") == song.id:
+             return playlists[playlist_id] # Already exists
+        # Also check filename if it's a downloaded file (non-empty filename)
+        if song.filename and existing_song.get("filename") == song.filename:
+             return playlists[playlist_id]
 
     playlists[playlist_id]["songs"].append(song.model_dump())
     playlists[playlist_id]["updatedAt"] = datetime.now().isoformat()

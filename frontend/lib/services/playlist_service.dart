@@ -57,6 +57,18 @@ class PlaylistService {
     await createPlaylist(playlist.name);
   }
 
+  Future<void> updatePlaylist(String id, String name) async {
+    final response = await http.put(
+      Uri.parse('$baseUrl/playlists/$id'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'name': name}),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to update playlist: ${response.statusCode}');
+    }
+  }
+
   Future<void> deletePlaylist(String id) async {
     final response = await http.delete(Uri.parse('$baseUrl/playlists/$id'));
     if (response.statusCode != 200) {
