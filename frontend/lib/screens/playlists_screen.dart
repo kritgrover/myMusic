@@ -4,6 +4,8 @@ import '../models/playlist.dart';
 import '../services/player_state_service.dart';
 import 'playlist_detail_screen.dart';
 
+const Color neonBlue = Color(0xFF00D9FF);
+
 class PlaylistsScreen extends StatefulWidget {
   final PlayerStateService? playerStateService;
 
@@ -93,7 +95,8 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
               content: Text('Playlist created'),
-              backgroundColor: Colors.green,
+              backgroundColor: neonBlue,
+              behavior: SnackBarBehavior.floating,
             ),
           );
         }
@@ -139,7 +142,8 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
               content: Text('Playlist deleted'),
-              backgroundColor: Colors.green,
+              backgroundColor: neonBlue,
+              behavior: SnackBarBehavior.floating,
             ),
           );
         }

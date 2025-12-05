@@ -5,6 +5,8 @@ import 'playlists_screen.dart';
 import '../widgets/bottom_player.dart';
 import '../services/player_state_service.dart';
 
+const Color neonBlue = Color(0xFF00D9FF);
+
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -33,7 +35,8 @@ class _HomeScreenState extends State<HomeScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Music Downloader'),
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
+        backgroundColor: Colors.black,
+        foregroundColor: neonBlue,
       ),
       body: Row(
         children: [

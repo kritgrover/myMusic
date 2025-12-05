@@ -3,6 +3,8 @@ import 'package:audioplayers/audioplayers.dart';
 import 'dart:async';
 import '../services/audio_player_service.dart';
 
+const Color neonBlue = Color(0xFF00D9FF);
+
 class PlayerScreen extends StatefulWidget {
   const PlayerScreen({super.key});
 
@@ -68,7 +70,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
           Icon(
             Icons.music_note,
             size: 120,
-            color: Colors.grey[400],
+            color: neonBlue,
           ),
           const SizedBox(height: 32),
           Text(

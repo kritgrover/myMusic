@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
 
+const Color neonBlue = Color(0xFF00D9FF);
+
 class VideoCard extends StatelessWidget {
   final VideoInfo video;
   final VoidCallback onDownload;
@@ -27,8 +29,8 @@ class VideoCard extends StatelessWidget {
               return Container(
                 width: 80,
                 height: 80,
-                color: Colors.grey[300],
-                child: const Icon(Icons.music_note),
+                color: Colors.grey[900],
+                child: const Icon(Icons.music_note, color: neonBlue),
               );
             },
           ),

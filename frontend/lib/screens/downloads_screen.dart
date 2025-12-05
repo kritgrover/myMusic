@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import '../services/api_service.dart';
 import '../services/player_state_service.dart';
 
+const Color neonBlue = Color(0xFF00D9FF);
+
 class DownloadsScreen extends StatefulWidget {
   final PlayerStateService playerStateService;
   

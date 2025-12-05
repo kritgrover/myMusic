@@ -3,6 +3,8 @@ import 'package:audioplayers/audioplayers.dart';
 import 'dart:async';
 import '../services/audio_player_service.dart';
 
+const Color neonBlue = Color(0xFF00D9FF);
+
 class BottomPlayer extends StatefulWidget {
   final AudioPlayerService playerService;
   final String? currentTrackName;
@@ -109,19 +111,18 @@ class _BottomPlayerState extends State<BottomPlayer> {
 
   @override
   Widget build(BuildContext context) {
-    // Only show player if there's a track loaded
     final hasTrack = widget.playerService.currentUrl != null;
-    if (!hasTrack) {
-      return const SizedBox.shrink();
-    }
 
     return Container(
       decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surface,
+        color: Colors.black,
+        border: const Border(
+          top: BorderSide(color: neonBlue, width: 1),
+        ),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.1),
-            blurRadius: 4,
+            color: neonBlue.withOpacity(0.3),
+            blurRadius: 8,
             offset: const Offset(0, -2),
           ),
         ],
@@ -131,20 +132,21 @@ class _BottomPlayerState extends State<BottomPlayer> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // Progress bar
-            Slider(
-              value: _isDragging
-                  ? _dragValue
-                  : (_duration.inMilliseconds > 0
-                      ? _position.inMilliseconds.toDouble()
-                      : 0.0),
-              max: _duration.inMilliseconds > 0
-                  ? _duration.inMilliseconds.toDouble()
-                  : 1.0,
-              onChangeStart: _onSliderStart,
-              onChangeEnd: _onSliderEnd,
-              onChanged: _onSliderUpdate,
-            ),
+            // Progress bar - only show if track is loaded
+            if (hasTrack)
+              Slider(
+                value: _isDragging
+                    ? _dragValue
+                    : (_duration.inMilliseconds > 0
+                        ? _position.inMilliseconds.toDouble()
+                        : 0.0),
+                max: _duration.inMilliseconds > 0
+                    ? _duration.inMilliseconds.toDouble()
+                    : 1.0,
+                onChangeStart: _onSliderStart,
+                onChangeEnd: _onSliderEnd,
+                onChanged: _onSliderUpdate,
+              ),
             // Player controls
             Row(
               children: [
@@ -157,15 +159,23 @@ class _BottomPlayerState extends State<BottomPlayer> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          widget.currentTrackName ?? 'Unknown Track',
+                          hasTrack
+                              ? (widget.currentTrackName ?? 'Unknown Track')
+                              : 'No track selected',
                           style: Theme.of(context).textTheme.bodyMedium,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
-                        Text(
-                          '${_formatDuration(_displayPosition)} / ${_formatDuration(_duration)}',
-                          style: Theme.of(context).textTheme.bodySmall,
-                        ),
+                        if (hasTrack)
+                          Text(
+                            '${_formatDuration(_displayPosition)} / ${_formatDuration(_duration)}',
+                            style: Theme.of(context).textTheme.bodySmall,
+                          )
+                        else
+                          Text(
+                            'Select a track to play',
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
                       ],
                     ),
                   ),
@@ -173,28 +183,34 @@ class _BottomPlayerState extends State<BottomPlayer> {
                 // Control buttons
                 IconButton(
                   icon: const Icon(Icons.skip_previous),
-                  onPressed: () {
-                    // Previous track functionality
-                  },
+                  onPressed: hasTrack
+                      ? () {
+                          // Previous track functionality
+                        }
+                      : null,
                   tooltip: 'Previous',
                 ),
                 IconButton(
                   icon: Icon(_isPlaying ? Icons.pause : Icons.play_arrow),
                   iconSize: 32,
-                  onPressed: () async {
-                    if (_isPlaying) {
-                      await widget.playerService.pause();
-                    } else {
-                      await widget.playerService.resume();
-                    }
-                  },
+                  onPressed: hasTrack
+                      ? () async {
+                          if (_isPlaying) {
+                            await widget.playerService.pause();
+                          } else {
+                            await widget.playerService.resume();
+                          }
+                        }
+                      : null,
                   tooltip: _isPlaying ? 'Pause' : 'Play',
                 ),
                 IconButton(
                   icon: const Icon(Icons.skip_next),
-                  onPressed: () {
-                    // Next track functionality
-                  },
+                  onPressed: hasTrack
+                      ? () {
+                          // Next track functionality
+                        }
+                      : null,
                   tooltip: 'Next',
                 ),
                 const SizedBox(width: 8),

@@ -3,6 +3,8 @@ import '../services/playlist_service.dart';
 import '../models/playlist.dart';
 import 'add_to_playlist_screen.dart';
 
+const Color neonBlue = Color(0xFF00D9FF);
+
 class PlaylistDetailScreen extends StatefulWidget {
   final Playlist playlist;
   final PlaylistService playlistService;
@@ -76,7 +78,8 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('Track removed'),
-            backgroundColor: Colors.green,
+            backgroundColor: neonBlue,
+            behavior: SnackBarBehavior.floating,
           ),
         );
       }
@@ -171,12 +174,13 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
         await _loadPlaylist();
         
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Playlist renamed'),
-              backgroundColor: Colors.green,
-            ),
-          );
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Playlist renamed'),
+            backgroundColor: neonBlue,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
         }
       } catch (e) {
         if (mounted) {
