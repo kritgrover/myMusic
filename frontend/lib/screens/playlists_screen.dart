@@ -4,6 +4,8 @@ import '../models/playlist.dart';
 import '../services/player_state_service.dart';
 import 'playlist_detail_screen.dart';
 
+const Color neonBlue = Color(0xFF00D9FF);
+
 class PlaylistsScreen extends StatefulWidget {
   final PlayerStateService? playerStateService;
 
@@ -15,13 +17,30 @@ class PlaylistsScreen extends StatefulWidget {
 
 class _PlaylistsScreenState extends State<PlaylistsScreen> {
   final PlaylistService _playlistService = PlaylistService();
+  final TextEditingController _searchController = TextEditingController();
   List<Playlist> _playlists = [];
   bool _isLoading = true;
+  String _searchQuery = '';
 
   @override
   void initState() {
     super.initState();
     _loadPlaylists();
+    _searchController.addListener(_onSearchChanged);
+  }
+
+  void _onSearchChanged() {
+    if (mounted) {
+      setState(() {
+        _searchQuery = _searchController.text.toLowerCase().trim();
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
   }
 
   Future<void> _loadPlaylists() async {
@@ -93,7 +112,8 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
               content: Text('Playlist created'),
-              backgroundColor: Colors.green,
+              backgroundColor: neonBlue,
+              behavior: SnackBarBehavior.floating,
             ),
           );
         }
@@ -107,6 +127,32 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
           );
         }
       }
+    }
+  }
+
+  List<Playlist> get _filteredPlaylists {
+    try {
+      final query = _searchQuery;
+      if (query.isEmpty || query.trim().isEmpty || query.length == 0) {
+        return _playlists;
+      }
+      if (_playlists.isEmpty || _playlists.length == 0) {
+        return _playlists;
+      }
+      try {
+        return _playlists.where((playlist) {
+          try {
+            final name = playlist.name.toLowerCase();
+            return name.contains(query);
+          } catch (e) {
+            return false;
+          }
+        }).toList();
+      } catch (e) {
+        return _playlists;
+      }
+    } catch (e) {
+      return _playlists;
     }
   }
 
@@ -139,7 +185,8 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
               content: Text('Playlist deleted'),
-              backgroundColor: Colors.green,
+              backgroundColor: neonBlue,
+              behavior: SnackBarBehavior.floating,
             ),
           );
         }
@@ -158,6 +205,10 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final filteredPlaylists = _filteredPlaylists;
+    final hasPlaylists = _playlists.isNotEmpty && _playlists.length > 0;
+    final hasFilteredResults = filteredPlaylists.isNotEmpty && filteredPlaylists.length > 0;
+    
     return Column(
       children: [
         Padding(
@@ -177,10 +228,32 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
             ],
           ),
         ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16.0),
+          child: TextField(
+            controller: _searchController,
+            decoration: InputDecoration(
+              hintText: 'Search playlists...',
+              prefixIcon: const Icon(Icons.search),
+              suffixIcon: _searchQuery.isNotEmpty && _searchQuery.trim().isNotEmpty && _searchQuery.length > 0
+                  ? IconButton(
+                      icon: const Icon(Icons.clear),
+                      onPressed: () {
+                        _searchController.clear();
+                      },
+                    )
+                  : null,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 8),
         Expanded(
           child: _isLoading
               ? const Center(child: CircularProgressIndicator())
-              : _playlists.isEmpty
+              : !hasPlaylists
                   ? Center(
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
@@ -200,37 +273,140 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
                             'Create a playlist to organize your music',
                             style: Theme.of(context).textTheme.bodyMedium,
                           ),
+                          const SizedBox(height: 24),
+                          ElevatedButton.icon(
+                            onPressed: _createPlaylist,
+                            icon: const Icon(Icons.add),
+                            label: const Text('Create Your First Playlist'),
+                          ),
                         ],
                       ),
                     )
-                  : RefreshIndicator(
-                      onRefresh: _loadPlaylists,
-                      child: ListView.builder(
-                        itemCount: _playlists.length,
-                        itemBuilder: (context, index) {
-                          final playlist = _playlists[index];
-                          return ListTile(
-                            leading: const Icon(Icons.playlist_play, size: 32),
-                            title: Text(playlist.name),
-                            subtitle: Text('${playlist.tracks.length} tracks'),
-                            trailing: IconButton(
-                              icon: const Icon(Icons.delete_outline),
-                              onPressed: () => _deletePlaylist(playlist),
-                              tooltip: 'Delete playlist',
-                            ),
-                            onTap: () async {
-                              await Navigator.of(context).push(
-                                MaterialPageRoute(
-                                  builder: (context) => PlaylistDetailScreen(
-                                    playlist: playlist,
-                                    playlistService: _playlistService,
-                                    playerStateService: widget.playerStateService,
+                  : !hasFilteredResults
+                      ? Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(
+                                Icons.search_off,
+                                size: 64,
+                                color: Colors.grey[400],
+                              ),
+                              const SizedBox(height: 16),
+                              Text(
+                                'No results found',
+                                style: Theme.of(context).textTheme.titleLarge,
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                'Try a different search term',
+                                style: Theme.of(context).textTheme.bodyMedium,
+                              ),
+                            ],
+                          ),
+                        )
+                      : RefreshIndicator(
+                          onRefresh: _loadPlaylists,
+                          child: ListView.builder(
+                            padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                            itemCount: filteredPlaylists.length,
+                            itemBuilder: (context, index) {
+                              final playlist = filteredPlaylists[index];
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 12.0),
+                            child: Card(
+                              color: Colors.grey[900],
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                side: BorderSide(
+                                  color: neonBlue.withOpacity(0.3),
+                                  width: 1,
+                                ),
+                              ),
+                              child: Material(
+                                color: Colors.transparent,
+                                child: InkWell(
+                                  onTap: () async {
+                                    await Navigator.of(context).push(
+                                      MaterialPageRoute(
+                                        builder: (context) => PlaylistDetailScreen(
+                                          playlist: playlist,
+                                          playlistService: _playlistService,
+                                          playerStateService: widget.playerStateService,
+                                        ),
+                                      ),
+                                    );
+                                    // Reload playlists when returning from detail screen
+                                    await _loadPlaylists();
+                                  },
+                                  borderRadius: BorderRadius.circular(12),
+                                  hoverColor: neonBlue.withOpacity(0.15),
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(16.0),
+                                    child: Row(
+                                      children: [
+                                        Container(
+                                          width: 64,
+                                          height: 64,
+                                          decoration: BoxDecoration(
+                                            color: neonBlue.withOpacity(0.2),
+                                            borderRadius: BorderRadius.circular(8),
+                                            border: Border.all(
+                                              color: neonBlue.withOpacity(0.5),
+                                              width: 1,
+                                            ),
+                                          ),
+                                          child: const Icon(
+                                            Icons.playlist_play,
+                                            size: 32,
+                                            color: neonBlue,
+                                          ),
+                                        ),
+                                        const SizedBox(width: 16),
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            children: [
+                                              Text(
+                                                playlist.name,
+                                                style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                                                  fontWeight: FontWeight.bold,
+                                                ),
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                              ),
+                                              const SizedBox(height: 4),
+                                              Row(
+                                                children: [
+                                                  Icon(
+                                                    Icons.music_note,
+                                                    size: 16,
+                                                    color: Colors.grey[500],
+                                                  ),
+                                                  const SizedBox(width: 4),
+                                                  Text(
+                                                    '${playlist.tracks.length} ${playlist.tracks.length == 1 ? 'track' : 'tracks'}',
+                                                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                                      color: Colors.grey[400],
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                        IconButton(
+                                          icon: const Icon(Icons.delete_outline),
+                                          onPressed: () => _deletePlaylist(playlist),
+                                          tooltip: 'Delete playlist',
+                                          color: Colors.grey[400],
+                                        ),
+                                      ],
+                                    ),
                                   ),
                                 ),
-                              );
-                              // Reload playlists when returning from detail screen
-                              await _loadPlaylists();
-                            },
+                              ),
+                            ),
                           );
                         },
                       ),

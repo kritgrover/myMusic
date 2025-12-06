@@ -3,6 +3,8 @@ import '../services/playlist_service.dart';
 import '../services/api_service.dart';
 import '../models/playlist.dart';
 
+const Color neonBlue = Color(0xFF00D9FF);
+
 class AddToPlaylistScreen extends StatefulWidget {
   final String playlistId;
   final PlaylistService playlistService;
@@ -95,7 +97,8 @@ class _AddToPlaylistScreenState extends State<AddToPlaylistScreen>
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Added "${video.title}" to playlist'),
-            backgroundColor: Colors.green,
+            backgroundColor: neonBlue,
+            behavior: SnackBarBehavior.floating,
           ),
         );
       }
@@ -120,7 +123,8 @@ class _AddToPlaylistScreenState extends State<AddToPlaylistScreen>
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Added "${file.filename}" to playlist'),
-            backgroundColor: Colors.green,
+            backgroundColor: neonBlue,
+            behavior: SnackBarBehavior.floating,
           ),
         );
       }

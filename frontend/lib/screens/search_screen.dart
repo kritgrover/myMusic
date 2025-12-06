@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import '../services/api_service.dart';
 import '../widgets/video_card.dart';
 
+const Color neonBlue = Color(0xFF00D9FF);
+
 class SearchScreen extends StatefulWidget {
   const SearchScreen({super.key});
 
@@ -139,7 +141,8 @@ class _SearchScreenState extends State<SearchScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Downloaded: ${result.filename}'),
-            backgroundColor: Colors.green,
+            backgroundColor: neonBlue,
+            behavior: SnackBarBehavior.floating,
           ),
         );
       }
@@ -150,6 +153,7 @@ class _SearchScreenState extends State<SearchScreen> {
           SnackBar(
             content: Text('Download failed: $e'),
             backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
           ),
         );
       }

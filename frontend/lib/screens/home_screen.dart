@@ -5,6 +5,8 @@ import 'playlists_screen.dart';
 import '../widgets/bottom_player.dart';
 import '../services/player_state_service.dart';
 
+const Color neonBlue = Color(0xFF00D9FF);
+
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -32,8 +34,9 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Music Downloader'),
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
+        title: const Text('myMusic'),
+        backgroundColor: Colors.black,
+        foregroundColor: neonBlue,
       ),
       body: Row(
         children: [
@@ -46,21 +49,25 @@ class _HomeScreenState extends State<HomeScreen> {
               });
             },
             labelType: NavigationRailLabelType.all,
-            destinations: const [
+            useIndicator: true,
+            indicatorColor: Colors.grey[900],
+            selectedIconTheme: const IconThemeData(color: neonBlue, size: 24),
+            unselectedIconTheme: const IconThemeData(color: Colors.grey, size: 24),
+            destinations: [
               NavigationRailDestination(
-                icon: Icon(Icons.search),
-                selectedIcon: Icon(Icons.search),
-                label: Text('Search'),
+                icon: const Icon(Icons.search),
+                selectedIcon: const Icon(Icons.search),
+                label: const Text('Search'),
               ),
               NavigationRailDestination(
-                icon: Icon(Icons.download),
-                selectedIcon: Icon(Icons.download),
-                label: Text('Downloads'),
+                icon: const Icon(Icons.download),
+                selectedIcon: const Icon(Icons.download),
+                label: const Text('Downloads'),
               ),
               NavigationRailDestination(
-                icon: Icon(Icons.playlist_play),
-                selectedIcon: Icon(Icons.playlist_play),
-                label: Text('Playlists'),
+                icon: const Icon(Icons.playlist_play),
+                selectedIcon: const Icon(Icons.playlist_play),
+                label: const Text('Playlists'),
               ),
             ],
           ),

@@ -81,6 +81,20 @@ class ApiService {
       throw Exception('List downloads error: $e');
     }
   }
+
+  Future<void> deleteDownload(String filename) async {
+    try {
+      final encodedFilename = Uri.encodeComponent(filename);
+      final response = await http.delete(Uri.parse('$baseUrl/downloads/$encodedFilename'));
+      
+      if (response.statusCode != 200) {
+        final error = jsonDecode(response.body);
+        throw Exception(error['detail'] ?? 'Delete failed');
+      }
+    } catch (e) {
+      throw Exception('Delete error: $e');
+    }
+  }
 }
 
 class VideoInfo {
