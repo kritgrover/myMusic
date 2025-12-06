@@ -187,6 +187,20 @@ def get_download_file(filename: str, request: Request):
     )
 
 
+@app.delete("/downloads/{filename}")
+def delete_download_file(filename: str):
+    """Delete a downloaded file"""
+    try:
+        file_path = os.path.join(download_service.output_dir, filename)
+        if not os.path.isfile(file_path):
+            raise HTTPException(status_code=404, detail="File not found")
+        
+        os.remove(file_path)
+        return {"success": True, "message": f"File {filename} deleted successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # Playlist Endpoints
 
 @app.get("/playlists", response_model=Dict[str, Playlist])

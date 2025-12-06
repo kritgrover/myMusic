@@ -22,6 +22,20 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
   void initState() {
     super.initState();
     _loadDownloads();
+    // Listen to player state changes to update highlighting
+    widget.playerStateService.addListener(_onPlayerStateChanged);
+  }
+
+  void _onPlayerStateChanged() {
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.playerStateService.removeListener(_onPlayerStateChanged);
+    super.dispose();
   }
 
   Future<void> _loadDownloads() async {
@@ -59,6 +73,54 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
     }
   }
 
+  Future<void> _deleteFile(DownloadedFile file) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Song'),
+        content: Text('Are you sure you want to delete "${file.filename}"?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      try {
+        await _apiService.deleteDownload(file.filename);
+        await _loadDownloads();
+        
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Deleted: ${file.filename}'),
+              backgroundColor: neonBlue,
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Failed to delete: $e'),
+              backgroundColor: Colors.red,
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return RefreshIndicator(
@@ -92,14 +154,56 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
                   itemCount: _downloads.length,
                   itemBuilder: (context, index) {
                     final file = _downloads[index];
-                    return ListTile(
-                      leading: const Icon(Icons.music_note),
-                      title: Text(file.filename),
-                      subtitle: Text(file.formattedSize),
-                      trailing: IconButton(
-                        icon: const Icon(Icons.play_arrow),
-                        onPressed: () => _playFile(file),
-                      ),
+                    final isCurrentlyPlaying = widget.playerStateService.currentTrackUrl?.contains(file.filename) ?? false;
+                    
+                    return Column(
+                      children: [
+                        Material(
+                          color: isCurrentlyPlaying 
+                              ? neonBlue.withOpacity(0.1) 
+                              : Colors.transparent,
+                          child: InkWell(
+                            onTap: () => _playFile(file),
+                            hoverColor: neonBlue.withOpacity(0.15),
+                            child: ListTile(
+                              leading: Icon(
+                                Icons.music_note,
+                                color: isCurrentlyPlaying ? neonBlue : null,
+                              ),
+                              title: Text(
+                                file.filename,
+                                style: TextStyle(
+                                  color: isCurrentlyPlaying ? neonBlue : null,
+                                ),
+                              ),
+                              subtitle: Text(file.formattedSize),
+                              trailing: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  IconButton(
+                                    icon: Icon(
+                                      Icons.play_arrow,
+                                      color: isCurrentlyPlaying ? neonBlue : null,
+                                    ),
+                                    onPressed: () => _playFile(file),
+                                    tooltip: 'Play',
+                                  ),
+                                  IconButton(
+                                    icon: const Icon(Icons.delete_outline),
+                                    onPressed: () => _deleteFile(file),
+                                    tooltip: 'Delete',
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                        Divider(
+                          height: 1,
+                          thickness: 1,
+                          color: Colors.grey[800],
+                        ),
+                      ],
                     );
                   },
                 ),
