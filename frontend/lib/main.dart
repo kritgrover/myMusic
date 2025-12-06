@@ -14,7 +14,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Music Downloader',
+      title: 'myMusic',
       theme: ThemeData(
         useMaterial3: true,
         brightness: Brightness.dark,
@@ -95,12 +95,12 @@ class MyApp extends StatelessWidget {
           textColor: neonBlue,
           iconColor: neonBlue,
         ),
-        navigationRailTheme: const NavigationRailThemeData(
+        navigationRailTheme: NavigationRailThemeData(
           backgroundColor: Colors.black,
-          selectedIconTheme: IconThemeData(color: neonBlue),
-          selectedLabelTextStyle: TextStyle(color: neonBlue),
-          unselectedIconTheme: IconThemeData(color: Colors.grey),
-          unselectedLabelTextStyle: TextStyle(color: Colors.grey),
+          selectedIconTheme: const IconThemeData(color: neonBlue),
+          selectedLabelTextStyle: const TextStyle(color: neonBlue),
+          unselectedIconTheme: const IconThemeData(color: Colors.grey),
+          unselectedLabelTextStyle: const TextStyle(color: Colors.grey),
         ),
         sliderTheme: SliderThemeData(
           activeTrackColor: neonBlue,
