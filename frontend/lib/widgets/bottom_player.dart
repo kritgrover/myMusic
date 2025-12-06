@@ -134,19 +134,19 @@ class _BottomPlayerState extends State<BottomPlayer> {
           children: [
             // Progress bar - only show if track is loaded
             if (hasTrack)
-              Slider(
-                value: _isDragging
-                    ? _dragValue
-                    : (_duration.inMilliseconds > 0
-                        ? _position.inMilliseconds.toDouble()
-                        : 0.0),
-                max: _duration.inMilliseconds > 0
-                    ? _duration.inMilliseconds.toDouble()
-                    : 1.0,
-                onChangeStart: _onSliderStart,
-                onChangeEnd: _onSliderEnd,
-                onChanged: _onSliderUpdate,
-              ),
+            Slider(
+              value: _isDragging
+                  ? _dragValue
+                  : (_duration.inMilliseconds > 0
+                      ? _position.inMilliseconds.toDouble()
+                      : 0.0),
+              max: _duration.inMilliseconds > 0
+                  ? _duration.inMilliseconds.toDouble()
+                  : 1.0,
+              onChangeStart: _onSliderStart,
+              onChangeEnd: _onSliderEnd,
+              onChanged: _onSliderUpdate,
+            ),
             // Player controls
             Row(
               children: [
@@ -167,15 +167,15 @@ class _BottomPlayerState extends State<BottomPlayer> {
                           overflow: TextOverflow.ellipsis,
                         ),
                         if (hasTrack)
-                          Text(
-                            '${_formatDuration(_displayPosition)} / ${_formatDuration(_duration)}',
-                            style: Theme.of(context).textTheme.bodySmall,
+                        Text(
+                          '${_formatDuration(_displayPosition)} / ${_formatDuration(_duration)}',
+                          style: Theme.of(context).textTheme.bodySmall,
                           )
                         else
                           Text(
                             'Select a track to play',
                             style: Theme.of(context).textTheme.bodySmall,
-                          ),
+                        ),
                       ],
                     ),
                   ),
@@ -185,7 +185,7 @@ class _BottomPlayerState extends State<BottomPlayer> {
                   icon: const Icon(Icons.skip_previous),
                   onPressed: hasTrack
                       ? () {
-                          // Previous track functionality
+                    // Previous track functionality
                         }
                       : null,
                   tooltip: 'Previous',
@@ -195,11 +195,11 @@ class _BottomPlayerState extends State<BottomPlayer> {
                   iconSize: 32,
                   onPressed: hasTrack
                       ? () async {
-                          if (_isPlaying) {
-                            await widget.playerService.pause();
-                          } else {
-                            await widget.playerService.resume();
-                          }
+                    if (_isPlaying) {
+                      await widget.playerService.pause();
+                    } else {
+                      await widget.playerService.resume();
+                    }
                         }
                       : null,
                   tooltip: _isPlaying ? 'Pause' : 'Play',
@@ -208,7 +208,7 @@ class _BottomPlayerState extends State<BottomPlayer> {
                   icon: const Icon(Icons.skip_next),
                   onPressed: hasTrack
                       ? () {
-                          // Next track functionality
+                    // Next track functionality
                         }
                       : null,
                   tooltip: 'Next',

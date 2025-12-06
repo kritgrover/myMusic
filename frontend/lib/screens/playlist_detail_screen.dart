@@ -174,13 +174,13 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
         await _loadPlaylist();
         
         if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Playlist renamed'),
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Playlist renamed'),
             backgroundColor: neonBlue,
             behavior: SnackBarBehavior.floating,
-          ),
-        );
+            ),
+          );
         }
       } catch (e) {
         if (mounted) {
