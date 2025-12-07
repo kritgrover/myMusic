@@ -127,7 +127,13 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
 
   Future<void> _playFile(DownloadedFile file) async {
     try {
-      await widget.playerStateService.playTrack(file.filename, trackName: file.filename);
+      // Use formatted display name for track name to show proper song name
+      final trackName = file.title ?? _formatDisplayName(file.filename);
+      await widget.playerStateService.playTrack(
+        file.filename, 
+        trackName: trackName,
+        trackArtist: file.artist,
+      );
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -286,12 +292,21 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
                                 color: isCurrentlyPlaying ? neonBlue : null,
                               ),
                               title: Text(
-                                _formatDisplayName(file.filename),
+                                file.title ?? _formatDisplayName(file.filename),
                                 style: TextStyle(
                                   color: isCurrentlyPlaying ? neonBlue : null,
                                 ),
                               ),
-                              subtitle: Text(file.formattedSize),
+                              subtitle: file.artist != null && file.artist!.isNotEmpty
+                                  ? Text(
+                                      file.artist!,
+                                      style: TextStyle(
+                                        color: isCurrentlyPlaying 
+                                            ? neonBlue.withOpacity(0.8) 
+                                            : Colors.grey[400],
+                                      ),
+                                    )
+                                  : Text(file.formattedSize),
                               trailing: Row(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [

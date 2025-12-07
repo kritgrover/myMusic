@@ -8,11 +8,13 @@ const Color neonBlue = Color(0xFF00D9FF);
 class BottomPlayer extends StatefulWidget {
   final AudioPlayerService playerService;
   final String? currentTrackName;
+  final String? currentTrackArtist;
 
   const BottomPlayer({
     super.key,
     required this.playerService,
     this.currentTrackName,
+    this.currentTrackArtist,
   });
 
   @override
@@ -88,17 +90,32 @@ class _BottomPlayerState extends State<BottomPlayer> {
     if (filename == null || filename.isEmpty) {
       return 'Unknown Track';
     }
+    // Extract just the filename if it includes a subdirectory path
+    String displayName = filename.contains('/') 
+        ? filename.split('/').last 
+        : filename.contains('\\') 
+            ? filename.split('\\').last 
+            : filename;
+    
     // Remove file extension
-    String displayName = filename;
     final extensionPattern = RegExp(r'\.(m4a|mp3)$', caseSensitive: false);
     displayName = displayName.replaceAll(extensionPattern, '');
 
-    final parts = displayName.split(' - ');
-    if (parts.isNotEmpty) {
-      return parts[0].trim();
+    // Check if filename starts with a number pattern (e.g., "001 - " or "1 - ")
+    // This indicates a CSV-converted file
+    final numberPrefixPattern = RegExp(r'^\d+\s*-\s*');
+    if (numberPrefixPattern.hasMatch(displayName)) {
+      // For CSV files: "001 - Song Name" -> remove number prefix, return "Song Name"
+      displayName = displayName.replaceFirst(numberPrefixPattern, '');
+      return displayName.trim();
+    } else {
+      // For web downloads: "Song Name - Artist" -> return "Song Name"
+      final parts = displayName.split(' - ');
+      if (parts.isNotEmpty) {
+        return parts[0].trim();
+      }
+      return displayName;
     }
-    
-    return displayName;
   }
 
   Duration get _displayPosition {
@@ -224,23 +241,39 @@ class _BottomPlayerState extends State<BottomPlayer> {
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
-                        // Song name with timestamp close to it
+                        // Song name and artist with timestamp
                         Expanded(
                           child: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               Flexible(
                                 flex: 1,
-                                child: Text(
-                                  hasTrack
-                                      ? _formatDisplayName(widget.currentTrackName)
-                                      : 'No track selected',
-                                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                    color: hasTrack ? neonBlue : null,
-                                  ),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  textAlign: TextAlign.left,
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Text(
+                                      hasTrack
+                                          ? _formatDisplayName(widget.currentTrackName)
+                                          : 'No track selected',
+                                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                        color: hasTrack ? neonBlue : null,
+                                      ),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      textAlign: TextAlign.left,
+                                    ),
+                                    if (hasTrack && widget.currentTrackArtist != null && widget.currentTrackArtist!.isNotEmpty)
+                                      Text(
+                                        widget.currentTrackArtist!,
+                                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                          color: neonBlue.withOpacity(0.7),
+                                        ),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        textAlign: TextAlign.left,
+                                      ),
+                                  ],
                                 ),
                               ),
                               if (hasTrack && _duration.inMilliseconds > 0)

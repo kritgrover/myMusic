@@ -93,6 +93,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     return BottomPlayer(
                       playerService: _playerStateService.audioPlayer,
                       currentTrackName: _playerStateService.currentTrackName,
+                      currentTrackArtist: _playerStateService.currentTrackArtist,
                     );
                   },
                 ),

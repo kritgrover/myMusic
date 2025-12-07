@@ -9,6 +9,8 @@ import uuid
 import shutil
 from datetime import datetime
 from download_service import DownloadService
+from mutagen.mp4 import MP4
+from mutagen.easyid3 import EasyID3
 
 app = FastAPI(title="Music Download API")
 
@@ -164,10 +166,37 @@ def list_downloads():
                         file_path = os.path.join(root, filename)
                         # Use relative path from downloads_dir for filename to preserve subfolder structure
                         rel_path = os.path.relpath(file_path, downloads_dir)
+                        
+                        # Try to read metadata from the file
+                        title = None
+                        artist = None
+                        try:
+                            if filename.lower().endswith('.m4a'):
+                                audio = MP4(file_path)
+                                if audio.tags:
+                                    title_tags = audio.tags.get('\xa9nam')
+                                    artist_tags = audio.tags.get('\xa9ART')
+                                    title = title_tags[0] if title_tags else None
+                                    artist = artist_tags[0] if artist_tags else None
+                            else:  # MP3
+                                try:
+                                    audio = EasyID3(file_path)
+                                    title = audio.get('title')
+                                    title = title[0] if title else None
+                                    artist = audio.get('artist')
+                                    artist = artist[0] if artist else None
+                                except:
+                                    pass
+                        except Exception:
+                            # If metadata reading fails, continue without it
+                            pass
+                        
                         files.append({
                             "filename": rel_path.replace('\\', '/'),  # Use forward slashes for consistency
                             "file_path": file_path,
-                            "size": os.path.getsize(file_path)
+                            "size": os.path.getsize(file_path),
+                            "title": title,
+                            "artist": artist
                         })
         return {"files": files}
     except Exception as e:

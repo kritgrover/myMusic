@@ -261,11 +261,15 @@ class DownloadedFile {
   final String filename;
   final String filePath;
   final int size;
+  final String? title;
+  final String? artist;
   
   DownloadedFile({
     required this.filename,
     required this.filePath,
     required this.size,
+    this.title,
+    this.artist,
   });
   
   factory DownloadedFile.fromJson(Map<String, dynamic> json) {
@@ -273,6 +277,8 @@ class DownloadedFile {
       filename: json['filename'] ?? '',
       filePath: json['file_path'] ?? '',
       size: json['size'] ?? 0,
+      title: json['title'],
+      artist: json['artist'],
     );
   }
   
