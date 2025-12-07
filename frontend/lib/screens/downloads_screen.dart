@@ -74,17 +74,32 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
   }
 
   String _formatDisplayName(String filename) {
+    // Extract just the filename if it includes a subdirectory path
+    String displayName = filename.contains('/') 
+        ? filename.split('/').last 
+        : filename.contains('\\') 
+            ? filename.split('\\').last 
+            : filename;
+    
     // Remove file extension
-    String displayName = filename;
     final extensionPattern = RegExp(r'\.(m4a|mp3)$', caseSensitive: false);
     displayName = displayName.replaceAll(extensionPattern, '');
 
-    final parts = displayName.split(' - ');
-    if (parts.isNotEmpty) {
-      return parts[0].trim();
+    // Check if filename starts with a number pattern (e.g., "001 - " or "1 - ")
+    // This indicates a CSV-converted file
+    final numberPrefixPattern = RegExp(r'^\d+\s*-\s*');
+    if (numberPrefixPattern.hasMatch(displayName)) {
+      // For CSV files: "001 - Song Name" -> remove number prefix, return "Song Name"
+      displayName = displayName.replaceFirst(numberPrefixPattern, '');
+      return displayName.trim();
+    } else {
+      // For web downloads: "Song Name - Artist" -> return "Song Name"
+      final parts = displayName.split(' - ');
+      if (parts.isNotEmpty) {
+        return parts[0].trim();
+      }
+      return displayName;
     }
-    
-    return displayName;
   }
 
   List<DownloadedFile> get _filteredDownloads {

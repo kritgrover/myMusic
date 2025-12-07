@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
@@ -6,6 +6,7 @@ from typing import List, Optional, Dict
 import os
 import json
 import uuid
+import shutil
 from datetime import datetime
 from download_service import DownloadService
 
@@ -151,52 +152,207 @@ def download_audio(request: DownloadRequest):
 
 @app.get("/downloads")
 def list_downloads():
-    """List all downloaded files"""
+    """List all downloaded files (including subdirectories from CSV conversions)"""
     try:
         downloads_dir = download_service.output_dir
         files = []
         if os.path.exists(downloads_dir):
-            for filename in os.listdir(downloads_dir):
-                if filename.lower().endswith(('.mp3', '.m4a')):
-                    file_path = os.path.join(downloads_dir, filename)
-                    files.append({
-                        "filename": filename,
-                        "file_path": file_path,
-                        "size": os.path.getsize(file_path)
-                    })
+            # Recursively search for audio files
+            for root, dirs, filenames in os.walk(downloads_dir):
+                for filename in filenames:
+                    if filename.lower().endswith(('.mp3', '.m4a')):
+                        file_path = os.path.join(root, filename)
+                        # Use relative path from downloads_dir for filename to preserve subfolder structure
+                        rel_path = os.path.relpath(file_path, downloads_dir)
+                        files.append({
+                            "filename": rel_path.replace('\\', '/'),  # Use forward slashes for consistency
+                            "file_path": file_path,
+                            "size": os.path.getsize(file_path)
+                        })
         return {"files": files}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/downloads/{filename}")
+@app.get("/downloads/{filename:path}")
 def get_download_file(filename: str, request: Request):
     """Serve download file for streaming with Range request support"""
+    # Handle subdirectory paths (e.g., "playlist_name/song.m4a")
+    # Normalize path separators and prevent directory traversal
+    filename = filename.replace('\\', os.sep).replace('/', os.sep)
+    if '..' in filename or filename.startswith('/'):
+        raise HTTPException(status_code=400, detail="Invalid file path")
+    
     file_path = os.path.join(download_service.output_dir, filename)
     if not os.path.isfile(file_path):
         raise HTTPException(status_code=404, detail="File not found")
+    
+    # Get just the filename for the download (without subdirectory)
+    download_filename = os.path.basename(filename)
     
     # FileResponse automatically handles Range requests
     return FileResponse(
         file_path,
         media_type='audio/mpeg' if filename.endswith('.mp3') else 'audio/mp4',
-        filename=filename,
+        filename=download_filename,
         headers={
             "Accept-Ranges": "bytes",
         }
     )
 
 
-@app.delete("/downloads/{filename}")
+@app.delete("/downloads/{filename:path}")
 def delete_download_file(filename: str):
-    """Delete a downloaded file"""
+    """Delete a downloaded file (supports subdirectory paths)"""
     try:
+        # Handle subdirectory paths and prevent directory traversal
+        filename = filename.replace('\\', os.sep).replace('/', os.sep)
+        if '..' in filename or filename.startswith('/'):
+            raise HTTPException(status_code=400, detail="Invalid file path")
+        
         file_path = os.path.join(download_service.output_dir, filename)
         if not os.path.isfile(file_path):
             raise HTTPException(status_code=404, detail="File not found")
         
         os.remove(file_path)
         return {"success": True, "message": f"File {filename} deleted successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# CSV Conversion Endpoints
+
+class CsvConversionRequest(BaseModel):
+    deep_search: bool = True
+    duration_min: int = 0
+    duration_max: float = 600
+    exclude_instrumentals: bool = False
+    variants: List[str] = []
+
+
+@app.post("/csv/upload")
+async def upload_csv(file: UploadFile = File(...)):
+    """Upload a CSV file for conversion"""
+    try:
+        if not file.filename.endswith('.csv'):
+            raise HTTPException(status_code=400, detail="File must be a CSV file")
+        
+        # Save uploaded file to temp directory
+        temp_dir = os.path.join(BASE_DIR, "temp")
+        os.makedirs(temp_dir, exist_ok=True)
+        
+        file_path = os.path.join(temp_dir, file.filename)
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        
+        return {
+            "success": True,
+            "filename": file.filename,
+            "file_path": file_path
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+
+
+@app.post("/csv/convert/{filename}")
+def convert_csv_file(filename: str, request: CsvConversionRequest):
+    """Convert a specific CSV file to M4A files"""
+    try:
+        temp_dir = os.path.join(BASE_DIR, "temp")
+        csv_path = os.path.join(temp_dir, filename)
+        
+        if not os.path.isfile(csv_path):
+            raise HTTPException(status_code=404, detail="CSV file not found")
+        
+        # Progress tracking
+        progress_data = {"current": 0, "total": 0, "status": ""}
+        
+        def progress_callback(current, total, status):
+            progress_data["current"] = current
+            progress_data["total"] = total
+            progress_data["status"] = status
+        
+        result = download_service.convert_csv_to_m4a(
+            csv_path=csv_path,
+            deep_search=request.deep_search,
+            duration_min=request.duration_min,
+            duration_max=request.duration_max,
+            exclude_instrumentals=request.exclude_instrumentals,
+            variants=request.variants if request.variants else [''],
+            progress_callback=progress_callback
+        )
+        
+        # Get list of downloaded files
+        files = []
+        if os.path.exists(result['output_dir']):
+            for f in os.listdir(result['output_dir']):
+                if f.lower().endswith('.m4a'):
+                    file_path = os.path.join(result['output_dir'], f)
+                    files.append({
+                        "filename": f,
+                        "file_path": file_path,
+                        "size": os.path.getsize(file_path),
+                        "download_url": f"/csv/download/{os.path.basename(result['output_dir'])}/{f}"
+                    })
+        
+        return {
+            "success": True,
+            "downloaded": result['downloaded'],
+            "not_found": result['not_found'],
+            "output_dir": result['output_dir'],
+            "files": files,
+            "total": result['total'],
+            "success_count": result['success_count']
+        }
+    except Exception as e:
+        import traceback
+        error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+        print(f"CSV conversion error: {error_detail}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/csv/download/{playlist_name}/{filename}")
+def download_csv_converted_file(playlist_name: str, filename: str):
+    """Download a converted M4A file from CSV conversion"""
+    try:
+        file_path = os.path.join(download_service.output_dir, playlist_name, filename)
+        if not os.path.isfile(file_path):
+            raise HTTPException(status_code=404, detail="File not found")
+        
+        return FileResponse(
+            file_path,
+            media_type='audio/mp4',
+            filename=filename,
+            headers={
+                "Accept-Ranges": "bytes",
+            }
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/csv/files/{playlist_name}")
+def list_csv_converted_files(playlist_name: str):
+    """List all files from a CSV conversion"""
+    try:
+        playlist_dir = os.path.join(download_service.output_dir, playlist_name)
+        if not os.path.exists(playlist_dir):
+            raise HTTPException(status_code=404, detail="Playlist not found")
+        
+        files = []
+        for filename in os.listdir(playlist_dir):
+            if filename.lower().endswith('.m4a'):
+                file_path = os.path.join(playlist_dir, filename)
+                files.append({
+                    "filename": filename,
+                    "file_path": file_path,
+                    "size": os.path.getsize(file_path),
+                    "download_url": f"/csv/download/{playlist_name}/{filename}"
+                })
+        
+        return {"files": files}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
