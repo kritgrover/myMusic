@@ -95,6 +95,102 @@ class ApiService {
       throw Exception('Delete error: $e');
     }
   }
+
+  // CSV Upload and Conversion
+  Future<CsvUploadResult> uploadCsv(String filePath) async {
+    try {
+      final file = await http.MultipartFile.fromPath('file', filePath);
+      final request = http.MultipartRequest('POST', Uri.parse('$baseUrl/csv/upload'));
+      request.files.add(file);
+      
+      final streamedResponse = await request.send();
+      final response = await http.Response.fromStream(streamedResponse);
+      
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        return CsvUploadResult.fromJson(data);
+      } else {
+        final error = jsonDecode(response.body);
+        throw Exception(error['detail'] ?? 'Upload failed');
+      }
+    } catch (e) {
+      throw Exception('CSV upload error: $e');
+    }
+  }
+
+  Future<CsvUploadResult> uploadCsvBytes(List<int> fileBytes, String filename) async {
+    try {
+      final file = http.MultipartFile.fromBytes(
+        'file',
+        fileBytes,
+        filename: filename,
+      );
+      final request = http.MultipartRequest('POST', Uri.parse('$baseUrl/csv/upload'));
+      request.files.add(file);
+      
+      final streamedResponse = await request.send();
+      final response = await http.Response.fromStream(streamedResponse);
+      
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        return CsvUploadResult.fromJson(data);
+      } else {
+        final error = jsonDecode(response.body);
+        throw Exception(error['detail'] ?? 'Upload failed');
+      }
+    } catch (e) {
+      throw Exception('CSV upload error: $e');
+    }
+  }
+
+  Future<CsvConversionResult> convertCsv(String filename, {
+    bool deepSearch = true,
+    int durationMin = 0,
+    double durationMax = 600,
+    bool excludeInstrumentals = false,
+    List<String> variants = const [],
+  }) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/csv/convert/$filename'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'deep_search': deepSearch,
+          'duration_min': durationMin,
+          'duration_max': durationMax,
+          'exclude_instrumentals': excludeInstrumentals,
+          'variants': variants,
+        }),
+      );
+      
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        return CsvConversionResult.fromJson(data);
+      } else {
+        final error = jsonDecode(response.body);
+        throw Exception(error['detail'] ?? 'Conversion failed');
+      }
+    } catch (e) {
+      throw Exception('CSV conversion error: $e');
+    }
+  }
+
+  Future<List<CsvConvertedFile>> listCsvFiles(String playlistName) async {
+    try {
+      final encodedName = Uri.encodeComponent(playlistName);
+      final response = await http.get(Uri.parse('$baseUrl/csv/files/$encodedName'));
+      
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final List<dynamic> files = data['files'];
+        return files.map((item) => CsvConvertedFile.fromJson(item)).toList();
+      } else {
+        throw Exception('Failed to list CSV files: ${response.statusCode}');
+      }
+    } catch (e) {
+      throw Exception('List CSV files error: $e');
+    }
+  }
 }
 
 class VideoInfo {
@@ -165,11 +261,15 @@ class DownloadedFile {
   final String filename;
   final String filePath;
   final int size;
+  final String? title;
+  final String? artist;
   
   DownloadedFile({
     required this.filename,
     required this.filePath,
     required this.size,
+    this.title,
+    this.artist,
   });
   
   factory DownloadedFile.fromJson(Map<String, dynamic> json) {
@@ -177,6 +277,90 @@ class DownloadedFile {
       filename: json['filename'] ?? '',
       filePath: json['file_path'] ?? '',
       size: json['size'] ?? 0,
+      title: json['title'],
+      artist: json['artist'],
+    );
+  }
+  
+  String get formattedSize {
+    if (size < 1024) return '$size B';
+    if (size < 1024 * 1024) return '${(size / 1024).toStringAsFixed(1)} KB';
+    return '${(size / (1024 * 1024)).toStringAsFixed(1)} MB';
+  }
+}
+
+class CsvUploadResult {
+  final bool success;
+  final String filename;
+  final String filePath;
+  
+  CsvUploadResult({
+    required this.success,
+    required this.filename,
+    required this.filePath,
+  });
+  
+  factory CsvUploadResult.fromJson(Map<String, dynamic> json) {
+    return CsvUploadResult(
+      success: json['success'] ?? false,
+      filename: json['filename'] ?? '',
+      filePath: json['file_path'] ?? '',
+    );
+  }
+}
+
+class CsvConversionResult {
+  final bool success;
+  final List<String> downloaded;
+  final List<Map<String, dynamic>> notFound;
+  final String outputDir;
+  final List<CsvConvertedFile> files;
+  final int total;
+  final int successCount;
+  
+  CsvConversionResult({
+    required this.success,
+    required this.downloaded,
+    required this.notFound,
+    required this.outputDir,
+    required this.files,
+    required this.total,
+    required this.successCount,
+  });
+  
+  factory CsvConversionResult.fromJson(Map<String, dynamic> json) {
+    final List<dynamic> filesList = json['files'] ?? [];
+    return CsvConversionResult(
+      success: json['success'] ?? false,
+      downloaded: List<String>.from(json['downloaded'] ?? []),
+      notFound: List<Map<String, dynamic>>.from(json['not_found'] ?? []),
+      outputDir: json['output_dir'] ?? '',
+      files: filesList.map((item) => CsvConvertedFile.fromJson(item)).toList(),
+      total: json['total'] ?? 0,
+      successCount: json['success_count'] ?? 0,
+    );
+  }
+}
+
+class CsvConvertedFile {
+  final String filename;
+  final String filePath;
+  final int size;
+  final String downloadUrl;
+  
+  CsvConvertedFile({
+    required this.filename,
+    required this.filePath,
+    required this.size,
+    required this.downloadUrl,
+  });
+  
+  factory CsvConvertedFile.fromJson(Map<String, dynamic> json) {
+    return CsvConvertedFile(
+      filename: json['filename'] ?? '',
+      filePath: json['file_path'] ?? '',
+      size: json['size'] ?? 0,
+      downloadUrl: json['download_url'] ?? '',
     );
   }
   

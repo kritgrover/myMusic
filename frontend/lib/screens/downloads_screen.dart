@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
 import '../services/player_state_service.dart';
+import '../utils/song_display_utils.dart';
 
 const Color neonBlue = Color(0xFF00D9FF);
 
@@ -73,19 +74,6 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
     }
   }
 
-  String _formatDisplayName(String filename) {
-    // Remove file extension
-    String displayName = filename;
-    final extensionPattern = RegExp(r'\.(m4a|mp3)$', caseSensitive: false);
-    displayName = displayName.replaceAll(extensionPattern, '');
-
-    final parts = displayName.split(' - ');
-    if (parts.isNotEmpty) {
-      return parts[0].trim();
-    }
-    
-    return displayName;
-  }
 
   List<DownloadedFile> get _filteredDownloads {
     final query = _searchQuery;
@@ -98,7 +86,7 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
     try {
       return _downloads.where((file) {
         try {
-          final displayName = _formatDisplayName(file.filename).toLowerCase();
+          final displayName = getDisplayTitle(file.title, file.filename).toLowerCase();
           final filename = file.filename.toLowerCase();
           return displayName.contains(query) || filename.contains(query);
         } catch (e) {
@@ -112,7 +100,13 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
 
   Future<void> _playFile(DownloadedFile file) async {
     try {
-      await widget.playerStateService.playTrack(file.filename, trackName: file.filename);
+      // Use formatted display name for track name to show proper song name
+      final trackName = getDisplayTitle(file.title, file.filename);
+      await widget.playerStateService.playTrack(
+        file.filename, 
+        trackName: trackName,
+        trackArtist: file.artist,
+      );
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -271,12 +265,21 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
                                 color: isCurrentlyPlaying ? neonBlue : null,
                               ),
                               title: Text(
-                                _formatDisplayName(file.filename),
+                                getDisplayTitle(file.title, file.filename),
                                 style: TextStyle(
                                   color: isCurrentlyPlaying ? neonBlue : null,
                                 ),
                               ),
-                              subtitle: Text(file.formattedSize),
+                              subtitle: file.artist != null && file.artist!.isNotEmpty
+                                  ? Text(
+                                      file.artist!,
+                                      style: TextStyle(
+                                        color: isCurrentlyPlaying 
+                                            ? neonBlue.withOpacity(0.8) 
+                                            : Colors.grey[400],
+                                      ),
+                                    )
+                                  : Text(file.formattedSize),
                               trailing: Row(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [

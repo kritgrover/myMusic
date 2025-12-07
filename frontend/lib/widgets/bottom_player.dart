@@ -2,17 +2,20 @@ import 'package:flutter/material.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'dart:async';
 import '../services/audio_player_service.dart';
+import '../utils/song_display_utils.dart';
 
 const Color neonBlue = Color(0xFF00D9FF);
 
 class BottomPlayer extends StatefulWidget {
   final AudioPlayerService playerService;
   final String? currentTrackName;
+  final String? currentTrackArtist;
 
   const BottomPlayer({
     super.key,
     required this.playerService,
     this.currentTrackName,
+    this.currentTrackArtist,
   });
 
   @override
@@ -84,22 +87,6 @@ class _BottomPlayerState extends State<BottomPlayer> {
     }
   }
 
-  String _formatDisplayName(String? filename) {
-    if (filename == null || filename.isEmpty) {
-      return 'Unknown Track';
-    }
-    // Remove file extension
-    String displayName = filename;
-    final extensionPattern = RegExp(r'\.(m4a|mp3)$', caseSensitive: false);
-    displayName = displayName.replaceAll(extensionPattern, '');
-
-    final parts = displayName.split(' - ');
-    if (parts.isNotEmpty) {
-      return parts[0].trim();
-    }
-    
-    return displayName;
-  }
 
   Duration get _displayPosition {
     try {
@@ -224,23 +211,39 @@ class _BottomPlayerState extends State<BottomPlayer> {
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
-                        // Song name with timestamp close to it
+                        // Song name and artist with timestamp
                         Expanded(
                           child: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               Flexible(
                                 flex: 1,
-                                child: Text(
-                                  hasTrack
-                                      ? _formatDisplayName(widget.currentTrackName)
-                                      : 'No track selected',
-                                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                    color: hasTrack ? neonBlue : null,
-                                  ),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  textAlign: TextAlign.left,
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Text(
+                                      hasTrack
+                                          ? getDisplayTitle(widget.currentTrackName, widget.playerService.currentUrl)
+                                          : 'No track selected',
+                                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                        color: hasTrack ? neonBlue : null,
+                                      ),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      textAlign: TextAlign.left,
+                                    ),
+                                    if (hasTrack && widget.currentTrackArtist != null && widget.currentTrackArtist!.isNotEmpty)
+                                      Text(
+                                        widget.currentTrackArtist!,
+                                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                          color: neonBlue.withOpacity(0.7),
+                                        ),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        textAlign: TextAlign.left,
+                                      ),
+                                  ],
                                 ),
                               ),
                               if (hasTrack && _duration.inMilliseconds > 0)

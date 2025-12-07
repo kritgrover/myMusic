@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../services/playlist_service.dart';
 import '../models/playlist.dart';
 import 'add_to_playlist_screen.dart';
+import '../utils/song_display_utils.dart';
 
 const Color neonBlue = Color(0xFF00D9FF);
 
@@ -98,8 +99,13 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
   Future<void> _playTrack(PlaylistTrack track) async {
     try {
       if (track.filename.isNotEmpty && widget.playerStateService != null) {
-        // Play from downloads
-        await widget.playerStateService.playTrack(track.filename, trackName: track.title);
+        // Play from downloads - use formatted title and artist
+        final displayTitle = getDisplayTitle(track.title, track.filename);
+        await widget.playerStateService.playTrack(
+          track.filename, 
+          trackName: displayTitle,
+          trackArtist: track.artist,
+        );
       } else if (track.filename.isNotEmpty) {
         // PlayerStateService not available
         if (mounted) {
@@ -131,22 +137,6 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
     }
   }
 
-  String _formatDisplayName(String title) {
-    // Remove file extension
-    String displayName = title;
-    final extensionPattern = RegExp(r'\.(m4a|mp3)$', caseSensitive: false);
-    displayName = displayName.replaceAll(extensionPattern, '');
-
-    // Remove channel/artist information (everything after " - ")
-    // Format is typically "Title - Channel/Artist"
-    // We only want to show the title
-    final parts = displayName.split(' - ');
-    if (parts.isNotEmpty) {
-      return parts[0].trim();
-    }
-    
-    return displayName;
-  }
 
   Future<void> _renamePlaylist() async {
     final nameController = TextEditingController(text: _playlist.name);
@@ -338,6 +328,8 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                             final isCurrentlyPlaying = widget.playerStateService != null &&
                                 widget.playerStateService.currentTrackUrl?.contains(track.filename ?? '') == true;
                             
+                            final displayTitle = getDisplayTitle(track.title, track.filename);
+                            
                             return Column(
                               children: [
                                 Material(
@@ -347,65 +339,35 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                                   child: InkWell(
                                     onTap: () => _playTrack(track),
                                     hoverColor: neonBlue.withOpacity(0.15),
-                                    child: Padding(
-                                      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
-                                      child: Row(
-                                        children: [
-                                          Container(
-                                            width: 48,
-                                            height: 48,
-                                            decoration: BoxDecoration(
-                                              color: neonBlue.withOpacity(0.15),
-                                              borderRadius: BorderRadius.circular(8),
-                                              border: Border.all(
-                                                color: neonBlue.withOpacity(0.3),
-                                                width: 1,
+                                    child: ListTile(
+                                      leading: Icon(
+                                        Icons.music_note,
+                                        color: isCurrentlyPlaying ? neonBlue : null,
+                                      ),
+                                      title: Text(
+                                        displayTitle,
+                                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                                          fontWeight: FontWeight.w500,
+                                          color: isCurrentlyPlaying ? neonBlue : null,
+                                        ),
+                                      ),
+                                      subtitle: track.artist != null && track.artist!.isNotEmpty
+                                          ? Text(
+                                              track.artist!,
+                                              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                                color: isCurrentlyPlaying 
+                                                    ? neonBlue.withOpacity(0.8) 
+                                                    : Colors.grey[400],
                                               ),
-                                            ),
-                                            child: Icon(
-                                              Icons.music_note,
-                                              color: isCurrentlyPlaying ? neonBlue : Colors.grey[400],
-                                              size: 24,
-                                            ),
-                                          ),
-                                          const SizedBox(width: 16),
-                                          Expanded(
-                                            child: Column(
-                                              crossAxisAlignment: CrossAxisAlignment.start,
-                                              children: [
-                                                Text(
-                                                  _formatDisplayName(track.title),
-                                                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                                                    fontWeight: FontWeight.w500,
-                                                    color: isCurrentlyPlaying ? neonBlue : null,
-                                                  ),
-                                                  maxLines: 1,
-                                                  overflow: TextOverflow.ellipsis,
-                                                ),
-                                                if (track.artist != null && track.artist!.isNotEmpty)
-                                                  Padding(
-                                                    padding: const EdgeInsets.only(top: 4.0),
-                                                    child: Text(
-                                                      track.artist!,
-                                                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                                        color: Colors.grey[400],
-                                                      ),
-                                                      maxLines: 1,
-                                                      overflow: TextOverflow.ellipsis,
-                                                    ),
-                                                  ),
-                                              ],
-                                            ),
-                                          ),
-                                          IconButton(
-                                            icon: Icon(
-                                              Icons.delete_outline,
-                                              color: Colors.grey[400],
-                                            ),
-                                            onPressed: () => _removeTrack(track),
-                                            tooltip: 'Remove from playlist',
-                                          ),
-                                        ],
+                                            )
+                                          : null,
+                                      trailing: IconButton(
+                                        icon: Icon(
+                                          Icons.delete_outline,
+                                          color: Colors.grey[400],
+                                        ),
+                                        onPressed: () => _removeTrack(track),
+                                        tooltip: 'Remove from playlist',
                                       ),
                                     ),
                                   ),
@@ -414,7 +376,6 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                                   height: 1,
                                   thickness: 1,
                                   color: Colors.grey[800],
-                                  indent: 80,
                                 ),
                               ],
                             );

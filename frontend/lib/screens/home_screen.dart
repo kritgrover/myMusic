@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'search_screen.dart';
 import 'downloads_screen.dart';
 import 'playlists_screen.dart';
+import 'csv_upload_screen.dart';
 import '../widgets/bottom_player.dart';
 import '../services/player_state_service.dart';
 
@@ -27,6 +28,7 @@ class _HomeScreenState extends State<HomeScreen> {
       const SearchScreen(),
       DownloadsScreen(playerStateService: _playerStateService),
       PlaylistsScreen(playerStateService: _playerStateService),
+      const CsvUploadScreen(),
     ]);
   }
 
@@ -69,6 +71,11 @@ class _HomeScreenState extends State<HomeScreen> {
                 selectedIcon: const Icon(Icons.playlist_play),
                 label: const Text('Playlists'),
               ),
+              NavigationRailDestination(
+                icon: const Icon(Icons.upload_file),
+                selectedIcon: const Icon(Icons.upload_file),
+                label: const Text('CSV Upload'),
+              ),
             ],
           ),
           const VerticalDivider(thickness: 1, width: 1),
@@ -86,6 +93,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     return BottomPlayer(
                       playerService: _playerStateService.audioPlayer,
                       currentTrackName: _playerStateService.currentTrackName,
+                      currentTrackArtist: _playerStateService.currentTrackArtist,
                     );
                   },
                 ),

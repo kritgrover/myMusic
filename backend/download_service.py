@@ -4,7 +4,10 @@ import re
 import json
 import platform
 import shutil
+import csv
+import time
 from pathlib import Path
+from datetime import timedelta
 from mutagen.easyid3 import EasyID3
 from mutagen.mp4 import MP4, MP4Tags
 
@@ -291,5 +294,227 @@ class DownloadService:
         # This is a simplified version - yt-dlp doesn't easily provide progress via API
         # In a real implementation, you might want to parse yt-dlp output or use callbacks
         return {"status": "downloading", "progress": 0}
+    
+    def convert_csv_to_m4a(self, csv_path: str, deep_search: bool = True, 
+                           duration_min: int = 0, duration_max: float = 600,
+                           exclude_instrumentals: bool = False, 
+                           variants: list = None, progress_callback=None):
+        """
+        Convert CSV playlist to M4A files.
+        Returns a dict with 'downloaded', 'not_found', and 'output_dir' keys.
+        """
+        if variants is None:
+            variants = ['']
+        
+        creationflags = subprocess.CREATE_NO_WINDOW if platform.system() == 'Windows' else 0
+        
+        # Check if yt-dlp is available
+        if not self.yt_dlp_exe:
+            raise Exception(f"yt-dlp not found. Please install it: pip install yt-dlp")
+        
+        playlist_name = os.path.splitext(os.path.basename(csv_path))[0]
+        output_dir = os.path.join(self.output_dir, playlist_name)
+        os.makedirs(output_dir, exist_ok=True)
+        
+        def yt_cmd(extra_args, search_spec):
+            if isinstance(self.yt_dlp_exe, list):
+                cmd = self.yt_dlp_exe.copy()
+            else:
+                cmd = [self.yt_dlp_exe]
+            cmd.append("--no-config")
+            ffmpeg_dir = os.path.dirname(self.ffmpeg_exe) if isinstance(self.ffmpeg_exe, str) and os.path.dirname(self.ffmpeg_exe) else ""
+            if ffmpeg_dir and os.path.isdir(ffmpeg_dir):
+                cmd.append(f"--ffmpeg-location={ffmpeg_dir}")
+            cmd += extra_args + [search_spec]
+            return cmd
+        
+        rows = list(csv.DictReader(open(csv_path, newline='', encoding='utf-8')))
+        total = len(rows)
+        archive_file = os.path.join(output_dir, 'downloaded.txt')
+        downloaded = []
+        not_found_songs = []
+        start_time = time.time()
+        
+        for i, row in enumerate(rows, start=1):
+            title = row.get('Track Name') or row.get('Track name') or 'Unknown'
+            artist_raw = row.get('Artist Name(s)') or row.get('Artist name') or 'Unknown'
+            artist_primary = re.split(r'[,/&]| feat\.| ft\.', artist_raw, flags=re.I)[0].strip()
+            safe_artist = re.sub(r"[^\w\s]", '', artist_primary)
+            album = row.get('Album Name') or row.get('Album') or playlist_name
+            spotify_ms = row.get('Duration (ms)')
+            spotify_sec = int(spotify_ms) / 1000 if spotify_ms and spotify_ms.isdigit() else None
+            
+            safe_title = re.sub(r"[^\w\s]", '', title)
+            search_variants = variants.copy()
+            if 'instrumental' in title.lower():
+                search_variants.insert(0, 'instrumental')
+            
+            best_file = None
+            for variant in search_variants:
+                parts = [safe_title]
+                if safe_artist and safe_artist.lower() != 'unknown':
+                    parts.append(safe_artist)
+                if variant:
+                    parts.append(variant)
+                q = ' '.join(parts)
+                
+                if progress_callback:
+                    progress_callback(i, total, f"Searching: {q}")
+                
+                if deep_search:
+                    # Phase 1: quick flat-playlist probe
+                    proc_q = subprocess.run(
+                        yt_cmd(["--flat-playlist", "--dump-single-json", "--no-playlist"], f"ytsearch1:{q}"),
+                        capture_output=True, text=True, creationflags=creationflags, timeout=30
+                    )
+                    try:
+                        data_q = json.loads(proc_q.stdout) or {}
+                    except Exception:
+                        data_q = {}
+                    if not isinstance(data_q, dict):
+                        data_q = {}
+                    entries_q = data_q.get('entries') if isinstance(data_q.get('entries'), list) else []
+                    top = entries_q[0] if entries_q else {}
+                    
+                    vid_title = top.get('title', '')
+                    upl = (top.get('uploader') or '').lower()
+                    duration = top.get('duration') or 0
+                    passes = (
+                        safe_title.lower() in vid_title.lower()
+                        and (not safe_artist or safe_artist.lower() in upl)
+                        and (not spotify_sec or abs(duration - spotify_sec) <= 10)
+                        and (duration >= duration_min and duration <= duration_max)
+                    )
+                    if passes:
+                        download_spec = top.get('webpage_url', f"https://www.youtube.com/watch?v={top.get('id','')}")
+                    else:
+                        # Phase 2: deep-search candidate IDs
+                        proc_ids = subprocess.run(
+                            yt_cmd(["--flat-playlist", "--dump-single-json", "--no-playlist"], f"ytsearch3:{q}"),
+                            capture_output=True, text=True, creationflags=creationflags, timeout=30
+                        )
+                        try:
+                            tmp = json.loads(proc_ids.stdout) or {}
+                        except Exception:
+                            tmp = {}
+                        data_ids = tmp if isinstance(tmp, dict) else {}
+                        entries_ids = data_ids.get('entries') if isinstance(data_ids.get('entries'), list) else []
+                        ids = [e for e in entries_ids if isinstance(e, dict)][:3]
+                        
+                        scored = []
+                        first_words = self.normalize(title).split()[:5]
+                        for entry in ids:
+                            vid = entry.get('id')
+                            if not vid:
+                                continue
+                            url = f"https://www.youtube.com/watch?v={vid}"
+                            proc_i = subprocess.run(
+                                yt_cmd(["--dump-single-json", "--no-playlist"], url),
+                                capture_output=True, text=True, creationflags=creationflags, timeout=30
+                            )
+                            if "Sign in to confirm your age" in (proc_i.stderr or ''):
+                                continue
+                            try:
+                                info = json.loads(proc_i.stdout) or {}
+                            except Exception:
+                                continue
+                            
+                            raw_title = info.get('title', '')
+                            low = raw_title.lower()
+                            up2 = (info.get('uploader') or '').lower()
+                            dur2 = info.get('duration') or 0
+                            if dur2 < duration_min or dur2 > duration_max:
+                                continue
+                            if 'shorts/' in info.get('webpage_url', '') or '#shorts' in low:
+                                continue
+                            if safe_artist.lower() and safe_artist.lower() not in up2:
+                                continue
+                            if variant and variant.lower() not in low:
+                                continue
+                            if not self.contains_keywords_in_order(raw_title, first_words):
+                                continue
+                            score = 100 if low.startswith(safe_title.lower()) else 80
+                            if spotify_sec:
+                                score -= abs(dur2 - spotify_sec)
+                            scored.append((score, url))
+                        download_spec = scored and max(scored, key=lambda x: x[0])[1] or f"ytsearch1:{q}"
+                else:
+                    download_spec = f"ytsearch1:{q}"
+                
+                # Download
+                file_title = re.sub(r"[^\w\s]", "", title).strip()
+                base = f"{i:03d} - {file_title}" + (f" - {variant}" if variant else "")
+                tmpl = base + ".%(ext)s"
+                cmd_dl = yt_cmd([
+                    '--download-archive', archive_file,
+                    '-f', 'bestaudio[ext=m4a]/bestaudio',
+                    '--output', os.path.join(output_dir, tmpl),
+                    '--no-playlist',
+                    '--remux-video', 'm4a'
+                ], download_spec)
+                
+                if exclude_instrumentals:
+                    cmd_dl += ['--reject-title', 'instrumental']
+                
+                ret = subprocess.run(cmd_dl, capture_output=True, text=True, creationflags=creationflags, timeout=300)
+                if ret.returncode != 0:
+                    stderr = ret.stderr or ''
+                    if 'Sign in to confirm your age' in stderr:
+                        not_found_songs.append({
+                            'Track Name': title,
+                            'Artist Name(s)': artist_primary,
+                            'Album Name': album,
+                            'Track Number': i,
+                            'Error': 'Age-restricted video'
+                        })
+                        break
+                    else:
+                        continue
+                
+                candidate_path = os.path.join(output_dir, base + '.m4a')
+                if os.path.isfile(candidate_path):
+                    best_file = candidate_path
+                    # Embed metadata
+                    try:
+                        audio = MP4(best_file)
+                        tags = audio.tags or MP4Tags()
+                        tags['\xa9nam'] = [title]
+                        tags['\xa9ART'] = [artist_primary]
+                        tags['\xa9alb'] = [album]
+                        audio.save()
+                    except Exception as e:
+                        print(f"Warning: Could not embed metadata: {e}")
+                    downloaded.append(os.path.basename(best_file))
+                    break
+            
+            if not best_file:
+                not_found_songs.append({
+                    'Track Name': title,
+                    'Artist Name(s)': artist_primary,
+                    'Album Name': album,
+                    'Track Number': i,
+                    'Error': 'No valid download'
+                })
+            
+            if progress_callback:
+                elapsed = time.time() - start_time
+                eta = timedelta(seconds=int((elapsed/i)*(total-i))) if i > 0 else timedelta(0)
+                progress_callback(i, total, f"Downloaded {i}/{total}, ETA: {eta}")
+        
+        # Save not found songs to CSV
+        if not_found_songs:
+            nf_path = os.path.join(output_dir, f"{playlist_name}_not_found.csv")
+            with open(nf_path, 'w', newline='', encoding='utf-8') as cf:
+                writer = csv.DictWriter(cf, fieldnames=['Track Name', 'Artist Name(s)', 'Album Name', 'Track Number', 'Error'])
+                writer.writeheader()
+                writer.writerows(not_found_songs)
+        
+        return {
+            'downloaded': downloaded,
+            'not_found': not_found_songs,
+            'output_dir': output_dir,
+            'total': total,
+            'success_count': len(downloaded)
+        }
 
 

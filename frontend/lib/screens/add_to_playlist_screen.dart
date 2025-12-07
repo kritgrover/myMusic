@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../services/playlist_service.dart';
 import '../services/api_service.dart';
 import '../models/playlist.dart';
+import '../utils/song_display_utils.dart';
 
 const Color neonBlue = Color(0xFF00D9FF);
 
@@ -28,11 +29,14 @@ class _AddToPlaylistScreenState extends State<AddToPlaylistScreen>
   List<DownloadedFile> _downloads = [];
   bool _isLoadingDownloads = false;
   late TabController _tabController;
+  Playlist? _playlist;
+  bool _isLoadingPlaylist = true;
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
+    _loadPlaylist();
     _loadDownloads();
   }
 
@@ -41,6 +45,24 @@ class _AddToPlaylistScreenState extends State<AddToPlaylistScreen>
     _searchController.dispose();
     _tabController.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadPlaylist() async {
+    setState(() {
+      _isLoadingPlaylist = true;
+    });
+
+    try {
+      final playlist = await widget.playlistService.getPlaylist(widget.playlistId);
+      setState(() {
+        _playlist = playlist;
+        _isLoadingPlaylist = false;
+      });
+    } catch (e) {
+      setState(() {
+        _isLoadingPlaylist = false;
+      });
+    }
   }
 
   Future<void> _loadDownloads() async {
@@ -122,7 +144,7 @@ class _AddToPlaylistScreenState extends State<AddToPlaylistScreen>
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Added "${file.filename}" to playlist'),
+            content: Text('Added "${getDisplayTitle(file.title, file.filename)}" to playlist'),
             backgroundColor: neonBlue,
             behavior: SnackBarBehavior.floating,
           ),
@@ -140,13 +162,19 @@ class _AddToPlaylistScreenState extends State<AddToPlaylistScreen>
     }
   }
 
+
   @override
   Widget build(BuildContext context) {
+    final playlistName = _playlist?.name ?? 'Playlist';
+    
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Add Songs to Playlist'),
+        title: Text('Add Songs to $playlistName'),
         bottom: TabBar(
           controller: _tabController,
+          indicatorColor: neonBlue,
+          labelColor: neonBlue,
+          unselectedLabelColor: Colors.grey[400],
           tabs: const [
             Tab(icon: Icon(Icons.search), text: 'Search'),
             Tab(icon: Icon(Icons.download), text: 'Downloads'),
@@ -192,15 +220,43 @@ class _AddToPlaylistScreenState extends State<AddToPlaylistScreen>
                             itemCount: _searchResults.length,
                             itemBuilder: (context, index) {
                               final video = _searchResults[index];
-                              return ListTile(
-                                leading: const Icon(Icons.music_video),
-                                title: Text(video.title),
-                                subtitle: Text(video.uploader),
-                                trailing: IconButton(
-                                  icon: const Icon(Icons.add),
-                                  onPressed: () => _addVideoToPlaylist(video),
-                                  tooltip: 'Add to playlist',
-                                ),
+                              return Column(
+                                children: [
+                                  Material(
+                                    color: Colors.transparent,
+                                    child: InkWell(
+                                      onTap: () => _addVideoToPlaylist(video),
+                                      hoverColor: neonBlue.withOpacity(0.15),
+                                      child: ListTile(
+                                        leading: Icon(
+                                          Icons.music_video,
+                                          color: neonBlue,
+                                        ),
+                                        title: Text(
+                                          video.title,
+                                          style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                                            fontWeight: FontWeight.w500,
+                                          ),
+                                        ),
+                                        subtitle: Text(
+                                          video.uploader,
+                                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                            color: Colors.grey[400],
+                                          ),
+                                        ),
+                                        trailing: Icon(
+                                          Icons.add_circle_outline,
+                                          color: neonBlue,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  Divider(
+                                    height: 1,
+                                    thickness: 1,
+                                    color: Colors.grey[800],
+                                  ),
+                                ],
                               );
                             },
                           ),
@@ -234,15 +290,50 @@ class _AddToPlaylistScreenState extends State<AddToPlaylistScreen>
                         itemCount: _downloads.length,
                         itemBuilder: (context, index) {
                           final file = _downloads[index];
-                          return ListTile(
-                            leading: const Icon(Icons.music_note),
-                            title: Text(file.filename),
-                            subtitle: Text(file.formattedSize),
-                            trailing: IconButton(
-                              icon: const Icon(Icons.add),
-                              onPressed: () => _addDownloadToPlaylist(file),
-                              tooltip: 'Add to playlist',
-                            ),
+                          return Column(
+                            children: [
+                              Material(
+                                color: Colors.transparent,
+                                child: InkWell(
+                                  onTap: () => _addDownloadToPlaylist(file),
+                                  hoverColor: neonBlue.withOpacity(0.15),
+                                  child: ListTile(
+                                    leading: Icon(
+                                      Icons.music_note,
+                                      color: neonBlue,
+                                    ),
+                                    title: Text(
+                                      getDisplayTitle(file.title, file.filename),
+                                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                    ),
+                                    subtitle: file.artist != null && file.artist!.isNotEmpty
+                                        ? Text(
+                                            file.artist!,
+                                            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                              color: Colors.grey[400],
+                                            ),
+                                          )
+                                        : Text(
+                                            file.formattedSize,
+                                            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                              color: Colors.grey[400],
+                                            ),
+                                          ),
+                                    trailing: Icon(
+                                      Icons.add_circle_outline,
+                                      color: neonBlue,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              Divider(
+                                height: 1,
+                                thickness: 1,
+                                color: Colors.grey[800],
+                              ),
+                            ],
                           );
                         },
                       ),
