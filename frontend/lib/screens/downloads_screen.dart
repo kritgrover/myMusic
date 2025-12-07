@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
 import '../services/player_state_service.dart';
+import '../utils/song_display_utils.dart';
 
 const Color neonBlue = Color(0xFF00D9FF);
 
@@ -73,34 +74,6 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
     }
   }
 
-  String _formatDisplayName(String filename) {
-    // Extract just the filename if it includes a subdirectory path
-    String displayName = filename.contains('/') 
-        ? filename.split('/').last 
-        : filename.contains('\\') 
-            ? filename.split('\\').last 
-            : filename;
-    
-    // Remove file extension
-    final extensionPattern = RegExp(r'\.(m4a|mp3)$', caseSensitive: false);
-    displayName = displayName.replaceAll(extensionPattern, '');
-
-    // Check if filename starts with a number pattern (e.g., "001 - " or "1 - ")
-    // This indicates a CSV-converted file
-    final numberPrefixPattern = RegExp(r'^\d+\s*-\s*');
-    if (numberPrefixPattern.hasMatch(displayName)) {
-      // For CSV files: "001 - Song Name" -> remove number prefix, return "Song Name"
-      displayName = displayName.replaceFirst(numberPrefixPattern, '');
-      return displayName.trim();
-    } else {
-      // For web downloads: "Song Name - Artist" -> return "Song Name"
-      final parts = displayName.split(' - ');
-      if (parts.isNotEmpty) {
-        return parts[0].trim();
-      }
-      return displayName;
-    }
-  }
 
   List<DownloadedFile> get _filteredDownloads {
     final query = _searchQuery;
@@ -113,7 +86,7 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
     try {
       return _downloads.where((file) {
         try {
-          final displayName = _formatDisplayName(file.filename).toLowerCase();
+          final displayName = getDisplayTitle(file.title, file.filename).toLowerCase();
           final filename = file.filename.toLowerCase();
           return displayName.contains(query) || filename.contains(query);
         } catch (e) {
@@ -128,7 +101,7 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
   Future<void> _playFile(DownloadedFile file) async {
     try {
       // Use formatted display name for track name to show proper song name
-      final trackName = file.title ?? _formatDisplayName(file.filename);
+      final trackName = getDisplayTitle(file.title, file.filename);
       await widget.playerStateService.playTrack(
         file.filename, 
         trackName: trackName,
@@ -292,7 +265,7 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
                                 color: isCurrentlyPlaying ? neonBlue : null,
                               ),
                               title: Text(
-                                file.title ?? _formatDisplayName(file.filename),
+                                getDisplayTitle(file.title, file.filename),
                                 style: TextStyle(
                                   color: isCurrentlyPlaying ? neonBlue : null,
                                 ),

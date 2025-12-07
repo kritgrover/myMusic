@@ -115,9 +115,13 @@ class PlaylistTrack {
 
   // Create from DownloadedFile
   factory PlaylistTrack.fromDownloadedFile(dynamic downloadedFile) {
+    // Use title if available, otherwise use filename
+    String displayTitle = downloadedFile.title ?? downloadedFile.filename;
+    
     return PlaylistTrack(
       id: downloadedFile.filename,
-      title: downloadedFile.filename,
+      title: displayTitle,
+      artist: downloadedFile.artist,
       filename: downloadedFile.filename,
     );
   }

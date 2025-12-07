@@ -60,16 +60,16 @@
             }
         ],
         "createdAt": "2025-12-07T17:37:16.348491",
-        "updatedAt": "2025-12-07T17:37:16.380536"
+        "updatedAt": "2025-12-07T18:00:46.389580"
     },
-    "348eae08-634d-4a58-9b62-c788aace7227": {
-        "id": "348eae08-634d-4a58-9b62-c788aace7227",
+    "febfa59a-f9ba-428a-9b1c-a5c6508a0822": {
+        "id": "febfa59a-f9ba-428a-9b1c-a5c6508a0822",
         "name": "Metal",
         "songs": [
             {
                 "id": "Korn  Freak On a Leash Official HD Video - KoRn.m4a",
-                "title": "Korn  Freak On a Leash Official HD Video - KoRn.m4a",
-                "artist": null,
+                "title": "Korn - Freak On a Leash (Official HD Video)",
+                "artist": "KoRn",
                 "album": null,
                 "filename": "Korn  Freak On a Leash Official HD Video - KoRn.m4a",
                 "file_path": "",
@@ -79,8 +79,8 @@
             },
             {
                 "id": "Megadeth  Sweating Bullets Official Music Video - Megadeth.m4a",
-                "title": "Megadeth  Sweating Bullets Official Music Video - Megadeth.m4a",
-                "artist": null,
+                "title": "Megadeth - Sweating Bullets (Official Music Video)",
+                "artist": "Megadeth",
                 "album": null,
                 "filename": "Megadeth  Sweating Bullets Official Music Video - Megadeth.m4a",
                 "file_path": "",
@@ -90,8 +90,8 @@
             },
             {
                 "id": "Metallica  Creeping Death HD - MegaHermansen.m4a",
-                "title": "Metallica  Creeping Death HD - MegaHermansen.m4a",
-                "artist": null,
+                "title": "Metallica - Creeping Death (HD)",
+                "artist": "MegaHermansen",
                 "album": null,
                 "filename": "Metallica  Creeping Death HD - MegaHermansen.m4a",
                 "file_path": "",
@@ -100,7 +100,7 @@
                 "duration": null
             }
         ],
-        "createdAt": "2025-12-07T17:37:56.689769",
-        "updatedAt": "2025-12-07T17:38:05.044860"
+        "createdAt": "2025-12-07T18:00:57.940460",
+        "updatedAt": "2025-12-07T18:01:06.819667"
     }
 }

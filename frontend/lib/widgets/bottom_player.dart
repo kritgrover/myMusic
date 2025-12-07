@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'dart:async';
 import '../services/audio_player_service.dart';
+import '../utils/song_display_utils.dart';
 
 const Color neonBlue = Color(0xFF00D9FF);
 
@@ -86,37 +87,6 @@ class _BottomPlayerState extends State<BottomPlayer> {
     }
   }
 
-  String _formatDisplayName(String? filename) {
-    if (filename == null || filename.isEmpty) {
-      return 'Unknown Track';
-    }
-    // Extract just the filename if it includes a subdirectory path
-    String displayName = filename.contains('/') 
-        ? filename.split('/').last 
-        : filename.contains('\\') 
-            ? filename.split('\\').last 
-            : filename;
-    
-    // Remove file extension
-    final extensionPattern = RegExp(r'\.(m4a|mp3)$', caseSensitive: false);
-    displayName = displayName.replaceAll(extensionPattern, '');
-
-    // Check if filename starts with a number pattern (e.g., "001 - " or "1 - ")
-    // This indicates a CSV-converted file
-    final numberPrefixPattern = RegExp(r'^\d+\s*-\s*');
-    if (numberPrefixPattern.hasMatch(displayName)) {
-      // For CSV files: "001 - Song Name" -> remove number prefix, return "Song Name"
-      displayName = displayName.replaceFirst(numberPrefixPattern, '');
-      return displayName.trim();
-    } else {
-      // For web downloads: "Song Name - Artist" -> return "Song Name"
-      final parts = displayName.split(' - ');
-      if (parts.isNotEmpty) {
-        return parts[0].trim();
-      }
-      return displayName;
-    }
-  }
 
   Duration get _displayPosition {
     try {
@@ -254,7 +224,7 @@ class _BottomPlayerState extends State<BottomPlayer> {
                                   children: [
                                     Text(
                                       hasTrack
-                                          ? (widget.currentTrackName ?? 'Unknown Track')
+                                          ? getDisplayTitle(widget.currentTrackName, widget.playerService.currentUrl)
                                           : 'No track selected',
                                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                                         color: hasTrack ? neonBlue : null,
