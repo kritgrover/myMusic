@@ -254,7 +254,7 @@ class _BottomPlayerState extends State<BottomPlayer> {
                                   children: [
                                     Text(
                                       hasTrack
-                                          ? _formatDisplayName(widget.currentTrackName)
+                                          ? (widget.currentTrackName ?? 'Unknown Track')
                                           : 'No track selected',
                                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                                         color: hasTrack ? neonBlue : null,

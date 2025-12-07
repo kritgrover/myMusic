@@ -1,25 +1,77 @@
 {
-    "e0b17257-d6d9-4970-93de-f8a983a3cf59": {
-        "id": "e0b17257-d6d9-4970-93de-f8a983a3cf59",
+    "2cc07ab7-283b-4450-9f64-5ca3605bac87": {
+        "id": "2cc07ab7-283b-4450-9f64-5ca3605bac87",
+        "name": "Mathy",
+        "songs": [
+            {
+                "id": "167f4b35-8d8b-464b-be89-8069b32cc913",
+                "title": "Playing God",
+                "artist": "Polyphia",
+                "album": "Remember That You Will Die",
+                "filename": "mathy/001 - Playing God.m4a",
+                "file_path": "E:\\myMusic\\backend\\downloads\\mathy\\001 - Playing God.m4a",
+                "url": "",
+                "thumbnail": "",
+                "duration": 203.96408163265306
+            },
+            {
+                "id": "39edf23a-a21a-4626-b71f-8c1133fd3a25",
+                "title": "G.O.A.T.",
+                "artist": "Polyphia",
+                "album": "New Levels New Devils",
+                "filename": "mathy/002 - GOAT.m4a",
+                "file_path": "E:\\myMusic\\backend\\downloads\\mathy\\002 - GOAT.m4a",
+                "url": "",
+                "thumbnail": "",
+                "duration": 215.59727891156462
+            },
+            {
+                "id": "9d114a54-f64e-4374-b778-04ae4402e3b5",
+                "title": "Ego Death (feat. Steve Vai)",
+                "artist": "Polyphia;Steve Vai",
+                "album": "Remember That You Will Die",
+                "filename": "mathy/003 - Ego Death feat Steve Vai.m4a",
+                "file_path": "E:\\myMusic\\backend\\downloads\\mathy\\003 - Ego Death feat Steve Vai.m4a",
+                "url": "",
+                "thumbnail": "",
+                "duration": 350.0872562358277
+            },
+            {
+                "id": "8f6240a7-2ff7-4d9c-b8c4-406465973de2",
+                "title": "Reverie",
+                "artist": "Polyphia",
+                "album": "Remember That You Will Die",
+                "filename": "mathy/004 - Reverie.m4a",
+                "file_path": "E:\\myMusic\\backend\\downloads\\mathy\\004 - Reverie.m4a",
+                "url": "",
+                "thumbnail": "",
+                "duration": 244.45968253968255
+            },
+            {
+                "id": "fa42ced4-6529-4698-aabe-d313640760f4",
+                "title": "Neurotica",
+                "artist": "Polyphia",
+                "album": "Remember That You Will Die",
+                "filename": "mathy/005 - Neurotica.m4a",
+                "file_path": "E:\\myMusic\\backend\\downloads\\mathy\\005 - Neurotica.m4a",
+                "url": "",
+                "thumbnail": "",
+                "duration": 195.67455782312925
+            }
+        ],
+        "createdAt": "2025-12-07T17:37:16.348491",
+        "updatedAt": "2025-12-07T17:37:16.380536"
+    },
+    "348eae08-634d-4a58-9b62-c788aace7227": {
+        "id": "348eae08-634d-4a58-9b62-c788aace7227",
         "name": "Metal",
         "songs": [
             {
-                "id": "Metallica  Creeping Death HD - MegaHermansen.m4a",
-                "title": "Metallica  Creeping Death HD - MegaHermansen.m4a",
+                "id": "Korn  Freak On a Leash Official HD Video - KoRn.m4a",
+                "title": "Korn  Freak On a Leash Official HD Video - KoRn.m4a",
                 "artist": null,
                 "album": null,
-                "filename": "Metallica  Creeping Death HD - MegaHermansen.m4a",
-                "file_path": "",
-                "url": null,
-                "thumbnail": null,
-                "duration": null
-            },
-            {
-                "id": "Metallica Nothing Else Matters Official Music Video - Metallica.m4a",
-                "title": "Metallica Nothing Else Matters Official Music Video - Metallica.m4a",
-                "artist": null,
-                "album": null,
-                "filename": "Metallica Nothing Else Matters Official Music Video - Metallica.m4a",
+                "filename": "Korn  Freak On a Leash Official HD Video - KoRn.m4a",
                 "file_path": "",
                 "url": null,
                 "thumbnail": null,
@@ -35,9 +87,20 @@
                 "url": null,
                 "thumbnail": null,
                 "duration": null
+            },
+            {
+                "id": "Metallica  Creeping Death HD - MegaHermansen.m4a",
+                "title": "Metallica  Creeping Death HD - MegaHermansen.m4a",
+                "artist": null,
+                "album": null,
+                "filename": "Metallica  Creeping Death HD - MegaHermansen.m4a",
+                "file_path": "",
+                "url": null,
+                "thumbnail": null,
+                "duration": null
             }
         ],
-        "createdAt": "2025-12-04T17:50:08.502903",
-        "updatedAt": "2025-12-05T21:21:13.787562"
+        "createdAt": "2025-12-07T17:37:56.689769",
+        "updatedAt": "2025-12-07T17:38:05.044860"
     }
 }

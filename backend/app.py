@@ -285,6 +285,17 @@ async def upload_csv(file: UploadFile = File(...)):
 
 
 
+def format_playlist_name(csv_filename: str) -> str:
+    """Format CSV filename to playlist name: remove .csv, replace underscores with spaces, title case"""
+    # Remove .csv extension
+    name = csv_filename.replace('.csv', '').replace('.CSV', '')
+    # Replace underscores with spaces
+    name = name.replace('_', ' ')
+    # Title case (capitalize first letter of each word)
+    name = name.title()
+    return name
+
+
 @app.post("/csv/convert/{filename}")
 def convert_csv_file(filename: str, request: CsvConversionRequest):
     """Convert a specific CSV file to M4A files"""
@@ -326,6 +337,109 @@ def convert_csv_file(filename: str, request: CsvConversionRequest):
                         "download_url": f"/csv/download/{os.path.basename(result['output_dir'])}/{f}"
                     })
         
+        # Create playlist from CSV filename
+        playlist_name = format_playlist_name(filename)
+        playlist_id = None
+        playlist_created = False
+        
+        try:
+            # Create the playlist
+            playlists = load_playlists()
+            playlist_id = str(uuid.uuid4())
+            now = datetime.now().isoformat()
+            new_playlist = {
+                "id": playlist_id,
+                "name": playlist_name,
+                "songs": [],
+                "createdAt": now,
+                "updatedAt": now
+            }
+            playlists[playlist_id] = new_playlist
+            save_playlists(playlists)
+            playlist_created = True
+            
+            # Add all downloaded songs to the playlist
+            playlist_dir = result['output_dir']
+            downloaded_files = result.get('downloaded', [])
+            
+            if os.path.exists(playlist_dir) and downloaded_files:
+                # Use the downloaded list to ensure we only add successfully downloaded files
+                for f in downloaded_files:
+                    if not f.lower().endswith('.m4a'):
+                        continue
+                    file_path = os.path.join(playlist_dir, f)
+                    if not os.path.exists(file_path):
+                        continue
+                    
+                    try:
+                        # Read metadata from the file
+                        audio = MP4(file_path)
+                        title = "Unknown"
+                        artist = ""
+                        album = ""
+                        duration = 0.0
+                        
+                        if audio.tags:
+                            title_tags = audio.tags.get('\xa9nam')
+                            if title_tags:
+                                title = title_tags[0]
+                            artist_tags = audio.tags.get('\xa9ART')
+                            if artist_tags:
+                                artist = artist_tags[0]
+                            album_tags = audio.tags.get('\xa9alb')
+                            if album_tags:
+                                album = album_tags[0]
+                        
+                        # Get duration if available
+                        if hasattr(audio, 'info') and audio.info:
+                            duration = audio.info.length if hasattr(audio.info, 'length') else 0.0
+                        
+                        # Create song entry
+                        song_id = str(uuid.uuid4())
+                        # Use relative path from downloads directory for filename
+                        rel_path = os.path.relpath(file_path, download_service.output_dir)
+                        rel_path = rel_path.replace('\\', '/')  # Use forward slashes
+                        
+                        song = {
+                            "id": song_id,
+                            "title": title,
+                            "artist": artist,
+                            "album": album,
+                            "filename": rel_path,
+                            "file_path": file_path,
+                            "url": "",
+                            "thumbnail": "",
+                            "duration": duration
+                        }
+                        
+                        # Add song to playlist
+                        playlists[playlist_id]["songs"].append(song)
+                    except Exception as e:
+                        print(f"Warning: Could not read metadata from {f}: {e}")
+                        # Still add the file even if metadata reading fails
+                        song_id = str(uuid.uuid4())
+                        rel_path = os.path.relpath(file_path, download_service.output_dir)
+                        rel_path = rel_path.replace('\\', '/')
+                        song = {
+                            "id": song_id,
+                            "title": f.replace('.m4a', ''),
+                            "artist": "",
+                            "album": "",
+                            "filename": rel_path,
+                            "file_path": file_path,
+                            "url": "",
+                            "thumbnail": "",
+                            "duration": 0.0
+                        }
+                        playlists[playlist_id]["songs"].append(song)
+                
+                # Update playlist timestamp
+                playlists[playlist_id]["updatedAt"] = datetime.now().isoformat()
+                save_playlists(playlists)
+        except Exception as e:
+            print(f"Warning: Could not create playlist: {e}")
+            # Continue even if playlist creation fails
+        
         return {
             "success": True,
             "downloaded": result['downloaded'],
@@ -333,7 +447,10 @@ def convert_csv_file(filename: str, request: CsvConversionRequest):
             "output_dir": result['output_dir'],
             "files": files,
             "total": result['total'],
-            "success_count": result['success_count']
+            "success_count": result['success_count'],
+            "playlist_id": playlist_id,
+            "playlist_name": playlist_name,
+            "playlist_created": playlist_created
         }
     except Exception as e:
         import traceback
