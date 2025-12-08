@@ -7,12 +7,14 @@ class VideoCard extends StatelessWidget {
   final VideoInfo video;
   final VoidCallback onStream;
   final VoidCallback onDownload;
+  final VoidCallback? onAddToPlaylist;
 
   const VideoCard({
     super.key,
     required this.video,
     required this.onStream,
     required this.onDownload,
+    this.onAddToPlaylist,
   });
 
   @override
@@ -63,10 +65,21 @@ class VideoCard extends StatelessWidget {
               ),
             ],
           ),
-          trailing: IconButton(
-            icon: const Icon(Icons.download),
-            onPressed: onDownload,
-            tooltip: 'Download',
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (onAddToPlaylist != null)
+                IconButton(
+                  icon: const Icon(Icons.add),
+                  onPressed: onAddToPlaylist,
+                  tooltip: 'Add to playlist',
+                ),
+              IconButton(
+                icon: const Icon(Icons.download),
+                onPressed: onDownload,
+                tooltip: 'Download',
+              ),
+            ],
           ),
           isThreeLine: true,
         ),

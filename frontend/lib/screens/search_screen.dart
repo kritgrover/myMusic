@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
 import '../services/player_state_service.dart';
+import '../services/playlist_service.dart';
 import '../widgets/video_card.dart';
+import '../widgets/playlist_selection_dialog.dart';
+import '../models/playlist.dart';
 
 const Color neonBlue = Color(0xFF00D9FF);
 
@@ -16,6 +19,7 @@ class SearchScreen extends StatefulWidget {
 
 class _SearchScreenState extends State<SearchScreen> {
   final ApiService _apiService = ApiService();
+  final PlaylistService _playlistService = PlaylistService();
   final TextEditingController _searchController = TextEditingController();
   List<VideoInfo> _searchResults = [];
   bool _isSearching = false;
@@ -115,6 +119,9 @@ class _SearchScreenState extends State<SearchScreen> {
                           },
                           onDownload: () async {
                             await _downloadVideo(_searchResults[index]);
+                          },
+                          onAddToPlaylist: () async {
+                            await _showAddToPlaylistDialog(_searchResults[index]);
                           },
                         );
                       },
@@ -219,6 +226,19 @@ class _SearchScreenState extends State<SearchScreen> {
         );
       }
     }
+  }
+
+  Future<void> _showAddToPlaylistDialog(VideoInfo video) async {
+    // Convert VideoInfo to PlaylistTrack
+    final track = PlaylistTrack.fromVideoInfo(video);
+    
+    await showDialog(
+      context: context,
+      builder: (context) => PlaylistSelectionDialog(
+        playlistService: _playlistService,
+        track: track,
+      ),
+    );
   }
 }
 

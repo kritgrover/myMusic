@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/playlist_service.dart';
+import '../services/api_service.dart';
 import '../models/playlist.dart';
 import 'add_to_playlist_screen.dart';
 import '../utils/song_display_utils.dart';
@@ -25,6 +26,7 @@ class PlaylistDetailScreen extends StatefulWidget {
 class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
   late Playlist _playlist;
   bool _isLoading = false;
+  final ApiService _apiService = ApiService();
 
   @override
   void initState() {
@@ -96,6 +98,86 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
     }
   }
 
+  bool _isTrackDownloaded(PlaylistTrack track) {
+    // A track is considered downloaded if it has a non-empty filename
+    return track.filename.isNotEmpty;
+  }
+
+  Future<void> _downloadTrack(PlaylistTrack track) async {
+    if (track.url == null || track.url!.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('No URL available for download'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+      return;
+    }
+
+    try {
+      // Show loading indicator
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => const Center(
+          child: CircularProgressIndicator(),
+        ),
+      );
+
+      final result = await _apiService.downloadAudio(
+        url: track.url!,
+        title: track.title,
+        artist: track.artist ?? '',
+        outputFormat: 'm4a',
+        embedThumbnail: true,
+      );
+
+      if (mounted) {
+        Navigator.of(context).pop(); // Close loading dialog
+
+        // Update the track in the playlist with the new filename
+        final updatedTrack = PlaylistTrack(
+          id: track.id,
+          title: track.title,
+          artist: track.artist,
+          album: track.album,
+          filename: result.filename,
+          url: track.url,
+          thumbnail: track.thumbnail,
+          duration: track.duration,
+        );
+
+        // Remove old track and add updated track
+        await widget.playlistService.removeTrackFromPlaylist(_playlist.id, track.id);
+        await widget.playlistService.addTrackToPlaylist(_playlist.id, updatedTrack);
+
+        // Reload playlist to show updated track
+        await _loadPlaylist();
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Downloaded: ${result.filename}'),
+            backgroundColor: neonBlue,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        Navigator.of(context).pop(); // Close loading dialog
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Download failed: $e'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    }
+  }
+
   Future<void> _playTrack(PlaylistTrack track) async {
     try {
       if (track.filename.isNotEmpty && widget.playerStateService != null) {
@@ -116,13 +198,50 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
           );
         }
       } else if (track.url != null) {
-        // This is a YouTube URL - would need to download first or handle differently
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Please download this track first'),
-            ),
-          );
+        // This is a YouTube URL - stream it
+        if (widget.playerStateService != null) {
+          try {
+            showDialog(
+              context: context,
+              barrierDismissible: false,
+              builder: (context) => const Center(
+                child: CircularProgressIndicator(),
+              ),
+            );
+
+            final result = await _apiService.getStreamingUrl(
+              url: track.url!,
+              title: track.title,
+              artist: track.artist ?? '',
+            );
+
+            if (mounted) {
+              Navigator.of(context).pop(); // Close loading dialog
+              await widget.playerStateService.streamTrack(
+                result.streamingUrl,
+                trackName: result.title,
+                trackArtist: result.artist,
+              );
+            }
+          } catch (e) {
+            if (mounted) {
+              Navigator.of(context).pop(); // Close loading dialog
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('Stream failed: $e'),
+                  backgroundColor: Colors.red,
+                ),
+              );
+            }
+          }
+        } else {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Please download this track first or player not available'),
+              ),
+            );
+          }
         }
       }
     } catch (e) {
@@ -361,13 +480,37 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                                               ),
                                             )
                                           : null,
-                                      trailing: IconButton(
-                                        icon: Icon(
-                                          Icons.delete_outline,
-                                          color: Colors.grey[400],
-                                        ),
-                                        onPressed: () => _removeTrack(track),
-                                        tooltip: 'Remove from playlist',
+                                      trailing: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          // Download status icon
+                                          _isTrackDownloaded(track)
+                                              ? IconButton(
+                                                  icon: const Icon(
+                                                    Icons.check_circle,
+                                                    color: neonBlue,
+                                                  ),
+                                                  onPressed: null,
+                                                  tooltip: 'Downloaded',
+                                                )
+                                              : IconButton(
+                                                  icon: Icon(
+                                                    Icons.download,
+                                                    color: Colors.grey[400],
+                                                  ),
+                                                  onPressed: () => _downloadTrack(track),
+                                                  tooltip: 'Download',
+                                                ),
+                                          // Delete button
+                                          IconButton(
+                                            icon: Icon(
+                                              Icons.delete_outline,
+                                              color: Colors.grey[400],
+                                            ),
+                                            onPressed: () => _removeTrack(track),
+                                            tooltip: 'Remove from playlist',
+                                          ),
+                                        ],
                                       ),
                                     ),
                                   ),
