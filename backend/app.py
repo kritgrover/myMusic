@@ -8,6 +8,7 @@ import json
 import uuid
 import shutil
 from datetime import datetime
+import httpx
 from download_service import DownloadService
 from mutagen.mp4 import MP4
 from mutagen.easyid3 import EasyID3
@@ -125,6 +126,67 @@ def search_youtube(request: SearchRequest):
         import traceback
         error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
         print(f"Search error: {error_detail}")  # Log to console
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/stream/{encoded_url:path}")
+async def stream_audio(encoded_url: str, request: Request):
+    """Proxy audio stream from YouTube to avoid CORS issues"""
+    try:
+        # Decode the URL
+        import urllib.parse
+        youtube_url = urllib.parse.unquote(encoded_url)
+        
+        # Get the streaming URL from YouTube (this might take a moment)
+        # Run in thread pool to avoid blocking
+        import asyncio
+        loop = asyncio.get_event_loop()
+        streaming_url = await loop.run_in_executor(
+            None, 
+            download_service.get_streaming_url, 
+            youtube_url
+        )
+        
+        # Proxy the stream through the backend
+        async def generate():
+            async with httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=30.0)) as client:
+                headers = {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                }
+                # Forward Range header if present
+                range_header = request.headers.get("Range")
+                if range_header:
+                    headers["Range"] = range_header
+                
+                async with client.stream("GET", streaming_url, headers=headers, follow_redirects=True) as response:
+                    # Forward the status code
+                    if response.status_code not in [200, 206]:
+                        raise HTTPException(status_code=response.status_code, detail="Failed to fetch audio stream")
+                    
+                    # Stream the data
+                    async for chunk in response.aiter_bytes():
+                        yield chunk
+        
+        # Determine content type from the streaming URL
+        content_type = "audio/mp4"
+        if "mime=audio%2Fmp4" in streaming_url or "mime=audio/mp4" in streaming_url:
+            content_type = "audio/mp4"
+        elif "mime=audio%2Fwebm" in streaming_url or "mime=audio/webm" in streaming_url:
+            content_type = "audio/webm"
+        elif "itag=140" in streaming_url:  # Common audio format
+            content_type = "audio/mp4"
+        
+        return StreamingResponse(
+            generate(),
+            media_type=content_type,
+            headers={
+                "Accept-Ranges": "bytes",
+                "Cache-Control": "no-cache",
+            }
+        )
+    except Exception as e:
+        import traceback
+        print(f"Stream error: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

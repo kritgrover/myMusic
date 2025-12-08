@@ -32,6 +32,26 @@ class ApiService {
     }
   }
   
+  Future<StreamResult> getStreamingUrl({
+    required String url,
+    required String title,
+    String artist = '',
+  }) async {
+    try {
+      // Encode the YouTube URL for use in the proxy endpoint
+      final encodedUrl = Uri.encodeComponent(url);
+      // Return the proxied streaming URL (backend will handle the actual streaming)
+      return StreamResult(
+        success: true,
+        streamingUrl: '$baseUrl/stream/$encodedUrl',
+        title: title,
+        artist: artist,
+      );
+    } catch (e) {
+      throw Exception('Stream error: $e');
+    }
+  }
+  
   Future<DownloadResult> downloadAudio({
     required String url,
     required String title,
@@ -225,6 +245,29 @@ class VideoInfo {
     final minutes = (duration / 60).floor();
     final seconds = (duration % 60).floor();
     return '${minutes}:${seconds.toString().padLeft(2, '0')}';
+  }
+}
+
+class StreamResult {
+  final bool success;
+  final String streamingUrl;
+  final String title;
+  final String artist;
+  
+  StreamResult({
+    required this.success,
+    required this.streamingUrl,
+    required this.title,
+    required this.artist,
+  });
+  
+  factory StreamResult.fromJson(Map<String, dynamic> json) {
+    return StreamResult(
+      success: json['success'] ?? false,
+      streamingUrl: json['streaming_url'] ?? '',
+      title: json['title'] ?? '',
+      artist: json['artist'] ?? '',
+    );
   }
 }
 

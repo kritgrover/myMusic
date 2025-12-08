@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
+import '../services/player_state_service.dart';
 import '../widgets/video_card.dart';
 
 const Color neonBlue = Color(0xFF00D9FF);
 
 class SearchScreen extends StatefulWidget {
-  const SearchScreen({super.key});
+  final PlayerStateService? playerStateService;
+  
+  const SearchScreen({super.key, this.playerStateService});
 
   @override
   State<SearchScreen> createState() => _SearchScreenState();
@@ -107,6 +110,9 @@ class _SearchScreenState extends State<SearchScreen> {
                       itemBuilder: (context, index) {
                         return VideoCard(
                           video: _searchResults[index],
+                          onStream: () async {
+                            await _streamVideo(_searchResults[index]);
+                          },
                           onDownload: () async {
                             await _downloadVideo(_searchResults[index]);
                           },
@@ -116,6 +122,61 @@ class _SearchScreenState extends State<SearchScreen> {
         ),
       ],
     );
+  }
+
+  Future<void> _streamVideo(VideoInfo video) async {
+    if (widget.playerStateService == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Player not available'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+      return;
+    }
+
+    try {
+      // Show loading indicator
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => const Center(
+          child: CircularProgressIndicator(),
+        ),
+      );
+
+      // Get streaming URL from backend
+      final result = await _apiService.getStreamingUrl(
+        url: video.url,
+        title: video.title,
+        artist: video.uploader,
+      );
+
+      if (mounted) {
+        Navigator.of(context).pop(); // Close loading dialog
+        
+        // Start streaming
+        await widget.playerStateService!.streamTrack(
+          result.streamingUrl,
+          trackName: result.title,
+          trackArtist: result.artist,
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        Navigator.of(context).pop(); // Close loading dialog
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Stream failed: $e'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    }
   }
 
   Future<void> _downloadVideo(VideoInfo video) async {

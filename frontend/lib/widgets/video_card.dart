@@ -5,11 +5,13 @@ const Color neonBlue = Color(0xFF00D9FF);
 
 class VideoCard extends StatelessWidget {
   final VideoInfo video;
+  final VoidCallback onStream;
   final VoidCallback onDownload;
 
   const VideoCard({
     super.key,
     required this.video,
+    required this.onStream,
     required this.onDownload,
   });
 
@@ -21,7 +23,7 @@ class VideoCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(12),
       ),
       child: InkWell(
-        onTap: onDownload,
+        onTap: onStream,
         borderRadius: BorderRadius.circular(12),
         child: ListTile(
           leading: ClipRRect(
@@ -63,7 +65,7 @@ class VideoCard extends StatelessWidget {
           ),
           trailing: IconButton(
             icon: const Icon(Icons.download),
-            onPressed: null,
+            onPressed: onDownload,
             tooltip: 'Download',
           ),
           isThreeLine: true,

@@ -25,7 +25,7 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     _screens.addAll([
-      const SearchScreen(),
+      SearchScreen(playerStateService: _playerStateService),
       DownloadsScreen(playerStateService: _playerStateService),
       PlaylistsScreen(playerStateService: _playerStateService),
       const CsvUploadScreen(),
