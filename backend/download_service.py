@@ -351,12 +351,17 @@ class DownloadService:
             cmd += extra_args + [search_spec]
             return cmd
         
+        # Use a temporary file first, then apply faststart
+        temp_output = output_path + ".tmp"
+        
         # Download as M4A (AAC) which is browser-compatible
         # Use --remux-video m4a to ensure proper container format
+        # Add --postprocessor-args to move moov atom to beginning for progressive streaming
         cmd_download = yt_cmd([
             '-f', 'bestaudio[ext=m4a]/bestaudio',
             '--remux-video', 'm4a',  # Remux to M4A container (browser-compatible)
-            '--output', output_path,
+            '--postprocessor-args', 'ffmpeg:-movflags +faststart',  # Move moov atom to beginning for progressive streaming
+            '--output', temp_output,
             '--no-playlist',
             '--no-warnings',
         ], url)
@@ -364,6 +369,15 @@ class DownloadService:
         ret = subprocess.run(cmd_download, capture_output=True, text=True, creationflags=creationflags)
         if ret.returncode != 0:
             raise Exception(f"Failed to download for streaming: {ret.stderr}")
+        
+        # Move temp file to final location
+        if os.path.exists(temp_output):
+            # On Windows, we need to handle file replacement
+            if os.path.exists(output_path):
+                os.remove(output_path)
+            os.rename(temp_output, output_path)
+        else:
+            raise Exception(f"Downloaded file not found: {temp_output}")
         
         if not os.path.exists(output_path):
             raise Exception(f"Downloaded file not found: {output_path}")

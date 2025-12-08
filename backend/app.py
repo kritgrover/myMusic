@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException, Request, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse, Response
 from pydantic import BaseModel
 from typing import List, Optional, Dict
 import os
@@ -142,47 +142,85 @@ async def stream_audio_options(encoded_url: str):
 
 @app.get("/stream/{encoded_url:path}")
 async def stream_audio(encoded_url: str, request: Request):
-    """Download and serve audio from YouTube in browser-compatible format"""
+    """Stream audio directly from YouTube with range request support - no download required"""
     try:
         # Decode the URL
         import urllib.parse
-        import hashlib
         youtube_url = urllib.parse.unquote(encoded_url)
         
-        # Create a cache key from the YouTube URL
-        cache_key = hashlib.md5(youtube_url.encode()).hexdigest()
-        temp_dir = os.path.join(BASE_DIR, "temp_streams")
-        os.makedirs(temp_dir, exist_ok=True)
-        temp_file = os.path.join(temp_dir, f"{cache_key}.m4a")
-        
-        # Check if file already exists in cache
-        if not os.path.exists(temp_file):
-            print(f"Downloading audio for streaming: {youtube_url}")
-            # Download to temp file in browser-compatible format
-            # Use yt-dlp to download as M4A (AAC) which is browser-compatible
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(
-                None,
-                download_service.download_for_streaming,
-                youtube_url,
-                temp_file
-            )
-            print(f"Downloaded to: {temp_file}")
-        
-        # Serve the file with proper headers for streaming
-        return FileResponse(
-            temp_file,
-            media_type='audio/mp4',
-            filename=os.path.basename(temp_file),
-            headers={
-                "Accept-Ranges": "bytes",
-                "Cache-Control": "public, max-age=3600",  # Cache for 1 hour
-                "Access-Control-Allow-Origin": "*",
-                "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
-                "Access-Control-Allow-Headers": "Range, Content-Type",
-                "Access-Control-Expose-Headers": "Content-Length, Content-Range, Accept-Ranges",
-            }
+        # Get direct streaming URL from YouTube (no download)
+        loop = asyncio.get_event_loop()
+        stream_url = await loop.run_in_executor(
+            None,
+            download_service.get_streaming_url,
+            youtube_url
         )
+        
+        # Get range header from request if present
+        range_header = request.headers.get("range")
+        
+        # Proxy the stream with range request support
+        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=10.0)) as client:
+            headers = {}
+            if range_header:
+                headers["Range"] = range_header
+            
+            # Make request to YouTube's streaming URL
+            async with client.stream("GET", stream_url, headers=headers, follow_redirects=True) as response:
+                # Determine content type
+                content_type = response.headers.get("Content-Type", "audio/mp4")
+                
+                # Build response headers
+                response_headers = {
+                    "Content-Type": content_type,
+                    "Accept-Ranges": "bytes",
+                    "Access-Control-Allow-Origin": "*",
+                    "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+                    "Access-Control-Allow-Headers": "Range, Content-Type",
+                    "Access-Control-Expose-Headers": "Content-Length, Content-Range, Accept-Ranges",
+                }
+                
+                # For range requests (206 Partial Content), we MUST include Content-Length
+                # and NOT use chunked encoding. Read all data first to ensure exact match.
+                is_range_request = range_header is not None and response.status_code == 206
+                
+                if is_range_request:
+                    # Read all bytes from the range response
+                    content_bytes = b""
+                    async for chunk in response.aiter_bytes():
+                        content_bytes += chunk
+                    
+                    # Copy Content-Range
+                    if "Content-Range" in response.headers:
+                        response_headers["Content-Range"] = response.headers["Content-Range"]
+                    
+                    # Set Content-Length to actual bytes read
+                    response_headers["Content-Length"] = str(len(content_bytes))
+                    
+                    # Return Response (not StreamingResponse) for range requests
+                    # This ensures Content-Length matches exactly
+                    return Response(
+                        content=content_bytes,
+                        status_code=206,
+                        headers=response_headers,
+                        media_type=content_type,
+                    )
+                else:
+                    # For full requests (200), use chunked encoding
+                    # Don't set Content-Length to allow progressive streaming
+                    async def generate_full():
+                        try:
+                            async for chunk in response.aiter_bytes():
+                                yield chunk
+                        except Exception as e:
+                            print(f"Error streaming full: {e}")
+                            raise
+                    
+                    return StreamingResponse(
+                        generate_full(),
+                        status_code=response.status_code,
+                        headers=response_headers,
+                    )
     except Exception as e:
         import traceback
         print(f"Stream error: {traceback.format_exc()}")

@@ -198,34 +198,23 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
           );
         }
       } else if (track.url != null) {
-        // This is a YouTube URL - stream it
+        // This is a YouTube URL - stream it immediately
         if (widget.playerStateService != null) {
           try {
-            showDialog(
-              context: context,
-              barrierDismissible: false,
-              builder: (context) => const Center(
-                child: CircularProgressIndicator(),
-              ),
-            );
-
             final result = await _apiService.getStreamingUrl(
               url: track.url!,
               title: track.title,
               artist: track.artist ?? '',
             );
 
-            if (mounted) {
-              Navigator.of(context).pop(); // Close loading dialog
-              await widget.playerStateService.streamTrack(
-                result.streamingUrl,
-                trackName: result.title,
-                trackArtist: result.artist,
-              );
-            }
+            // Start streaming immediately - just_audio will handle buffering
+            await widget.playerStateService.streamTrack(
+              result.streamingUrl,
+              trackName: result.title,
+              trackArtist: result.artist,
+            );
           } catch (e) {
             if (mounted) {
-              Navigator.of(context).pop(); // Close loading dialog
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
                   content: Text('Stream failed: $e'),
@@ -238,7 +227,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(
-                content: Text('Please download this track first or player not available'),
+                content: Text('Player not available'),
               ),
             );
           }

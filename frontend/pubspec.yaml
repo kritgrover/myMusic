@@ -10,7 +10,7 @@ dependencies:
   flutter:
     sdk: flutter
   http: ^1.1.0
-  audioplayers: ^5.2.1
+  just_audio: ^0.9.36
   path_provider: ^2.1.1
   permission_handler: ^11.1.0
   cupertino_icons: ^1.0.6

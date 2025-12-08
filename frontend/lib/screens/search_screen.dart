@@ -146,35 +146,21 @@ class _SearchScreenState extends State<SearchScreen> {
     }
 
     try {
-      // Show loading indicator
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (context) => const Center(
-          child: CircularProgressIndicator(),
-        ),
-      );
-
-      // Get streaming URL from backend
+      // Get streaming URL from backend - this is fast, no need for loading dialog
       final result = await _apiService.getStreamingUrl(
         url: video.url,
         title: video.title,
         artist: video.uploader,
       );
 
-      if (mounted) {
-        Navigator.of(context).pop(); // Close loading dialog
-        
-        // Start streaming
-        await widget.playerStateService!.streamTrack(
-          result.streamingUrl,
-          trackName: result.title,
-          trackArtist: result.artist,
-        );
-      }
+      // Start streaming immediately - just_audio will handle buffering
+      await widget.playerStateService!.streamTrack(
+        result.streamingUrl,
+        trackName: result.title,
+        trackArtist: result.artist,
+      );
     } catch (e) {
       if (mounted) {
-        Navigator.of(context).pop(); // Close loading dialog
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Stream failed: $e'),
