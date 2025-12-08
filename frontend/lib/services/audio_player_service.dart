@@ -29,7 +29,13 @@ class AudioPlayerService {
   
   Future<void> playFromUrl(String url) async {
     try {
+      // Stop any currently playing audio first
+      if (_audioPlayer.state == PlayerState.playing || _audioPlayer.state == PlayerState.paused) {
+        await _audioPlayer.stop();
+      }
       _currentUrl = url;
+      _pausedAt = null; // Clear paused position when starting a new track
+      // Play the audio - this should automatically start playback
       await _audioPlayer.play(UrlSource(url));
     } catch (e) {
       throw Exception('Failed to play audio: $e');
@@ -63,11 +69,16 @@ class AudioPlayerService {
     // URL encode the filename to handle special characters
     final encodedFilename = Uri.encodeComponent(filename);
     final url = '${AppConfig.apiBaseUrl}/downloads/$encodedFilename';
+    // Stop any currently playing audio first
+    if (_audioPlayer.state == PlayerState.playing || _audioPlayer.state == PlayerState.paused) {
+      await _audioPlayer.stop();
+    }
     await playFromUrl(url);
   }
   
   Future<void> pause() async {
     if (_audioPlayer.state == PlayerState.playing) {
+      // Store current position before pausing
       _pausedAt = _position;
       await _audioPlayer.pause();
     }
@@ -79,8 +90,10 @@ class AudioPlayerService {
       await _audioPlayer.resume();
     } else if (_audioPlayer.state == PlayerState.stopped && _currentUrl != null) {
       // If stopped, restart from last position or beginning
-      final resumePosition = _pausedAt ?? Duration.zero;
+      final resumePosition = _pausedAt ?? _position;
       await _audioPlayer.play(UrlSource(_currentUrl!), position: resumePosition);
+      // Clear paused position after resuming
+      _pausedAt = null;
     }
   }
   
@@ -94,8 +107,17 @@ class AudioPlayerService {
     // Only seek if we have a valid source
     if (_currentUrl == null) return;
     
-    // Seek to the new position - this should maintain playing state automatically
-    await _audioPlayer.seek(position);
+    // If player is stopped, we need to play from the current URL at the seek position
+    if (_audioPlayer.state == PlayerState.stopped) {
+      await _audioPlayer.play(UrlSource(_currentUrl!), position: position);
+    } else {
+      // Seek to the new position - this should maintain playing state automatically
+      await _audioPlayer.seek(position);
+      // Update paused position if we're paused, so resume uses the new position
+      if (_audioPlayer.state == PlayerState.paused) {
+        _pausedAt = position;
+      }
+    }
   }
   
   bool get isPlaying => _isPlaying;

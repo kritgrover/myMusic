@@ -7,6 +7,7 @@ import os
 import json
 import uuid
 import shutil
+import asyncio
 from datetime import datetime
 import httpx
 from download_service import DownloadService
@@ -129,59 +130,57 @@ def search_youtube(request: SearchRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.options("/stream/{encoded_url:path}")
+async def stream_audio_options(encoded_url: str):
+    """Handle CORS preflight requests"""
+    return {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+        "Access-Control-Allow-Headers": "Range, Content-Type",
+        "Access-Control-Expose-Headers": "Content-Length, Content-Range, Accept-Ranges",
+    }
+
 @app.get("/stream/{encoded_url:path}")
 async def stream_audio(encoded_url: str, request: Request):
-    """Proxy audio stream from YouTube to avoid CORS issues"""
+    """Download and serve audio from YouTube in browser-compatible format"""
     try:
         # Decode the URL
         import urllib.parse
+        import hashlib
         youtube_url = urllib.parse.unquote(encoded_url)
         
-        # Get the streaming URL from YouTube (this might take a moment)
-        # Run in thread pool to avoid blocking
-        import asyncio
-        loop = asyncio.get_event_loop()
-        streaming_url = await loop.run_in_executor(
-            None, 
-            download_service.get_streaming_url, 
-            youtube_url
-        )
+        # Create a cache key from the YouTube URL
+        cache_key = hashlib.md5(youtube_url.encode()).hexdigest()
+        temp_dir = os.path.join(BASE_DIR, "temp_streams")
+        os.makedirs(temp_dir, exist_ok=True)
+        temp_file = os.path.join(temp_dir, f"{cache_key}.m4a")
         
-        # Proxy the stream through the backend
-        async def generate():
-            async with httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=30.0)) as client:
-                headers = {
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                }
-                # Forward Range header if present
-                range_header = request.headers.get("Range")
-                if range_header:
-                    headers["Range"] = range_header
-                
-                async with client.stream("GET", streaming_url, headers=headers, follow_redirects=True) as response:
-                    # Forward the status code
-                    if response.status_code not in [200, 206]:
-                        raise HTTPException(status_code=response.status_code, detail="Failed to fetch audio stream")
-                    
-                    # Stream the data
-                    async for chunk in response.aiter_bytes():
-                        yield chunk
+        # Check if file already exists in cache
+        if not os.path.exists(temp_file):
+            print(f"Downloading audio for streaming: {youtube_url}")
+            # Download to temp file in browser-compatible format
+            # Use yt-dlp to download as M4A (AAC) which is browser-compatible
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(
+                None,
+                download_service.download_for_streaming,
+                youtube_url,
+                temp_file
+            )
+            print(f"Downloaded to: {temp_file}")
         
-        # Determine content type from the streaming URL
-        content_type = "audio/mp4"
-        if "mime=audio%2Fmp4" in streaming_url or "mime=audio/mp4" in streaming_url:
-            content_type = "audio/mp4"
-        elif "mime=audio%2Fwebm" in streaming_url or "mime=audio/webm" in streaming_url:
-            content_type = "audio/webm"
-        elif "itag=140" in streaming_url:  # Common audio format
-            content_type = "audio/mp4"
-        
-        return StreamingResponse(
-            generate(),
-            media_type=content_type,
+        # Serve the file with proper headers for streaming
+        return FileResponse(
+            temp_file,
+            media_type='audio/mp4',
+            filename=os.path.basename(temp_file),
             headers={
                 "Accept-Ranges": "bytes",
-                "Cache-Control": "no-cache",
+                "Cache-Control": "public, max-age=3600",  # Cache for 1 hour
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+                "Access-Control-Allow-Headers": "Range, Content-Type",
+                "Access-Control-Expose-Headers": "Content-Length, Content-Range, Accept-Ranges",
             }
         )
     except Exception as e:
