@@ -26,6 +26,7 @@ build/
 # Downloads
 backend/downloads/
 backend/temp/
+backend/playlists.json
 *.mp3
 *.m4a
 *.m3u

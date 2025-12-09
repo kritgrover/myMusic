@@ -46,21 +46,10 @@
                 "url": "",
                 "thumbnail": "",
                 "duration": 244.45968253968255
-            },
-            {
-                "id": "fa42ced4-6529-4698-aabe-d313640760f4",
-                "title": "Neurotica",
-                "artist": "Polyphia",
-                "album": "Remember That You Will Die",
-                "filename": "mathy/005 - Neurotica.m4a",
-                "file_path": "E:\\myMusic\\backend\\downloads\\mathy\\005 - Neurotica.m4a",
-                "url": "",
-                "thumbnail": "",
-                "duration": 195.67455782312925
             }
         ],
         "createdAt": "2025-12-07T17:37:16.348491",
-        "updatedAt": "2025-12-08T16:44:19.567336"
+        "updatedAt": "2025-12-08T18:51:05.404902"
     },
     "febfa59a-f9ba-428a-9b1c-a5c6508a0822": {
         "id": "febfa59a-f9ba-428a-9b1c-a5c6508a0822",
@@ -142,9 +131,20 @@
                 "url": "https://www.youtube.com/watch?v=FAxxyQk43nc",
                 "thumbnail": "https://img.youtube.com/vi/FAxxyQk43nc/maxresdefault.jpg",
                 "duration": 171.0
+            },
+            {
+                "id": "1BDTyDiXr0k",
+                "title": "Blue Reverie",
+                "artist": "ERRA",
+                "album": null,
+                "filename": "",
+                "file_path": "",
+                "url": "https://www.youtube.com/watch?v=1BDTyDiXr0k",
+                "thumbnail": "https://img.youtube.com/vi/1BDTyDiXr0k/maxresdefault.jpg",
+                "duration": 302.0
             }
         ],
         "createdAt": "2025-12-07T18:00:57.940460",
-        "updatedAt": "2025-12-08T16:44:16.071908"
+        "updatedAt": "2025-12-08T18:49:33.168616"
     }
 }
