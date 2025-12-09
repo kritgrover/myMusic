@@ -322,30 +322,39 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
                                   if (widget.queueService != null)
-                                    Stack(
-                                      children: [
-                                        IconButton(
-                                          icon: const Icon(Icons.more_vert),
-                                          onPressed: () => _addToQueue(file),
-                                          tooltip: 'Add to queue',
-                                        ),
-                                        Positioned(
-                                          right: 8,
-                                          top: 8,
-                                          child: Container(
-                                            padding: const EdgeInsets.all(2),
-                                            decoration: BoxDecoration(
-                                              color: neonBlue,
-                                              shape: BoxShape.circle,
+                                    Material(
+                                      color: Colors.transparent,
+                                      child: InkWell(
+                                        onTap: () => _addToQueue(file),
+                                        borderRadius: BorderRadius.circular(24),
+                                        child: Stack(
+                                          children: [
+                                            IconButton(
+                                              icon: const Icon(Icons.more_vert),
+                                              onPressed: () => _addToQueue(file),
+                                              tooltip: 'Add to queue',
                                             ),
-                                            child: const Icon(
-                                              Icons.add,
-                                              size: 12,
-                                              color: Colors.black,
+                                            Positioned(
+                                              right: 8,
+                                              top: 8,
+                                              child: IgnorePointer(
+                                                child: Container(
+                                                  padding: const EdgeInsets.all(2),
+                                                  decoration: BoxDecoration(
+                                                    color: neonBlue,
+                                                    shape: BoxShape.circle,
+                                                  ),
+                                                  child: const Icon(
+                                                    Icons.add,
+                                                    size: 12,
+                                                    color: Colors.black,
+                                                  ),
+                                                ),
+                                              ),
                                             ),
-                                          ),
+                                          ],
                                         ),
-                                      ],
+                                      ),
                                     ),
                                   IconButton(
                                     icon: Icon(

@@ -71,30 +71,39 @@ class VideoCard extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               if (onAddToQueue != null)
-                Stack(
-                  children: [
-                    IconButton(
-                      icon: const Icon(Icons.more_vert),
-                      onPressed: onAddToQueue,
-                      tooltip: 'Add to queue',
-                    ),
-                    Positioned(
-                      right: 8,
-                      top: 8,
-                      child: Container(
-                        padding: const EdgeInsets.all(2),
-                        decoration: BoxDecoration(
-                          color: neonBlue,
-                          shape: BoxShape.circle,
+                Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    onTap: onAddToQueue,
+                    borderRadius: BorderRadius.circular(24),
+                    child: Stack(
+                      children: [
+                        IconButton(
+                          icon: const Icon(Icons.more_vert),
+                          onPressed: onAddToQueue,
+                          tooltip: 'Add to queue',
                         ),
-                        child: const Icon(
-                          Icons.add,
-                          size: 12,
-                          color: Colors.black,
+                        Positioned(
+                          right: 8,
+                          top: 8,
+                          child: IgnorePointer(
+                            child: Container(
+                              padding: const EdgeInsets.all(2),
+                              decoration: BoxDecoration(
+                                color: neonBlue,
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Icon(
+                                Icons.add,
+                                size: 12,
+                                color: Colors.black,
+                              ),
+                            ),
+                          ),
                         ),
-                      ),
+                      ],
                     ),
-                  ],
+                  ),
                 ),
               if (onAddToPlaylist != null)
                 IconButton(

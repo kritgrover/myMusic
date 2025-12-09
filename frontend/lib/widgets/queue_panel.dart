@@ -136,25 +136,14 @@ class QueuePanel extends StatelessWidget {
                                   overflow: TextOverflow.ellipsis,
                                 )
                               : null,
-                          trailing: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              if (isCurrent)
-                                Icon(
-                                  Icons.play_arrow,
-                                  color: neonBlue,
-                                  size: 20,
-                                ),
-                              IconButton(
-                                icon: const Icon(Icons.close, size: 18),
-                                onPressed: () {
-                                  queueService.removeFromQueue(index);
-                                },
-                                tooltip: 'Remove from queue',
-                                padding: EdgeInsets.zero,
-                                constraints: const BoxConstraints(),
-                              ),
-                            ],
+                          trailing: IconButton(
+                            icon: const Icon(Icons.close, size: 18),
+                            onPressed: () {
+                              queueService.removeFromQueue(index);
+                            },
+                            tooltip: 'Remove from queue',
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(),
                           ),
                         ),
                       ),
