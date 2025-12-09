@@ -93,7 +93,7 @@
                 "title": "Master of Puppets (Remastered)",
                 "artist": "Metallica",
                 "album": null,
-                "filename": "",
+                "filename": "Master of Puppets Remastered - Metallica.m4a",
                 "file_path": "",
                 "url": "https://www.youtube.com/watch?v=E0ozmU9cJDg",
                 "thumbnail": "https://img.youtube.com/vi/E0ozmU9cJDg/maxresdefault.jpg",
@@ -104,7 +104,7 @@
                 "title": "Metallica - Ride The Lightning (HD)",
                 "artist": "MegaHermansen",
                 "album": null,
-                "filename": "",
+                "filename": "Metallica  Ride The Lightning HD - MegaHermansen.m4a",
                 "file_path": "",
                 "url": "https://www.youtube.com/watch?v=We_DLCYDaYw",
                 "thumbnail": "https://img.youtube.com/vi/We_DLCYDaYw/maxresdefault.jpg",
@@ -115,7 +115,7 @@
                 "title": "Angel Of Death",
                 "artist": "Slayer",
                 "album": null,
-                "filename": "",
+                "filename": "Angel Of Death - Slayer.m4a",
                 "file_path": "",
                 "url": "https://www.youtube.com/watch?v=r7cWi41XGCM",
                 "thumbnail": "https://img.youtube.com/vi/r7cWi41XGCM/maxresdefault.jpg",
@@ -126,7 +126,7 @@
                 "title": "Altar Of Sacrifice",
                 "artist": "Slayer",
                 "album": null,
-                "filename": "",
+                "filename": "Altar Of Sacrifice - Slayer.m4a",
                 "file_path": "",
                 "url": "https://www.youtube.com/watch?v=FAxxyQk43nc",
                 "thumbnail": "https://img.youtube.com/vi/FAxxyQk43nc/maxresdefault.jpg",
@@ -137,7 +137,7 @@
                 "title": "Blue Reverie",
                 "artist": "ERRA",
                 "album": null,
-                "filename": "",
+                "filename": "Blue Reverie - ERRA.m4a",
                 "file_path": "",
                 "url": "https://www.youtube.com/watch?v=1BDTyDiXr0k",
                 "thumbnail": "https://img.youtube.com/vi/1BDTyDiXr0k/maxresdefault.jpg",
@@ -145,6 +145,6 @@
             }
         ],
         "createdAt": "2025-12-07T18:00:57.940460",
-        "updatedAt": "2025-12-08T18:49:33.168616"
+        "updatedAt": "2025-12-08T23:50:34.307620"
     }
 }

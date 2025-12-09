@@ -314,6 +314,256 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
     }
   }
 
+  Future<void> _downloadUndownloadedTracks() async {
+    // Find all tracks that need to be downloaded
+    final tracksToDownload = _playlist.tracks.where((track) => 
+      !_isTrackDownloaded(track) && track.url != null && track.url!.isNotEmpty
+    ).toList();
+
+    if (tracksToDownload.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('All tracks are already downloaded'),
+            backgroundColor: neonBlue,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+      return;
+    }
+
+    // Show confirmation dialog
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Download Tracks'),
+        content: Text(
+          'Download ${tracksToDownload.length} ${tracksToDownload.length == 1 ? 'track' : 'tracks'}?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Download'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    int successCount = 0;
+    int failCount = 0;
+
+    // Show loading dialog
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => PopScope(
+        canPop: false,
+        child: AlertDialog(
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const CircularProgressIndicator(),
+              const SizedBox(height: 16),
+              Text(
+                'Downloading ${tracksToDownload.length} ${tracksToDownload.length == 1 ? 'track' : 'tracks'}...\nPlease wait',
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    try {
+      for (final track in tracksToDownload) {
+
+        try {
+          final result = await _apiService.downloadAudio(
+            url: track.url!,
+            title: track.title,
+            artist: track.artist ?? '',
+            outputFormat: 'm4a',
+            embedThumbnail: true,
+          );
+
+          // Update the track in the playlist with the new filename
+          final updatedTrack = PlaylistTrack(
+            id: track.id,
+            title: track.title,
+            artist: track.artist,
+            album: track.album,
+            filename: result.filename,
+            url: track.url,
+            thumbnail: track.thumbnail,
+            duration: track.duration,
+          );
+
+          // Remove old track and add updated track
+          await widget.playlistService.removeTrackFromPlaylist(_playlist.id, track.id);
+          await widget.playlistService.addTrackToPlaylist(_playlist.id, updatedTrack);
+
+          successCount++;
+        } catch (e) {
+          failCount++;
+          // Continue with next track
+        }
+      }
+
+      // Reload playlist to show updated tracks
+      await _loadPlaylist();
+
+      if (mounted) {
+        Navigator.of(context).pop(); // Close progress dialog
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              failCount > 0
+                  ? 'Downloaded $successCount ${successCount == 1 ? 'track' : 'tracks'}${failCount > 0 ? ' ($failCount failed)' : ''}'
+                  : 'Downloaded ${successCount} ${successCount == 1 ? 'track' : 'tracks'}',
+            ),
+            backgroundColor: failCount > 0 ? Colors.orange : neonBlue,
+            behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        Navigator.of(context).pop(); // Close progress dialog
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Download error: $e'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _addPlaylistToQueue() async {
+    if (widget.queueService == null) return;
+
+    if (_playlist.tracks.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Playlist is empty'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+      return;
+    }
+
+    // Show loading indicator
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(
+        child: CircularProgressIndicator(),
+      ),
+    );
+
+    try {
+      final queueItems = <QueueItem>[];
+      int successCount = 0;
+      int failCount = 0;
+
+      for (final track in _playlist.tracks) {
+        try {
+          QueueItem? queueItem;
+
+          if (track.filename.isNotEmpty) {
+            // Local file
+            queueItem = QueueItem.fromDownloadedFile(
+              filename: track.filename,
+              title: track.title,
+              artist: track.artist,
+            );
+            queueItems.add(queueItem);
+            successCount++;
+          } else if (track.url != null && track.url!.isNotEmpty) {
+            // Need to get streaming URL
+            try {
+              final result = await _apiService.getStreamingUrl(
+                url: track.url!,
+                title: track.title,
+                artist: track.artist ?? '',
+              );
+
+              queueItem = QueueItem.fromPlaylistTrack(
+                trackId: track.id,
+                title: result.title,
+                artist: result.artist,
+                streamingUrl: result.streamingUrl,
+              );
+              queueItems.add(queueItem);
+              successCount++;
+            } catch (e) {
+              failCount++;
+              // Continue with next track
+            }
+          } else {
+            failCount++;
+          }
+        } catch (e) {
+          failCount++;
+          // Continue with next track
+        }
+      }
+
+      if (mounted) {
+        Navigator.of(context).pop(); // Close loading dialog
+
+        if (queueItems.isNotEmpty) {
+          widget.queueService!.addAllToQueue(queueItems);
+
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                failCount > 0
+                    ? 'Added $successCount tracks to queue${failCount > 0 ? ' ($failCount failed)' : ''}'
+                    : 'Added ${queueItems.length} tracks to queue',
+              ),
+              backgroundColor: neonBlue,
+              behavior: SnackBarBehavior.floating,
+              duration: const Duration(seconds: 3),
+            ),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('No tracks could be added to queue'),
+              backgroundColor: Colors.red,
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        Navigator.of(context).pop(); // Close loading dialog
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to add playlist to queue: $e'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    }
+  }
+
   Future<void> _addToQueue(PlaylistTrack track) async {
     if (widget.queueService == null) return;
 
@@ -452,11 +702,30 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(
-                              _playlist.name,
-                              style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                                fontWeight: FontWeight.bold,
-                              ),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    _playlist.name,
+                                    style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                                if (widget.queueService != null)
+                                  IconButton(
+                                    icon: const Icon(Icons.queue_music),
+                                    onPressed: _addPlaylistToQueue,
+                                    tooltip: 'Add playlist to queue',
+                                    color: neonBlue,
+                                  ),
+                                IconButton(
+                                  icon: const Icon(Icons.download),
+                                  onPressed: _downloadUndownloadedTracks,
+                                  tooltip: 'Download undownloaded tracks',
+                                  color: neonBlue,
+                                ),
+                              ],
                             ),
                             const SizedBox(height: 8),
                             Row(
