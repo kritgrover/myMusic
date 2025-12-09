@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
 import '../services/audio_player_service.dart';
+import '../services/queue_service.dart';
+import '../services/player_state_service.dart';
 import '../utils/song_display_utils.dart';
 
 const Color neonBlue = Color(0xFF00D9FF);
@@ -9,12 +11,18 @@ class BottomPlayer extends StatefulWidget {
   final AudioPlayerService playerService;
   final String? currentTrackName;
   final String? currentTrackArtist;
+  final QueueService? queueService;
+  final PlayerStateService? playerStateService;
+  final VoidCallback? onQueueToggle;
 
   const BottomPlayer({
     super.key,
     required this.playerService,
     this.currentTrackName,
     this.currentTrackArtist,
+    this.queueService,
+    this.playerStateService,
+    this.onQueueToggle,
   });
 
   @override
@@ -262,10 +270,46 @@ class _BottomPlayerState extends State<BottomPlayer> {
                             ],
                           ),
                         ),
-                        // Volume control on the right
+                        // Volume control and queue icon on the right
                         Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
+                            if (widget.queueService != null && widget.onQueueToggle != null)
+                              IconButton(
+                                icon: Stack(
+                                  children: [
+                                    const Icon(Icons.queue_music),
+                                    if (widget.queueService!.queueLength > 0)
+                                      Positioned(
+                                        right: 0,
+                                        top: 0,
+                                        child: Container(
+                                          padding: const EdgeInsets.all(2),
+                                          decoration: BoxDecoration(
+                                            color: neonBlue,
+                                            shape: BoxShape.circle,
+                                          ),
+                                          constraints: const BoxConstraints(
+                                            minWidth: 16,
+                                            minHeight: 16,
+                                          ),
+                                          child: Text(
+                                            '${widget.queueService!.queueLength}',
+                                            style: const TextStyle(
+                                              color: Colors.black,
+                                              fontSize: 10,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                            textAlign: TextAlign.center,
+                                          ),
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                                onPressed: widget.onQueueToggle,
+                                tooltip: 'Queue',
+                                color: neonBlue,
+                              ),
                             Icon(
                               _isDraggingVolume
                                   ? (_dragVolumeValue > 0.5
@@ -304,11 +348,17 @@ class _BottomPlayerState extends State<BottomPlayer> {
                       children: [
                         IconButton(
                           icon: const Icon(Icons.skip_previous),
-                          onPressed: hasTrack
-                              ? () {
-                                  // Previous track functionality
+                          onPressed: hasTrack && widget.queueService != null && widget.playerStateService != null
+                              ? () async {
+                                  if (widget.queueService!.hasPrevious) {
+                                    await widget.queueService!.playPrevious(widget.playerStateService!);
+                                  }
                                 }
-                              : null,
+                              : hasTrack
+                                  ? () {
+                                      // Previous track functionality (no queue)
+                                    }
+                                  : null,
                           tooltip: 'Previous',
                           color: hasTrack ? neonBlue : null,
                         ),
@@ -329,11 +379,17 @@ class _BottomPlayerState extends State<BottomPlayer> {
                         ),
                         IconButton(
                           icon: const Icon(Icons.skip_next),
-                          onPressed: hasTrack
-                              ? () {
-                                  // Next track functionality
+                          onPressed: hasTrack && widget.queueService != null && widget.playerStateService != null
+                              ? () async {
+                                  if (widget.queueService!.hasNext) {
+                                    await widget.queueService!.playNext(widget.playerStateService!);
+                                  }
                                 }
-                              : null,
+                              : hasTrack
+                                  ? () {
+                                      // Next track functionality (no queue)
+                                    }
+                                  : null,
                           tooltip: 'Next',
                           color: hasTrack ? neonBlue : null,
                         ),

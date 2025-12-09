@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import '../services/playlist_service.dart';
 import '../services/api_service.dart';
+import '../services/queue_service.dart';
 import '../models/playlist.dart';
+import '../models/queue_item.dart';
 import 'add_to_playlist_screen.dart';
 import '../utils/song_display_utils.dart';
 
@@ -11,12 +13,14 @@ class PlaylistDetailScreen extends StatefulWidget {
   final Playlist playlist;
   final PlaylistService playlistService;
   final dynamic playerStateService; // Optional, for playing tracks
+  final QueueService? queueService;
 
   const PlaylistDetailScreen({
     super.key,
     required this.playlist,
     required this.playlistService,
     this.playerStateService,
+    this.queueService,
   });
 
   @override
@@ -310,6 +314,86 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
     }
   }
 
+  Future<void> _addToQueue(PlaylistTrack track) async {
+    if (widget.queueService == null) return;
+
+    try {
+      QueueItem? queueItem;
+
+      if (track.filename.isNotEmpty) {
+        // Local file
+        queueItem = QueueItem.fromDownloadedFile(
+          filename: track.filename,
+          title: track.title,
+          artist: track.artist,
+        );
+      } else if (track.url != null && track.url!.isNotEmpty) {
+        // Need to get streaming URL
+        try {
+          final result = await _apiService.getStreamingUrl(
+            url: track.url!,
+            title: track.title,
+            artist: track.artist ?? '',
+          );
+
+          queueItem = QueueItem.fromPlaylistTrack(
+            trackId: track.id,
+            title: result.title,
+            artist: result.artist,
+            streamingUrl: result.streamingUrl,
+          );
+        } catch (e) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Failed to get streaming URL: $e'),
+                backgroundColor: Colors.red,
+                behavior: SnackBarBehavior.floating,
+              ),
+            );
+          }
+          return;
+        }
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('No URL or filename available'),
+              backgroundColor: Colors.red,
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+        return;
+      }
+
+      if (queueItem != null) {
+        widget.queueService!.addToQueue(queueItem);
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Added to queue: ${getDisplayTitle(track.title, track.filename)}'),
+              backgroundColor: neonBlue,
+              behavior: SnackBarBehavior.floating,
+              duration: const Duration(seconds: 2),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to add to queue: $e'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -472,6 +556,33 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                                       trailing: Row(
                                         mainAxisSize: MainAxisSize.min,
                                         children: [
+                                          // Add to queue button
+                                          if (widget.queueService != null)
+                                            Stack(
+                                              children: [
+                                                IconButton(
+                                                  icon: const Icon(Icons.more_vert),
+                                                  onPressed: () => _addToQueue(track),
+                                                  tooltip: 'Add to queue',
+                                                ),
+                                                Positioned(
+                                                  right: 8,
+                                                  top: 8,
+                                                  child: Container(
+                                                    padding: const EdgeInsets.all(2),
+                                                    decoration: BoxDecoration(
+                                                      color: neonBlue,
+                                                      shape: BoxShape.circle,
+                                                    ),
+                                                    child: const Icon(
+                                                      Icons.add,
+                                                      size: 12,
+                                                      color: Colors.black,
+                                                    ),
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
                                           // Download status icon
                                           _isTrackDownloaded(track)
                                               ? IconButton(

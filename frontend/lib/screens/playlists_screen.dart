@@ -2,14 +2,16 @@ import 'package:flutter/material.dart';
 import '../services/playlist_service.dart';
 import '../models/playlist.dart';
 import '../services/player_state_service.dart';
+import '../services/queue_service.dart';
 import 'playlist_detail_screen.dart';
 
 const Color neonBlue = Color(0xFF00D9FF);
 
 class PlaylistsScreen extends StatefulWidget {
   final PlayerStateService? playerStateService;
+  final QueueService? queueService;
 
-  const PlaylistsScreen({super.key, this.playerStateService});
+  const PlaylistsScreen({super.key, this.playerStateService, this.queueService});
 
   @override
   State<PlaylistsScreen> createState() => _PlaylistsScreenState();
@@ -333,6 +335,7 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
                                           playlist: playlist,
                                           playlistService: _playlistService,
                                           playerStateService: widget.playerStateService,
+                                          queueService: widget.queueService,
                                         ),
                                       ),
                                     );

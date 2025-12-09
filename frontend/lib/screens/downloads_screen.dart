@@ -1,14 +1,17 @@
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
 import '../services/player_state_service.dart';
+import '../services/queue_service.dart';
+import '../models/queue_item.dart';
 import '../utils/song_display_utils.dart';
 
 const Color neonBlue = Color(0xFF00D9FF);
 
 class DownloadsScreen extends StatefulWidget {
   final PlayerStateService playerStateService;
+  final QueueService? queueService;
   
-  const DownloadsScreen({super.key, required this.playerStateService});
+  const DownloadsScreen({super.key, required this.playerStateService, this.queueService});
 
   @override
   State<DownloadsScreen> createState() => _DownloadsScreenState();
@@ -164,6 +167,41 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
     }
   }
 
+  Future<void> _addToQueue(DownloadedFile file) async {
+    if (widget.queueService == null) return;
+
+    try {
+      final queueItem = QueueItem.fromDownloadedFile(
+        filename: file.filename,
+        title: file.title,
+        artist: file.artist,
+      );
+
+      widget.queueService!.addToQueue(queueItem);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Added to queue: ${getDisplayTitle(file.title, file.filename)}'),
+            backgroundColor: neonBlue,
+            behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to add to queue: $e'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final filteredDownloads = _filteredDownloads;
@@ -283,6 +321,32 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
                               trailing: Row(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
+                                  if (widget.queueService != null)
+                                    Stack(
+                                      children: [
+                                        IconButton(
+                                          icon: const Icon(Icons.more_vert),
+                                          onPressed: () => _addToQueue(file),
+                                          tooltip: 'Add to queue',
+                                        ),
+                                        Positioned(
+                                          right: 8,
+                                          top: 8,
+                                          child: Container(
+                                            padding: const EdgeInsets.all(2),
+                                            decoration: BoxDecoration(
+                                              color: neonBlue,
+                                              shape: BoxShape.circle,
+                                            ),
+                                            child: const Icon(
+                                              Icons.add,
+                                              size: 12,
+                                              color: Colors.black,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
                                   IconButton(
                                     icon: Icon(
                                       Icons.play_arrow,
