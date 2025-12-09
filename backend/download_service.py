@@ -234,8 +234,155 @@ class DownloadService:
         else:
             cmd_dl += ['--remux-video', 'm4a']
         
-        # Execute download
         ret = subprocess.run(cmd_dl, capture_output=True, text=True, creationflags=creationflags)
+        if ret.returncode != 0:
+            raise Exception(f"Download failed: {ret.stderr}")
+        
+        # Find the downloaded file
+        out_ext = '.m4a' if output_format == 'm4a' else '.mp3'
+        candidate_path = output_path + out_ext
+        if not os.path.isfile(candidate_path):
+            # Try to find the file with any extension
+            for ext in ['.m4a', '.mp3', '.webm', '.opus']:
+                candidate = output_path + ext
+                if os.path.isfile(candidate):
+                    candidate_path = candidate
+                    break
+            else:
+                raise Exception(f"Downloaded file not found at {candidate_path}")
+        
+        # Read metadata from the downloaded file
+        title_meta = title
+        artist_meta = artist
+        album_meta = album
+        
+        try:
+            if candidate_path.endswith('.m4a'):
+                audio = MP4(candidate_path)
+                if not audio.tags:
+                    audio.add_tags()
+                audio.tags['\xa9nam'] = title_meta
+                if artist_meta:
+                    audio.tags['\xa9ART'] = artist_meta
+                if album_meta:
+                    audio.tags['\xa9alb'] = album_meta
+                audio.save()
+            else:  # MP3
+                audio = EasyID3(candidate_path)
+                audio['title'] = title_meta
+                if artist_meta:
+                    audio['artist'] = artist_meta
+                if album_meta:
+                    audio['album'] = album_meta
+                audio.save()
+        except Exception as e:
+            print(f"Warning: Could not write metadata: {e}")
+        
+        filename = os.path.basename(candidate_path)
+        return {
+            'file_path': candidate_path,
+            'filename': filename,
+            'title': title_meta,
+            'artist': artist_meta,
+            'album': album_meta
+        }
+    
+    def get_streaming_url(self, url: str):
+        """Get direct streaming URL from YouTube URL without downloading"""
+        creationflags = subprocess.CREATE_NO_WINDOW if platform.system() == 'Windows' else 0
+        
+        # Check if yt-dlp is available
+        if not self.yt_dlp_exe:
+            raise Exception(f"yt-dlp not found. Please install it: pip install yt-dlp")
+        
+        def yt_cmd(extra_args, search_spec):
+            # Handle both string (executable path) and list (python -m yt_dlp) formats
+            if isinstance(self.yt_dlp_exe, list):
+                cmd = self.yt_dlp_exe.copy()
+            else:
+                cmd = [self.yt_dlp_exe]
+            cmd.append("--no-config")
+            # Only add ffmpeg-location if ffmpeg is in a specific directory (not in PATH)
+            ffmpeg_dir = os.path.dirname(self.ffmpeg_exe) if isinstance(self.ffmpeg_exe, str) and os.path.dirname(self.ffmpeg_exe) else ""
+            if ffmpeg_dir and os.path.isdir(ffmpeg_dir):
+                cmd.append(f"--ffmpeg-location={ffmpeg_dir}")
+            cmd += extra_args + [search_spec]
+            return cmd
+        
+        # Get the best audio stream URL using -g flag (get URL without downloading)
+        # Request formats that browsers can play directly
+        # itag 140 = AAC audio in MP4 container (most compatible)
+        # itag 251 = Opus audio in WebM container (also browser-compatible)
+        # Prefer AAC/MP4 as it has the best browser support
+        cmd_stream = yt_cmd([
+            '-f', '140/251/bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio[acodec*=mp4a]/bestaudio/best',
+            '-g'  # Get URL only, don't download
+        ], url)
+        
+        ret = subprocess.run(cmd_stream, capture_output=True, text=True, creationflags=creationflags)
+        if ret.returncode != 0:
+            raise Exception(f"Failed to get streaming URL: {ret.stderr}")
+        
+        streaming_url = ret.stdout.strip()
+        if not streaming_url or not streaming_url.startswith('http'):
+            raise Exception("Invalid streaming URL received")
+        
+        return streaming_url
+    
+    def download_for_streaming(self, url: str, output_path: str):
+        """Download audio in browser-compatible format for streaming"""
+        creationflags = subprocess.CREATE_NO_WINDOW if platform.system() == 'Windows' else 0
+        
+        # Check if yt-dlp is available
+        if not self.yt_dlp_exe:
+            raise Exception(f"yt-dlp not found. Please install it: pip install yt-dlp")
+        
+        def yt_cmd(extra_args, search_spec):
+            # Handle both string (executable path) and list (python -m yt_dlp) formats
+            if isinstance(self.yt_dlp_exe, list):
+                cmd = self.yt_dlp_exe.copy()
+            else:
+                cmd = [self.yt_dlp_exe]
+            cmd.append("--no-config")
+            # Only add ffmpeg-location if ffmpeg is in a specific directory (not in PATH)
+            ffmpeg_dir = os.path.dirname(self.ffmpeg_exe) if isinstance(self.ffmpeg_exe, str) and os.path.dirname(self.ffmpeg_exe) else ""
+            if ffmpeg_dir and os.path.isdir(ffmpeg_dir):
+                cmd.append(f"--ffmpeg-location={ffmpeg_dir}")
+            cmd += extra_args + [search_spec]
+            return cmd
+        
+        # Use a temporary file first, then apply faststart
+        temp_output = output_path + ".tmp"
+        
+        # Download as M4A (AAC) which is browser-compatible
+        # Use --remux-video m4a to ensure proper container format
+        # Add --postprocessor-args to move moov atom to beginning for progressive streaming
+        cmd_download = yt_cmd([
+            '-f', 'bestaudio[ext=m4a]/bestaudio',
+            '--remux-video', 'm4a',  # Remux to M4A container (browser-compatible)
+            '--postprocessor-args', 'ffmpeg:-movflags +faststart',  # Move moov atom to beginning for progressive streaming
+            '--output', temp_output,
+            '--no-playlist',
+            '--no-warnings',
+        ], url)
+        
+        ret = subprocess.run(cmd_download, capture_output=True, text=True, creationflags=creationflags)
+        if ret.returncode != 0:
+            raise Exception(f"Failed to download for streaming: {ret.stderr}")
+        
+        # Move temp file to final location
+        if os.path.exists(temp_output):
+            # On Windows, we need to handle file replacement
+            if os.path.exists(output_path):
+                os.remove(output_path)
+            os.rename(temp_output, output_path)
+        else:
+            raise Exception(f"Downloaded file not found: {temp_output}")
+        
+        if not os.path.exists(output_path):
+            raise Exception(f"Downloaded file not found: {output_path}")
+        
+        return output_path
         
         if ret.returncode != 0:
             error_msg = ret.stderr or ret.stdout or "Unknown error"

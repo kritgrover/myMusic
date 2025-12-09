@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:audioplayers/audioplayers.dart';
 import 'dart:async';
 import '../services/audio_player_service.dart';
 import '../utils/song_display_utils.dart';
@@ -32,7 +31,7 @@ class _BottomPlayerState extends State<BottomPlayer> {
   bool _isDraggingVolume = false;
   double _dragVolumeValue = 1.0;
   StreamSubscription<Duration>? _positionSubscription;
-  StreamSubscription<Duration>? _durationSubscription;
+  StreamSubscription<Duration?>? _durationSubscription;
   StreamSubscription<PlayerState>? _stateSubscription;
 
   @override
@@ -49,7 +48,7 @@ class _BottomPlayerState extends State<BottomPlayer> {
       }
     });
     _durationSubscription = widget.playerService.durationStream.listen((duration) {
-      if (mounted && !duration.isNegative) {
+      if (mounted && duration != null && !duration.isNegative) {
         setState(() {
           _duration = duration;
         });
@@ -140,7 +139,7 @@ class _BottomPlayerState extends State<BottomPlayer> {
       _dragVolumeValue = value;
     });
     try {
-      widget.playerService.player.setVolume(value);
+      widget.playerService.player.setVolume(value.clamp(0.0, 1.0));
     } catch (e) {
       // Handle error silently
     }
@@ -153,7 +152,7 @@ class _BottomPlayerState extends State<BottomPlayer> {
       _dragVolumeValue = value;
     });
     try {
-      widget.playerService.player.setVolume(value);
+      widget.playerService.player.setVolume(value.clamp(0.0, 1.0));
     } catch (e) {
       // Handle error silently
     }

@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:audioplayers/audioplayers.dart';
 import 'dart:async';
 import '../services/audio_player_service.dart';
 
@@ -18,7 +17,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   Duration _duration = Duration.zero;
   bool _isPlaying = false;
   StreamSubscription<Duration>? _positionSubscription;
-  StreamSubscription<Duration>? _durationSubscription;
+  StreamSubscription<Duration?>? _durationSubscription;
   StreamSubscription<PlayerState>? _stateSubscription;
 
   @override
@@ -31,7 +30,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     });
     _durationSubscription = _playerService.durationStream.listen((duration) {
       setState(() {
-        _duration = duration;
+        _duration = duration ?? Duration.zero;
       });
     });
     _stateSubscription = _playerService.stateStream.listen((state) {

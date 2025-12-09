@@ -1,11 +1,17 @@
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
+import '../services/player_state_service.dart';
+import '../services/playlist_service.dart';
 import '../widgets/video_card.dart';
+import '../widgets/playlist_selection_dialog.dart';
+import '../models/playlist.dart';
 
 const Color neonBlue = Color(0xFF00D9FF);
 
 class SearchScreen extends StatefulWidget {
-  const SearchScreen({super.key});
+  final PlayerStateService? playerStateService;
+  
+  const SearchScreen({super.key, this.playerStateService});
 
   @override
   State<SearchScreen> createState() => _SearchScreenState();
@@ -13,6 +19,7 @@ class SearchScreen extends StatefulWidget {
 
 class _SearchScreenState extends State<SearchScreen> {
   final ApiService _apiService = ApiService();
+  final PlaylistService _playlistService = PlaylistService();
   final TextEditingController _searchController = TextEditingController();
   List<VideoInfo> _searchResults = [];
   bool _isSearching = false;
@@ -107,8 +114,14 @@ class _SearchScreenState extends State<SearchScreen> {
                       itemBuilder: (context, index) {
                         return VideoCard(
                           video: _searchResults[index],
+                          onStream: () async {
+                            await _streamVideo(_searchResults[index]);
+                          },
                           onDownload: () async {
                             await _downloadVideo(_searchResults[index]);
+                          },
+                          onAddToPlaylist: () async {
+                            await _showAddToPlaylistDialog(_searchResults[index]);
                           },
                         );
                       },
@@ -116,6 +129,47 @@ class _SearchScreenState extends State<SearchScreen> {
         ),
       ],
     );
+  }
+
+  Future<void> _streamVideo(VideoInfo video) async {
+    if (widget.playerStateService == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Player not available'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+      return;
+    }
+
+    try {
+      // Get streaming URL from backend - this is fast, no need for loading dialog
+      final result = await _apiService.getStreamingUrl(
+        url: video.url,
+        title: video.title,
+        artist: video.uploader,
+      );
+
+      // Start streaming immediately - just_audio will handle buffering
+      await widget.playerStateService!.streamTrack(
+        result.streamingUrl,
+        trackName: result.title,
+        trackArtist: result.artist,
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Stream failed: $e'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    }
   }
 
   Future<void> _downloadVideo(VideoInfo video) async {
@@ -158,6 +212,19 @@ class _SearchScreenState extends State<SearchScreen> {
         );
       }
     }
+  }
+
+  Future<void> _showAddToPlaylistDialog(VideoInfo video) async {
+    // Convert VideoInfo to PlaylistTrack
+    final track = PlaylistTrack.fromVideoInfo(video);
+    
+    await showDialog(
+      context: context,
+      builder: (context) => PlaylistSelectionDialog(
+        playlistService: _playlistService,
+        track: track,
+      ),
+    );
   }
 }
 

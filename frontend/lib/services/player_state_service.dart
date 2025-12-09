@@ -32,6 +32,17 @@ class PlayerStateService extends ChangeNotifier {
     }
   }
 
+  Future<void> streamTrack(String streamingUrl, {String? trackName, String? trackArtist}) async {
+    try {
+      await _audioPlayerService.playFromUrl(streamingUrl);
+      _currentTrackName = trackName ?? 'Streaming';
+      _currentTrackArtist = trackArtist;
+      notifyListeners();
+    } catch (e) {
+      rethrow;
+    }
+  }
+
   Future<void> pause() async {
     await _audioPlayerService.pause();
     notifyListeners();
