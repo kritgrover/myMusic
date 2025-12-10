@@ -9,11 +9,13 @@ const Color neonBlue = Color(0xFF00D9FF);
 class AddToPlaylistScreen extends StatefulWidget {
   final String playlistId;
   final PlaylistService playlistService;
+  final VoidCallback? onBack; // Callback to return to playlist detail
 
   const AddToPlaylistScreen({
     super.key,
     required this.playlistId,
     required this.playlistService,
+    this.onBack,
   });
 
   @override
@@ -167,21 +169,53 @@ class _AddToPlaylistScreenState extends State<AddToPlaylistScreen>
   Widget build(BuildContext context) {
     final playlistName = _playlist?.name ?? 'Playlist';
     
-    return Scaffold(
-      appBar: AppBar(
-        title: Text('Add Songs to $playlistName'),
-        bottom: TabBar(
-          controller: _tabController,
-          indicatorColor: neonBlue,
-          labelColor: neonBlue,
-          unselectedLabelColor: Colors.grey[400],
-          tabs: const [
-            Tab(icon: Icon(Icons.search), text: 'Search'),
-            Tab(icon: Icon(Icons.download), text: 'Downloads'),
-          ],
+    return Column(
+      children: [
+        // Header with back button and tabs
+        Container(
+          color: Colors.grey[900],
+          child: Column(
+            children: [
+              // Title bar with back button
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+                child: Row(
+                  children: [
+                    if (widget.onBack != null)
+                      IconButton(
+                        icon: const Icon(Icons.arrow_back),
+                        onPressed: widget.onBack,
+                        tooltip: 'Back to playlist',
+                        color: neonBlue,
+                      ),
+                    Expanded(
+                      child: Text(
+                        'Add Songs to $playlistName',
+                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              // Tab bar
+              TabBar(
+                controller: _tabController,
+                indicatorColor: neonBlue,
+                labelColor: neonBlue,
+                unselectedLabelColor: Colors.grey[400],
+                tabs: const [
+                  Tab(icon: Icon(Icons.search), text: 'Search'),
+                  Tab(icon: Icon(Icons.download), text: 'Downloads'),
+                ],
+              ),
+            ],
+          ),
         ),
-      ),
-      body: TabBarView(
+        // Tab content
+        Expanded(
+          child: TabBarView(
         controller: _tabController,
         children: [
           // Search Tab
@@ -338,8 +372,10 @@ class _AddToPlaylistScreenState extends State<AddToPlaylistScreen>
                         },
                       ),
                     ),
-        ],
+          ],
+        ),
       ),
+      ],
     );
   }
 }

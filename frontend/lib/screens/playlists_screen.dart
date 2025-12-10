@@ -23,6 +23,7 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
   List<Playlist> _playlists = [];
   bool _isLoading = true;
   String _searchQuery = '';
+  Playlist? _selectedPlaylist;
 
   @override
   void initState() {
@@ -205,8 +206,34 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
     }
   }
 
+  void _showPlaylistDetail(Playlist playlist) {
+    setState(() {
+      _selectedPlaylist = playlist;
+    });
+  }
+
+  void _hidePlaylistDetail() {
+    setState(() {
+      _selectedPlaylist = null;
+    });
+    // Reload playlists when returning from detail screen
+    _loadPlaylists();
+  }
+
   @override
   Widget build(BuildContext context) {
+    // If a playlist is selected, show the detail view
+    if (_selectedPlaylist != null) {
+      return PlaylistDetailScreen(
+        playlist: _selectedPlaylist!,
+        playlistService: _playlistService,
+        playerStateService: widget.playerStateService,
+        queueService: widget.queueService,
+        onBack: _hidePlaylistDetail,
+      );
+    }
+
+    // Otherwise show the playlists list
     final filteredPlaylists = _filteredPlaylists;
     final hasPlaylists = _playlists.isNotEmpty && _playlists.length > 0;
     final hasFilteredResults = filteredPlaylists.isNotEmpty && filteredPlaylists.length > 0;
@@ -328,19 +355,8 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
                               child: Material(
                                 color: Colors.transparent,
                                 child: InkWell(
-                                  onTap: () async {
-                                    await Navigator.of(context).push(
-                                      MaterialPageRoute(
-                                        builder: (context) => PlaylistDetailScreen(
-                                          playlist: playlist,
-                                          playlistService: _playlistService,
-                                          playerStateService: widget.playerStateService,
-                                          queueService: widget.queueService,
-                                        ),
-                                      ),
-                                    );
-                                    // Reload playlists when returning from detail screen
-                                    await _loadPlaylists();
+                                  onTap: () {
+                                    _showPlaylistDetail(playlist);
                                   },
                                   borderRadius: BorderRadius.circular(12),
                                   hoverColor: neonBlue.withOpacity(0.15),

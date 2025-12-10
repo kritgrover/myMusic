@@ -15,6 +15,7 @@ class PlaylistDetailScreen extends StatefulWidget {
   final PlaylistService playlistService;
   final dynamic playerStateService; // Optional, for playing tracks
   final QueueService? queueService;
+  final VoidCallback? onBack; // Callback to return to playlists list
 
   const PlaylistDetailScreen({
     super.key,
@@ -22,6 +23,7 @@ class PlaylistDetailScreen extends StatefulWidget {
     required this.playlistService,
     this.playerStateService,
     this.queueService,
+    this.onBack,
   });
 
   @override
@@ -31,6 +33,7 @@ class PlaylistDetailScreen extends StatefulWidget {
 class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
   late Playlist _playlist;
   bool _isLoading = false;
+  bool _showAddSongs = false;
   final ApiService _apiService = ApiService();
 
   @override
@@ -64,17 +67,18 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
     }
   }
 
-  Future<void> _addSongs() async {
-    await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (context) => AddToPlaylistScreen(
-          playlistId: _playlist.id,
-          playlistService: widget.playlistService,
-        ),
-      ),
-    );
+  void _addSongs() {
+    setState(() {
+      _showAddSongs = true;
+    });
+  }
 
-    await _loadPlaylist();
+  void _hideAddSongs() {
+    setState(() {
+      _showAddSongs = false;
+    });
+    // Reload playlist when returning from add songs
+    _loadPlaylist();
   }
 
   Future<void> _removeTrack(PlaylistTrack track) async {
@@ -674,94 +678,107 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('myMusic'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.edit),
-            onPressed: _renamePlaylist,
-            tooltip: 'Rename playlist',
-          ),
-          IconButton(
-            icon: const Icon(Icons.add),
-            onPressed: _addSongs,
-            tooltip: 'Add songs',
-          ),
-        ],
-      ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : Column(
-              children: [
-                // Playlist header
-                Container(
-                  padding: const EdgeInsets.all(24.0),
-                  decoration: BoxDecoration(
-                    color: Colors.grey[900],
-                    border: Border(
-                      bottom: BorderSide(
-                        color: neonBlue.withOpacity(0.3),
-                        width: 1,
-                      ),
+    // If showing add songs screen, display that instead
+    if (_showAddSongs) {
+      return AddToPlaylistScreen(
+        playlistId: _playlist.id,
+        playlistService: widget.playlistService,
+        onBack: _hideAddSongs,
+      );
+    }
+
+    return _isLoading
+        ? const Center(child: CircularProgressIndicator())
+        : Column(
+            children: [
+              // Playlist header
+              Container(
+                padding: const EdgeInsets.all(24.0),
+                decoration: BoxDecoration(
+                  color: Colors.grey[900],
+                  border: Border(
+                    bottom: BorderSide(
+                      color: neonBlue.withOpacity(0.3),
+                      width: 1,
                     ),
                   ),
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 80,
-                        height: 80,
-                        decoration: BoxDecoration(
-                          color: neonBlue.withOpacity(0.2),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(
-                            color: neonBlue.withOpacity(0.5),
-                            width: 2,
-                          ),
-                        ),
-                        child: const Icon(
-                          Icons.playlist_play,
-                          size: 40,
-                          color: neonBlue,
+                ),
+                child: Row(
+                  children: [
+                    // Back button
+                    if (widget.onBack != null)
+                      IconButton(
+                        icon: const Icon(Icons.arrow_back),
+                        onPressed: widget.onBack,
+                        tooltip: 'Back to playlists',
+                        color: neonBlue,
+                      ),
+                    Container(
+                      width: 80,
+                      height: 80,
+                      decoration: BoxDecoration(
+                        color: neonBlue.withOpacity(0.2),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: neonBlue.withOpacity(0.5),
+                          width: 2,
                         ),
                       ),
-                      const SizedBox(width: 20),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: Text(
-                                    _playlist.name,
-                                    style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                                      fontWeight: FontWeight.bold,
-                                    ),
+                      child: const Icon(
+                        Icons.playlist_play,
+                        size: 40,
+                        color: neonBlue,
+                      ),
+                    ),
+                    const SizedBox(width: 20),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  _playlist.name,
+                                  style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                                    fontWeight: FontWeight.bold,
                                   ),
                                 ),
-                                if (widget.queueService != null) ...[
-                                  IconButton(
-                                    icon: const Icon(Icons.shuffle),
-                                    onPressed: _shufflePlaylistToQueue,
-                                    tooltip: 'Shuffle and add playlist to queue',
-                                    color: neonBlue,
-                                  ),
-                                  IconButton(
-                                    icon: const Icon(Icons.queue_music),
-                                    onPressed: _addPlaylistToQueue,
-                                    tooltip: 'Add playlist to queue',
-                                    color: neonBlue,
-                                  ),
-                                ],
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.edit),
+                                onPressed: _renamePlaylist,
+                                tooltip: 'Rename playlist',
+                                color: neonBlue,
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.add),
+                                onPressed: _addSongs,
+                                tooltip: 'Add songs',
+                                color: neonBlue,
+                              ),
+                              if (widget.queueService != null) ...[
                                 IconButton(
-                                  icon: const Icon(Icons.download),
-                                  onPressed: _downloadUndownloadedTracks,
-                                  tooltip: 'Download undownloaded tracks',
+                                  icon: const Icon(Icons.shuffle),
+                                  onPressed: _shufflePlaylistToQueue,
+                                  tooltip: 'Shuffle and add playlist to queue',
+                                  color: neonBlue,
+                                ),
+                                IconButton(
+                                  icon: const Icon(Icons.queue_music),
+                                  onPressed: _addPlaylistToQueue,
+                                  tooltip: 'Add playlist to queue',
                                   color: neonBlue,
                                 ),
                               ],
-                            ),
+                              IconButton(
+                                icon: const Icon(Icons.download),
+                                onPressed: _downloadUndownloadedTracks,
+                                tooltip: 'Download undownloaded tracks',
+                                color: neonBlue,
+                              ),
+                            ],
+                          ),
                             const SizedBox(height: 8),
                             Row(
                               children: [
@@ -939,7 +956,6 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                         ),
                 ),
               ],
-            ),
-    );
+        );
   }
 }
