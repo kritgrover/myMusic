@@ -397,7 +397,7 @@ def format_playlist_name(csv_filename: str) -> str:
 
 @app.post("/csv/convert/{filename}")
 def convert_csv_file(filename: str, request: CsvConversionRequest):
-    """Convert a specific CSV file to M4A files"""
+    """Convert a specific CSV file to playlist entries (search only, no download)"""
     try:
         temp_dir = os.path.join(BASE_DIR, "temp")
         csv_path = os.path.join(temp_dir, filename)
@@ -413,7 +413,8 @@ def convert_csv_file(filename: str, request: CsvConversionRequest):
             progress_data["total"] = total
             progress_data["status"] = status
         
-        result = download_service.convert_csv_to_m4a(
+        # Search for tracks without downloading
+        result = download_service.convert_csv_to_playlist(
             csv_path=csv_path,
             deep_search=request.deep_search,
             duration_min=request.duration_min,
@@ -422,19 +423,6 @@ def convert_csv_file(filename: str, request: CsvConversionRequest):
             variants=request.variants if request.variants else [''],
             progress_callback=progress_callback
         )
-        
-        # Get list of downloaded files
-        files = []
-        if os.path.exists(result['output_dir']):
-            for f in os.listdir(result['output_dir']):
-                if f.lower().endswith('.m4a'):
-                    file_path = os.path.join(result['output_dir'], f)
-                    files.append({
-                        "filename": f,
-                        "file_path": file_path,
-                        "size": os.path.getsize(file_path),
-                        "download_url": f"/csv/download/{os.path.basename(result['output_dir'])}/{f}"
-                    })
         
         # Create playlist from CSV filename
         playlist_name = format_playlist_name(filename)
@@ -457,94 +445,39 @@ def convert_csv_file(filename: str, request: CsvConversionRequest):
             save_playlists(playlists)
             playlist_created = True
             
-            # Add all downloaded songs to the playlist
-            playlist_dir = result['output_dir']
-            downloaded_files = result.get('downloaded', [])
+            # Add all found tracks to the playlist (with URLs but no filenames)
+            tracks = result.get('tracks', [])
             
-            if os.path.exists(playlist_dir) and downloaded_files:
-                # Use the downloaded list to ensure we only add successfully downloaded files
-                for f in downloaded_files:
-                    if not f.lower().endswith('.m4a'):
-                        continue
-                    file_path = os.path.join(playlist_dir, f)
-                    if not os.path.exists(file_path):
-                        continue
-                    
-                    try:
-                        # Read metadata from the file
-                        audio = MP4(file_path)
-                        title = "Unknown"
-                        artist = ""
-                        album = ""
-                        duration = 0.0
-                        
-                        if audio.tags:
-                            title_tags = audio.tags.get('\xa9nam')
-                            if title_tags:
-                                title = title_tags[0]
-                            artist_tags = audio.tags.get('\xa9ART')
-                            if artist_tags:
-                                artist = artist_tags[0]
-                            album_tags = audio.tags.get('\xa9alb')
-                            if album_tags:
-                                album = album_tags[0]
-                        
-                        # Get duration if available
-                        if hasattr(audio, 'info') and audio.info:
-                            duration = audio.info.length if hasattr(audio.info, 'length') else 0.0
-                        
-                        # Create song entry
-                        song_id = str(uuid.uuid4())
-                        # Use relative path from downloads directory for filename
-                        rel_path = os.path.relpath(file_path, download_service.output_dir)
-                        rel_path = rel_path.replace('\\', '/')  # Use forward slashes
-                        
-                        song = {
-                            "id": song_id,
-                            "title": title,
-                            "artist": artist,
-                            "album": album,
-                            "filename": rel_path,
-                            "file_path": file_path,
-                            "url": "",
-                            "thumbnail": "",
-                            "duration": duration
-                        }
-                        
-                        # Add song to playlist
-                        playlists[playlist_id]["songs"].append(song)
-                    except Exception as e:
-                        print(f"Warning: Could not read metadata from {f}: {e}")
-                        # Still add the file even if metadata reading fails
-                        song_id = str(uuid.uuid4())
-                        rel_path = os.path.relpath(file_path, download_service.output_dir)
-                        rel_path = rel_path.replace('\\', '/')
-                        song = {
-                            "id": song_id,
-                            "title": f.replace('.m4a', ''),
-                            "artist": "",
-                            "album": "",
-                            "filename": rel_path,
-                            "file_path": file_path,
-                            "url": "",
-                            "thumbnail": "",
-                            "duration": 0.0
-                        }
-                        playlists[playlist_id]["songs"].append(song)
+            for track_info in tracks:
+                song_id = str(uuid.uuid4())
+                song = {
+                    "id": song_id,
+                    "title": track_info.get('title', 'Unknown'),
+                    "artist": track_info.get('artist', ''),
+                    "album": track_info.get('album', ''),
+                    "filename": "",  # Empty filename - not downloaded yet
+                    "file_path": "",
+                    "url": track_info.get('url', ''),
+                    "thumbnail": track_info.get('thumbnail', ''),
+                    "duration": track_info.get('duration', 0.0)
+                }
                 
-                # Update playlist timestamp
-                playlists[playlist_id]["updatedAt"] = datetime.now().isoformat()
-                save_playlists(playlists)
+                # Add song to playlist
+                playlists[playlist_id]["songs"].append(song)
+            
+            # Update playlist timestamp
+            playlists[playlist_id]["updatedAt"] = datetime.now().isoformat()
+            save_playlists(playlists)
         except Exception as e:
             print(f"Warning: Could not create playlist: {e}")
+            import traceback
+            traceback.print_exc()
             # Continue even if playlist creation fails
         
         return {
             "success": True,
-            "downloaded": result['downloaded'],
+            "tracks": result.get('tracks', []),
             "not_found": result['not_found'],
-            "output_dir": result['output_dir'],
-            "files": files,
             "total": result['total'],
             "success_count": result['success_count'],
             "playlist_id": playlist_id,
