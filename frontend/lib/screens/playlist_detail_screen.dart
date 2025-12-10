@@ -1,3 +1,4 @@
+import 'dart:math';
 import 'package:flutter/material.dart';
 import '../services/playlist_service.dart';
 import '../services/api_service.dart';
@@ -450,6 +451,14 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
   }
 
   Future<void> _addPlaylistToQueue() async {
+    await _addPlaylistToQueueInternal(shuffle: false);
+  }
+
+  Future<void> _shufflePlaylistToQueue() async {
+    await _addPlaylistToQueueInternal(shuffle: true);
+  }
+
+  Future<void> _addPlaylistToQueueInternal({required bool shuffle}) async {
     if (widget.queueService == null) return;
 
     if (_playlist.tracks.isEmpty) {
@@ -469,17 +478,32 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (context) => const Center(
-        child: CircularProgressIndicator(),
+      builder: (context) => Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const CircularProgressIndicator(),
+            if (shuffle) ...[
+              const SizedBox(height: 16),
+              const Text('Shuffling playlist...'),
+            ],
+          ],
+        ),
       ),
     );
 
     try {
+      // Create a copy of tracks list and shuffle if needed
+      final tracks = List<PlaylistTrack>.from(_playlist.tracks);
+      if (shuffle) {
+        tracks.shuffle(Random());
+      }
+
       final queueItems = <QueueItem>[];
       int successCount = 0;
       int failCount = 0;
 
-      for (final track in _playlist.tracks) {
+      for (final track in tracks) {
         try {
           QueueItem? queueItem;
 
@@ -531,9 +555,13 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text(
-                failCount > 0
-                    ? 'Added $successCount tracks to queue${failCount > 0 ? ' ($failCount failed)' : ''}'
-                    : 'Added ${queueItems.length} tracks to queue',
+                shuffle
+                    ? (failCount > 0
+                        ? 'Shuffled and added $successCount tracks to queue${failCount > 0 ? ' ($failCount failed)' : ''}'
+                        : 'Shuffled and added ${queueItems.length} tracks to queue')
+                    : (failCount > 0
+                        ? 'Added $successCount tracks to queue${failCount > 0 ? ' ($failCount failed)' : ''}'
+                        : 'Added ${queueItems.length} tracks to queue'),
               ),
               backgroundColor: neonBlue,
               behavior: SnackBarBehavior.floating,
@@ -555,7 +583,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
         Navigator.of(context).pop(); // Close loading dialog
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Failed to add playlist to queue: $e'),
+            content: Text('Failed to ${shuffle ? 'shuffle and ' : ''}add playlist to queue: $e'),
             backgroundColor: Colors.red,
             behavior: SnackBarBehavior.floating,
           ),
@@ -712,13 +740,20 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                                     ),
                                   ),
                                 ),
-                                if (widget.queueService != null)
+                                if (widget.queueService != null) ...[
+                                  IconButton(
+                                    icon: const Icon(Icons.shuffle),
+                                    onPressed: _shufflePlaylistToQueue,
+                                    tooltip: 'Shuffle and add playlist to queue',
+                                    color: neonBlue,
+                                  ),
                                   IconButton(
                                     icon: const Icon(Icons.queue_music),
                                     onPressed: _addPlaylistToQueue,
                                     tooltip: 'Add playlist to queue',
                                     color: neonBlue,
                                   ),
+                                ],
                                 IconButton(
                                   icon: const Icon(Icons.download),
                                   onPressed: _downloadUndownloadedTracks,
