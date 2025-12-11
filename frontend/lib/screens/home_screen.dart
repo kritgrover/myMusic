@@ -9,8 +9,6 @@ import '../widgets/queue_panel.dart';
 import '../services/player_state_service.dart';
 import '../services/queue_service.dart';
 
-const Color neonBlue = Color(0xFF00D9FF);
-
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -60,48 +58,52 @@ class _HomeScreenState extends State<HomeScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('myMusic'),
-        backgroundColor: Colors.black,
-        foregroundColor: neonBlue,
       ),
       body: Row(
         children: [
           // Side Navigation
-          NavigationRail(
-            selectedIndex: _currentIndex,
-            onDestinationSelected: (index) {
-              setState(() {
-                _currentIndex = index;
-              });
-            },
-            labelType: NavigationRailLabelType.all,
-            useIndicator: true,
-            indicatorColor: Colors.grey[900],
-            selectedIconTheme: const IconThemeData(color: neonBlue, size: 24),
-            unselectedIconTheme: const IconThemeData(color: Colors.grey, size: 24),
-            destinations: [
-              NavigationRailDestination(
-                icon: const Icon(Icons.search),
-                selectedIcon: const Icon(Icons.search),
-                label: const Text('Search'),
+          Container(
+            width: 80,
+            decoration: const BoxDecoration(
+              border: Border(
+                right: BorderSide(color: Color(0xFF262626), width: 1),
               ),
-              NavigationRailDestination(
-                icon: const Icon(Icons.download),
-                selectedIcon: const Icon(Icons.download),
-                label: const Text('Downloads'),
-              ),
-              NavigationRailDestination(
-                icon: const Icon(Icons.playlist_play),
-                selectedIcon: const Icon(Icons.playlist_play),
-                label: const Text('Playlists'),
-              ),
-              NavigationRailDestination(
-                icon: const Icon(Icons.upload_file),
-                selectedIcon: const Icon(Icons.upload_file),
-                label: const Text('CSV Upload'),
-              ),
-            ],
+            ),
+            child: NavigationRail(
+              selectedIndex: _currentIndex,
+              onDestinationSelected: (index) {
+                setState(() {
+                  _currentIndex = index;
+                });
+              },
+              labelType: NavigationRailLabelType.all,
+              useIndicator: true,
+              extended: false,
+              minExtendedWidth: 80,
+              destinations: [
+                NavigationRailDestination(
+                  icon: const Icon(Icons.search_outlined),
+                  selectedIcon: const Icon(Icons.search),
+                  label: const Text('Search'),
+                ),
+                NavigationRailDestination(
+                  icon: const Icon(Icons.download_outlined),
+                  selectedIcon: const Icon(Icons.download),
+                  label: const Text('Downloads'),
+                ),
+                NavigationRailDestination(
+                  icon: const Icon(Icons.playlist_play_outlined),
+                  selectedIcon: const Icon(Icons.playlist_play),
+                  label: const Text('Playlists'),
+                ),
+                NavigationRailDestination(
+                  icon: const Icon(Icons.upload_file_outlined),
+                  selectedIcon: const Icon(Icons.upload_file),
+                  label: const Text('CSV Upload'),
+                ),
+              ],
+            ),
           ),
-          const VerticalDivider(thickness: 1, width: 1),
           // Main content
           Expanded(
             child: Column(

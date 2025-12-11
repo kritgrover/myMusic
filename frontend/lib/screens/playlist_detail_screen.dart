@@ -8,8 +8,6 @@ import '../models/queue_item.dart';
 import 'add_to_playlist_screen.dart';
 import '../utils/song_display_utils.dart';
 
-const Color neonBlue = Color(0xFF00D9FF);
-
 enum PlaylistSortOption {
   defaultOrder,
   artistName,
@@ -136,10 +134,12 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
       
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Track removed'),
-            backgroundColor: neonBlue,
+          SnackBar(
+            content: const Text('Track removed'),
             behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
           ),
         );
       }
@@ -216,8 +216,10 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Downloaded: ${result.filename}'),
-            backgroundColor: neonBlue,
             behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
           ),
         );
       }
@@ -346,13 +348,15 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
         await _loadPlaylist();
         
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Playlist renamed'),
-            backgroundColor: neonBlue,
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Playlist renamed'),
             behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
             ),
-          );
+          ),
+        );
         }
       } catch (e) {
         if (mounted) {
@@ -376,10 +380,12 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
     if (tracksToDownload.isEmpty) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('All tracks are already downloaded'),
-            backgroundColor: neonBlue,
+          SnackBar(
+            content: const Text('All tracks are already downloaded'),
             behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
           ),
         );
       }
@@ -482,9 +488,12 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                   ? 'Downloaded $successCount ${successCount == 1 ? 'track' : 'tracks'}${failCount > 0 ? ' ($failCount failed)' : ''}'
                   : 'Downloaded ${successCount} ${successCount == 1 ? 'track' : 'tracks'}',
             ),
-            backgroundColor: failCount > 0 ? Colors.orange : neonBlue,
+            backgroundColor: failCount > 0 ? Colors.orange : null,
             behavior: SnackBarBehavior.floating,
             duration: const Duration(seconds: 3),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
           ),
         );
       }
@@ -496,6 +505,9 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
             content: Text('Download error: $e'),
             backgroundColor: Colors.red,
             behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
           ),
         );
       }
@@ -624,17 +636,22 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                     ? 'Playing playlist: $successCount tracks added${failCount > 0 ? ' ($failCount failed)' : ''}'
                     : 'Playing playlist: ${queueItems.length} tracks',
               ),
-              backgroundColor: neonBlue,
               behavior: SnackBarBehavior.floating,
               duration: const Duration(seconds: 3),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
             ),
           );
         } else {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('No tracks could be added to queue'),
+            SnackBar(
+              content: const Text('No tracks could be added to queue'),
               backgroundColor: Colors.red,
               behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
             ),
           );
         }
@@ -647,6 +664,9 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
             content: Text('Failed to play playlist: $e'),
             backgroundColor: Colors.red,
             behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
           ),
         );
       }
@@ -758,17 +778,22 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                         ? 'Added $successCount tracks to queue${failCount > 0 ? ' ($failCount failed)' : ''}'
                         : 'Added ${queueItems.length} tracks to queue'),
               ),
-              backgroundColor: neonBlue,
               behavior: SnackBarBehavior.floating,
               duration: const Duration(seconds: 3),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
             ),
           );
         } else {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('No tracks could be added to queue'),
+            SnackBar(
+              content: const Text('No tracks could be added to queue'),
               backgroundColor: Colors.red,
               behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
             ),
           );
         }
@@ -781,6 +806,9 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
             content: Text('Failed to ${shuffle ? 'shuffle and ' : ''}add playlist to queue: $e'),
             backgroundColor: Colors.red,
             behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
           ),
         );
       }
@@ -847,9 +875,11 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text('Added to queue: ${getDisplayTitle(track.title, track.filename)}'),
-              backgroundColor: neonBlue,
               behavior: SnackBarBehavior.floating,
               duration: const Duration(seconds: 2),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
             ),
           );
         }
@@ -869,6 +899,9 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final primaryColor = Theme.of(context).colorScheme.primary;
+    final surfaceHover = Theme.of(context).colorScheme.surfaceVariant;
+    
     // If showing add songs screen, display that instead
     if (_showAddSongs) {
       return AddToPlaylistScreen(
@@ -886,10 +919,10 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
               Container(
                 padding: const EdgeInsets.all(24.0),
                 decoration: BoxDecoration(
-                  color: Colors.grey[900],
+                  color: Theme.of(context).colorScheme.surface,
                   border: Border(
                     bottom: BorderSide(
-                      color: neonBlue.withOpacity(0.3),
+                      color: Theme.of(context).dividerColor,
                       width: 1,
                     ),
                   ),
@@ -902,23 +935,18 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                         icon: const Icon(Icons.arrow_back),
                         onPressed: widget.onBack,
                         tooltip: 'Back to playlists',
-                        color: neonBlue,
                       ),
                     Container(
                       width: 80,
                       height: 80,
                       decoration: BoxDecoration(
-                        color: neonBlue.withOpacity(0.2),
+                        color: primaryColor.withOpacity(0.15),
                         borderRadius: BorderRadius.circular(12),
-                        border: Border.all(
-                          color: neonBlue.withOpacity(0.5),
-                          width: 2,
-                        ),
                       ),
-                      child: const Icon(
+                      child: Icon(
                         Icons.playlist_play,
                         size: 40,
-                        color: neonBlue,
+                        color: primaryColor,
                       ),
                     ),
                     const SizedBox(width: 20),
@@ -940,16 +968,14 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                                 icon: const Icon(Icons.edit),
                                 onPressed: _renamePlaylist,
                                 tooltip: 'Rename playlist',
-                                color: neonBlue,
                               ),
                               IconButton(
                                 icon: const Icon(Icons.add),
                                 onPressed: _addSongs,
                                 tooltip: 'Add songs',
-                                color: neonBlue,
                               ),
                               PopupMenuButton<PlaylistSortOption>(
-                                icon: const Icon(Icons.sort, color: neonBlue),
+                                icon: const Icon(Icons.sort),
                                 tooltip: 'Sort playlist',
                                 onSelected: _changeSortOption,
                                 itemBuilder: (context) => [
@@ -963,7 +989,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                                               : null,
                                           size: 20,
                                           color: _sortOption == PlaylistSortOption.defaultOrder
-                                              ? neonBlue
+                                              ? primaryColor
                                               : null,
                                         ),
                                         const SizedBox(width: 8),
@@ -981,7 +1007,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                                               : null,
                                           size: 20,
                                           color: _sortOption == PlaylistSortOption.artistName
-                                              ? neonBlue
+                                              ? primaryColor
                                               : null,
                                         ),
                                         const SizedBox(width: 8),
@@ -999,7 +1025,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                                               : null,
                                           size: 20,
                                           color: _sortOption == PlaylistSortOption.songName
-                                              ? neonBlue
+                                              ? primaryColor
                                               : null,
                                         ),
                                         const SizedBox(width: 8),
@@ -1014,27 +1040,23 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                                   icon: const Icon(Icons.play_arrow),
                                   onPressed: _playPlaylist,
                                   tooltip: 'Play playlist',
-                                  color: neonBlue,
                                   iconSize: 32,
                                 ),
                                 IconButton(
                                   icon: const Icon(Icons.shuffle),
                                   onPressed: _shufflePlaylistToQueue,
                                   tooltip: 'Shuffle and add playlist to queue',
-                                  color: neonBlue,
                                 ),
                                 IconButton(
                                   icon: const Icon(Icons.queue_music),
                                   onPressed: _addPlaylistToQueue,
                                   tooltip: 'Add playlist to queue',
-                                  color: neonBlue,
                                 ),
                               ],
                               IconButton(
                                 icon: const Icon(Icons.download),
                                 onPressed: _downloadUndownloadedTracks,
                                 tooltip: 'Download undownloaded tracks',
-                                color: neonBlue,
                               ),
                             ],
                           ),
@@ -1044,14 +1066,12 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                                 Icon(
                                   Icons.music_note,
                                   size: 18,
-                                  color: Colors.grey[400],
+                                  color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
                                 ),
                                 const SizedBox(width: 6),
                                 Text(
                                   '${_playlist.tracks.length} ${_playlist.tracks.length == 1 ? 'track' : 'tracks'}',
-                                  style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                                    color: Colors.grey[400],
-                                  ),
+                                  style: Theme.of(context).textTheme.bodyMedium,
                                 ),
                               ],
                             ),
@@ -1106,109 +1126,98 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                               children: [
                                 Material(
                                   color: isCurrentlyPlaying 
-                                      ? neonBlue.withOpacity(0.1) 
+                                      ? primaryColor.withOpacity(0.1) 
                                       : Colors.transparent,
+                                  borderRadius: BorderRadius.circular(8),
                                   child: InkWell(
                                     onTap: () => _playTrack(track),
-                                    hoverColor: neonBlue.withOpacity(0.15),
-                                    child: ListTile(
-                                      leading: Icon(
-                                        Icons.music_note,
-                                        color: isCurrentlyPlaying ? neonBlue : null,
-                                      ),
-                                      title: Text(
-                                        displayTitle,
-                                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                                          fontWeight: FontWeight.w500,
-                                          color: isCurrentlyPlaying ? neonBlue : null,
-                                        ),
-                                      ),
-                                      subtitle: track.artist != null && track.artist!.isNotEmpty
-                                          ? Text(
-                                              track.artist!,
-                                              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                                color: isCurrentlyPlaying 
-                                                    ? neonBlue.withOpacity(0.8) 
-                                                    : Colors.grey[400],
-                                              ),
-                                            )
-                                          : null,
-                                      trailing: Row(
-                                        mainAxisSize: MainAxisSize.min,
+                                    borderRadius: BorderRadius.circular(8),
+                                    hoverColor: surfaceHover,
+                                    child: Padding(
+                                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                      child: Row(
                                         children: [
-                                          // Add to queue button
-                                          if (widget.queueService != null)
-                                            Material(
-                                              color: Colors.transparent,
-                                              child: InkWell(
-                                                onTap: () => _addToQueue(track),
-                                                borderRadius: BorderRadius.circular(24),
-                                                child: Stack(
-                                                  children: [
-                                                    IconButton(
-                                                      icon: const Icon(Icons.more_vert),
-                                                      onPressed: () => _addToQueue(track),
-                                                      tooltip: 'Add to queue',
-                                                    ),
-                                                    Positioned(
-                                                      right: 8,
-                                                      top: 8,
-                                                      child: IgnorePointer(
-                                                        child: Container(
-                                                          padding: const EdgeInsets.all(2),
-                                                          decoration: BoxDecoration(
-                                                            color: neonBlue,
-                                                            shape: BoxShape.circle,
-                                                          ),
-                                                          child: const Icon(
-                                                            Icons.add,
-                                                            size: 12,
-                                                            color: Colors.black,
-                                                          ),
-                                                        ),
+                                          Container(
+                                            width: 40,
+                                            height: 40,
+                                            decoration: BoxDecoration(
+                                              color: isCurrentlyPlaying 
+                                                  ? primaryColor.withOpacity(0.2)
+                                                  : surfaceHover,
+                                              borderRadius: BorderRadius.circular(8),
+                                            ),
+                                            child: Icon(
+                                              Icons.music_note,
+                                              color: isCurrentlyPlaying ? primaryColor : Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+                                              size: 20,
+                                            ),
+                                          ),
+                                          const SizedBox(width: 12),
+                                          Expanded(
+                                            child: Column(
+                                              crossAxisAlignment: CrossAxisAlignment.start,
+                                              children: [
+                                                Text(
+                                                  displayTitle,
+                                                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                                    fontWeight: isCurrentlyPlaying ? FontWeight.w600 : FontWeight.w400,
+                                                    color: isCurrentlyPlaying ? primaryColor : null,
+                                                  ),
+                                                  maxLines: 1,
+                                                  overflow: TextOverflow.ellipsis,
+                                                ),
+                                                if (track.artist != null && track.artist!.isNotEmpty) ...[
+                                                  const SizedBox(height: 2),
+                                                  Text(
+                                                    track.artist!,
+                                                    style: Theme.of(context).textTheme.bodySmall,
+                                                    maxLines: 1,
+                                                    overflow: TextOverflow.ellipsis,
+                                                  ),
+                                                ],
+                                              ],
+                                            ),
+                                          ),
+                                          Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              // Add to queue button
+                                              if (widget.queueService != null)
+                                                IconButton(
+                                                  icon: const Icon(Icons.queue_music, size: 20),
+                                                  onPressed: () => _addToQueue(track),
+                                                  tooltip: 'Add to queue',
+                                                ),
+                                              // Download status icon
+                                              _isTrackDownloaded(track)
+                                                  ? IconButton(
+                                                      icon: Icon(
+                                                        Icons.check_circle,
+                                                        color: primaryColor,
+                                                        size: 20,
                                                       ),
+                                                      onPressed: null,
+                                                      tooltip: 'Downloaded',
+                                                    )
+                                                  : IconButton(
+                                                      icon: const Icon(Icons.download_outlined, size: 20),
+                                                      onPressed: () => _downloadTrack(track),
+                                                      tooltip: 'Download',
                                                     ),
-                                                  ],
-                                                ),
+                                              // Delete button
+                                              IconButton(
+                                                icon: const Icon(Icons.delete_outline, size: 20),
+                                                onPressed: () => _removeTrack(track),
+                                                tooltip: 'Remove from playlist',
                                               ),
-                                            ),
-                                          // Download status icon
-                                          _isTrackDownloaded(track)
-                                              ? IconButton(
-                                                  icon: const Icon(
-                                                    Icons.check_circle,
-                                                    color: neonBlue,
-                                                  ),
-                                                  onPressed: null,
-                                                  tooltip: 'Downloaded',
-                                                )
-                                              : IconButton(
-                                                  icon: Icon(
-                                                    Icons.download,
-                                                    color: Colors.grey[400],
-                                                  ),
-                                                  onPressed: () => _downloadTrack(track),
-                                                  tooltip: 'Download',
-                                                ),
-                                          // Delete button
-                                          IconButton(
-                                            icon: Icon(
-                                              Icons.delete_outline,
-                                              color: Colors.grey[400],
-                                            ),
-                                            onPressed: () => _removeTrack(track),
-                                            tooltip: 'Remove from playlist',
+                                            ],
                                           ),
                                         ],
                                       ),
                                     ),
                                   ),
                                 ),
-                                Divider(
-                                  height: 1,
-                                  thickness: 1,
-                                  color: Colors.grey[800],
-                                ),
+                                const Divider(height: 1),
                               ],
                             );
                           },
