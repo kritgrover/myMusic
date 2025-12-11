@@ -37,7 +37,6 @@ download_service = DownloadService(output_dir=DOWNLOADS_DIR)
 
 class SearchRequest(BaseModel):
     query: str
-    deep_search: bool = True
     duration_min: int = 0
     duration_max: float = 600
 
@@ -118,7 +117,6 @@ def search_youtube(request: SearchRequest):
     try:
         results = download_service.search_youtube(
             query=request.query,
-            deep_search=request.deep_search,
             duration_min=request.duration_min,
             duration_max=request.duration_max
         )
@@ -351,7 +349,6 @@ def delete_download_file(filename: str):
 # CSV Conversion Endpoints
 
 class CsvConversionRequest(BaseModel):
-    deep_search: bool = True
     duration_min: int = 0
     duration_max: float = 600
     exclude_instrumentals: bool = False
@@ -416,7 +413,6 @@ def convert_csv_file(filename: str, request: CsvConversionRequest):
         # Search for tracks without downloading
         result = download_service.convert_csv_to_playlist(
             csv_path=csv_path,
-            deep_search=request.deep_search,
             duration_min=request.duration_min,
             duration_max=request.duration_max,
             exclude_instrumentals=request.exclude_instrumentals,

@@ -95,7 +95,7 @@ class _AddToPlaylistScreenState extends State<AddToPlaylistScreen>
     });
 
     try {
-      final results = await _apiService.searchYoutube(query, deepSearch: true);
+      final results = await _apiService.searchYoutube(query);
       setState(() {
         _searchResults = results;
         _isSearching = false;

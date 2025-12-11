@@ -8,6 +8,7 @@ import csv
 import time
 from pathlib import Path
 from datetime import timedelta
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from mutagen.easyid3 import EasyID3
 from mutagen.mp4 import MP4, MP4Tags
 
@@ -88,7 +89,58 @@ class DownloadService:
             pos = idx + len(kw)
         return True
     
-    def search_youtube(self, query: str, deep_search: bool = True, duration_min: int = 0, duration_max: float = float("inf")):
+    def score_phase1_result(self, vid_title: str, uploader: str, duration: float, 
+                           safe_title: str, safe_artist: str, spotify_sec: float = None,
+                           duration_min: int = 0, duration_max: float = 600) -> int:
+        """
+        Score a Phase 1 result (0-100). Returns score >= 70 if result is acceptable.
+        Higher score = better match.
+        """
+        score = 0
+        vid_title_lower = vid_title.lower()
+        safe_title_lower = safe_title.lower()
+        uploader_lower = (uploader or '').lower()
+        
+        # Title matching (40 points max)
+        if safe_title_lower in vid_title_lower:
+            if vid_title_lower.startswith(safe_title_lower):
+                score += 40  # Perfect title match at start
+            else:
+                score += 30  # Title found somewhere
+        else:
+            # Partial title match
+            title_words = safe_title_lower.split()
+            matched_words = sum(1 for word in title_words if word in vid_title_lower)
+            if matched_words > 0:
+                score += (matched_words / len(title_words)) * 20
+        
+        # Artist matching (30 points max)
+        if safe_artist and safe_artist.lower() != 'unknown':
+            if safe_artist.lower() in uploader_lower:
+                score += 30
+            else:
+                # Partial artist match
+                artist_words = safe_artist.lower().split()
+                matched_words = sum(1 for word in artist_words if word in uploader_lower)
+                if matched_words > 0:
+                    score += (matched_words / len(artist_words)) * 15
+        
+        # Duration matching (30 points max)
+        if duration >= duration_min and duration <= duration_max:
+            score += 20  # Within range
+            if spotify_sec:
+                duration_diff = abs(duration - spotify_sec)
+                if duration_diff <= 5:
+                    score += 10  # Very close match
+                elif duration_diff <= 10:
+                    score += 5   # Close match
+        else:
+            # Out of range - no points
+            pass
+        
+        return int(score)
+    
+    def search_youtube(self, query: str, duration_min: int = 0, duration_max: float = float("inf")):
         """Search YouTube and return video information"""
         creationflags = subprocess.CREATE_NO_WINDOW if platform.system() == 'Windows' else 0
         
@@ -110,82 +162,47 @@ class DownloadService:
             cmd += extra_args + [search_spec]
             return cmd
         
-        if deep_search:
-            # Phase 1: quick flat-playlist probe
-            proc_q = subprocess.run(
-                yt_cmd(["--flat-playlist", "--dump-single-json", "--no-playlist"], f"ytsearch3:{query}"),
-                capture_output=True, text=True, creationflags=creationflags, timeout=30
-            )
-            if proc_q.returncode != 0:
-                error_msg = proc_q.stderr or proc_q.stdout or "Unknown error"
-                raise Exception(f"yt-dlp search failed: {error_msg[:500]}")
-            try:
-                data_q = json.loads(proc_q.stdout) or {}
-            except json.JSONDecodeError as e:
-                raise Exception(f"Failed to parse yt-dlp output: {e}. Output: {proc_q.stdout[:200]}")
-            if not isinstance(data_q, dict):
-                data_q = {}
-            
-            entries = data_q.get('entries') if isinstance(data_q.get('entries'), list) else []
-            results = []
-            
-            for entry in entries[:10]:  # Get top 10 results
-                if not isinstance(entry, dict):
-                    continue
-                vid_id = entry.get('id', '')
-                vid_title = entry.get('title', '')
-                uploader = entry.get('uploader', '')
-                duration = entry.get('duration', 0)
-                url = f"https://www.youtube.com/watch?v={vid_id}"
-                
-                # Filter by duration
-                if duration < duration_min or duration > duration_max:
-                    continue
-                
-                results.append({
-                    'id': vid_id,
-                    'title': vid_title,
-                    'uploader': uploader,
-                    'duration': duration,
-                    'url': url,
-                    'thumbnail': f"https://img.youtube.com/vi/{vid_id}/maxresdefault.jpg"
-                })
-            
-            return results
-        else:
-            # Fast search - single result
-            proc = subprocess.run(
-                yt_cmd(["--flat-playlist", "--dump-single-json", "--no-playlist"], f"ytsearch1:{query}"),
-                capture_output=True, text=True, creationflags=creationflags, timeout=30
-            )
-            if proc.returncode != 0:
-                error_msg = proc.stderr or proc.stdout or "Unknown error"
-                raise Exception(f"yt-dlp search failed: {error_msg[:500]}")
-            try:
-                data = json.loads(proc.stdout) or {}
-            except json.JSONDecodeError as e:
-                raise Exception(f"Failed to parse yt-dlp output: {e}. Output: {proc.stdout[:200]}")
-            
-            if not isinstance(data, dict):
-                return []
-            
-            entries = data.get('entries') if isinstance(data.get('entries'), list) else []
-            if not entries:
-                return []
-            
-            entry = entries[0] if isinstance(entries[0], dict) else {}
+        # Always use deep search - get top results
+        proc_q = subprocess.run(
+            yt_cmd(["--flat-playlist", "--dump-single-json", "--no-playlist"], f"ytsearch3:{query}"),
+            capture_output=True, text=True, creationflags=creationflags, timeout=30
+        )
+        if proc_q.returncode != 0:
+            error_msg = proc_q.stderr or proc_q.stdout or "Unknown error"
+            raise Exception(f"yt-dlp search failed: {error_msg[:500]}")
+        try:
+            data_q = json.loads(proc_q.stdout) or {}
+        except json.JSONDecodeError as e:
+            raise Exception(f"Failed to parse yt-dlp output: {e}. Output: {proc_q.stdout[:200]}")
+        if not isinstance(data_q, dict):
+            data_q = {}
+        
+        entries = data_q.get('entries') if isinstance(data_q.get('entries'), list) else []
+        results = []
+        
+        for entry in entries[:10]:  # Get top 10 results
+            if not isinstance(entry, dict):
+                continue
             vid_id = entry.get('id', '')
-            if not vid_id:
-                return []
+            vid_title = entry.get('title', '')
+            uploader = entry.get('uploader', '')
+            duration = entry.get('duration', 0)
+            url = f"https://www.youtube.com/watch?v={vid_id}"
             
-            return [{
+            # Filter by duration
+            if duration < duration_min or duration > duration_max:
+                continue
+            
+            results.append({
                 'id': vid_id,
-                'title': entry.get('title', ''),
-                'uploader': entry.get('uploader', ''),
-                'duration': entry.get('duration', 0),
-                'url': f"https://www.youtube.com/watch?v={vid_id}",
+                'title': vid_title,
+                'uploader': uploader,
+                'duration': duration,
+                'url': url,
                 'thumbnail': f"https://img.youtube.com/vi/{vid_id}/maxresdefault.jpg"
-            }]
+            })
+        
+        return results
     
     def download_audio(self, url: str, title: str, artist: str = "", album: str = "", 
                       output_format: str = "m4a", embed_thumbnail: bool = False):
@@ -442,7 +459,7 @@ class DownloadService:
         # In a real implementation, you might want to parse yt-dlp output or use callbacks
         return {"status": "downloading", "progress": 0}
     
-    def convert_csv_to_m4a(self, csv_path: str, deep_search: bool = True, 
+    def convert_csv_to_m4a(self, csv_path: str, 
                            duration_min: int = 0, duration_max: float = 600,
                            exclude_instrumentals: bool = False, 
                            variants: list = None, progress_callback=None):
@@ -508,34 +525,35 @@ class DownloadService:
                 if progress_callback:
                     progress_callback(i, total, f"Searching: {q}")
                 
-                if deep_search:
-                    # Phase 1: quick flat-playlist probe
-                    proc_q = subprocess.run(
-                        yt_cmd(["--flat-playlist", "--dump-single-json", "--no-playlist"], f"ytsearch1:{q}"),
-                        capture_output=True, text=True, creationflags=creationflags, timeout=30
-                    )
-                    try:
-                        data_q = json.loads(proc_q.stdout) or {}
-                    except Exception:
-                        data_q = {}
-                    if not isinstance(data_q, dict):
-                        data_q = {}
-                    entries_q = data_q.get('entries') if isinstance(data_q.get('entries'), list) else []
-                    top = entries_q[0] if entries_q else {}
-                    
-                    vid_title = top.get('title', '')
-                    upl = (top.get('uploader') or '').lower()
-                    duration = top.get('duration') or 0
-                    passes = (
-                        safe_title.lower() in vid_title.lower()
-                        and (not safe_artist or safe_artist.lower() in upl)
-                        and (not spotify_sec or abs(duration - spotify_sec) <= 10)
-                        and (duration >= duration_min and duration <= duration_max)
-                    )
-                    if passes:
-                        download_spec = top.get('webpage_url', f"https://www.youtube.com/watch?v={top.get('id','')}")
-                    else:
-                        # Phase 2: deep-search candidate IDs
+                # Always use deep search - Phase 1: quick flat-playlist probe with scoring
+                proc_q = subprocess.run(
+                    yt_cmd(["--flat-playlist", "--dump-single-json", "--no-playlist"], f"ytsearch1:{q}"),
+                    capture_output=True, text=True, creationflags=creationflags, timeout=30
+                )
+                try:
+                    data_q = json.loads(proc_q.stdout) or {}
+                except Exception:
+                    data_q = {}
+                if not isinstance(data_q, dict):
+                    data_q = {}
+                entries_q = data_q.get('entries') if isinstance(data_q.get('entries'), list) else []
+                top = entries_q[0] if entries_q else {}
+                
+                vid_title = top.get('title', '')
+                upl = top.get('uploader', '')
+                duration = top.get('duration', 0)
+                
+                # Score Phase 1 result (0-100, accept if >= 70)
+                phase1_score = self.score_phase1_result(
+                    vid_title, upl, duration, safe_title, safe_artist, 
+                    spotify_sec, duration_min, duration_max
+                )
+                
+                if phase1_score >= 70:
+                    # Good enough match from Phase 1
+                    download_spec = top.get('webpage_url', f"https://www.youtube.com/watch?v={top.get('id','')}")
+                else:
+                        # Phase 2: deep-search candidate IDs with parallel fetching
                         proc_ids = subprocess.run(
                             yt_cmd(["--flat-playlist", "--dump-single-json", "--no-playlist"], f"ytsearch3:{q}"),
                             capture_output=True, text=True, creationflags=creationflags, timeout=30
@@ -548,45 +566,83 @@ class DownloadService:
                         entries_ids = data_ids.get('entries') if isinstance(data_ids.get('entries'), list) else []
                         ids = [e for e in entries_ids if isinstance(e, dict)][:3]
                         
-                        scored = []
-                        first_words = self.normalize(title).split()[:5]
-                        for entry in ids:
-                            vid = entry.get('id')
-                            if not vid:
-                                continue
-                            url = f"https://www.youtube.com/watch?v={vid}"
-                            proc_i = subprocess.run(
-                                yt_cmd(["--dump-single-json", "--no-playlist"], url),
-                                capture_output=True, text=True, creationflags=creationflags, timeout=30
-                            )
-                            if "Sign in to confirm your age" in (proc_i.stderr or ''):
-                                continue
-                            try:
-                                info = json.loads(proc_i.stdout) or {}
-                            except Exception:
-                                continue
+                        if not ids:
+                            download_spec = f"ytsearch1:{q}"
+                        else:
+                            # Parallel metadata fetching
+                            def fetch_metadata(vid_entry):
+                                """Fetch full metadata for a video ID"""
+                                vid = vid_entry.get('id')
+                                if not vid:
+                                    return None
+                                url = f"https://www.youtube.com/watch?v={vid}"
+                                proc_i = subprocess.run(
+                                    yt_cmd(["--dump-single-json", "--no-playlist"], url),
+                                    capture_output=True, text=True, creationflags=creationflags, timeout=30
+                                )
+                                if "Sign in to confirm your age" in (proc_i.stderr or ''):
+                                    return None
+                                try:
+                                    return json.loads(proc_i.stdout) or {}
+                                except Exception:
+                                    return None
                             
-                            raw_title = info.get('title', '')
-                            low = raw_title.lower()
-                            up2 = (info.get('uploader') or '').lower()
-                            dur2 = info.get('duration') or 0
-                            if dur2 < duration_min or dur2 > duration_max:
-                                continue
-                            if 'shorts/' in info.get('webpage_url', '') or '#shorts' in low:
-                                continue
-                            if safe_artist.lower() and safe_artist.lower() not in up2:
-                                continue
-                            if variant and variant.lower() not in low:
-                                continue
-                            if not self.contains_keywords_in_order(raw_title, first_words):
-                                continue
-                            score = 100 if low.startswith(safe_title.lower()) else 80
-                            if spotify_sec:
-                                score -= abs(dur2 - spotify_sec)
-                            scored.append((score, url))
-                        download_spec = scored and max(scored, key=lambda x: x[0])[1] or f"ytsearch1:{q}"
-                else:
-                    download_spec = f"ytsearch1:{q}"
+                            scored = []
+                            first_words = self.normalize(title).split()[:5]
+                            found_excellent_match = False
+                            excellent_url = None
+                            
+                            # Fetch all metadata in parallel
+                            with ThreadPoolExecutor(max_workers=3) as executor:
+                                future_to_entry = {executor.submit(fetch_metadata, entry): entry for entry in ids}
+                                
+                                for future in as_completed(future_to_entry):
+                                    info = future.result()
+                                    if not info:
+                                        continue
+                                    
+                                    raw_title = info.get('title', '')
+                                    low = raw_title.lower()
+                                    up2 = (info.get('uploader') or '').lower()
+                                    dur2 = info.get('duration') or 0
+                                    
+                                    # Basic filters
+                                    if dur2 < duration_min or dur2 > duration_max:
+                                        continue
+                                    if 'shorts/' in info.get('webpage_url', '') or '#shorts' in low:
+                                        continue
+                                    if safe_artist.lower() and safe_artist.lower() not in up2:
+                                        continue
+                                    if variant and variant.lower() not in low:
+                                        continue
+                                    if not self.contains_keywords_in_order(raw_title, first_words):
+                                        continue
+                                    
+                                    # Score the match
+                                    score = 100 if low.startswith(safe_title.lower()) else 80
+                                    if spotify_sec:
+                                        score -= abs(dur2 - spotify_sec)
+                                    
+                                    url = info.get('webpage_url', f"https://www.youtube.com/watch?v={info.get('id', '')}")
+                                    scored.append((score, url))
+                                    
+                                    # Early exit: if we found a very good match (>= 90), stop processing
+                                    if score >= 90:
+                                        excellent_url = url
+                                        found_excellent_match = True
+                                        # Cancel remaining futures
+                                        for f in future_to_entry:
+                                            f.cancel()
+                                        break
+                            
+                            if found_excellent_match and excellent_url:
+                                # Use the excellent match immediately
+                                download_spec = excellent_url
+                            elif scored:
+                                # Use the best match from scored results
+                                download_spec = max(scored, key=lambda x: x[0])[1]
+                            else:
+                                download_spec = f"ytsearch1:{q}"
                 
                 # Download
                 file_title = re.sub(r"[^\w\s]", "", title).strip()
@@ -664,7 +720,7 @@ class DownloadService:
             'success_count': len(downloaded)
         }
 
-    def convert_csv_to_playlist(self, csv_path: str, deep_search: bool = True, 
+    def convert_csv_to_playlist(self, csv_path: str, 
                                 duration_min: int = 0, duration_max: float = 600,
                                 exclude_instrumentals: bool = False, 
                                 variants: list = None, progress_callback=None):
@@ -728,44 +784,45 @@ class DownloadService:
                 if progress_callback:
                     progress_callback(i, total, f"Searching: {q}")
                 
-                if deep_search:
-                    # Phase 1: quick flat-playlist probe
-                    proc_q = subprocess.run(
-                        yt_cmd(["--flat-playlist", "--dump-single-json", "--no-playlist"], f"ytsearch1:{q}"),
-                        capture_output=True, text=True, creationflags=creationflags, timeout=30
-                    )
-                    try:
-                        data_q = json.loads(proc_q.stdout) or {}
-                    except Exception:
-                        data_q = {}
-                    if not isinstance(data_q, dict):
-                        data_q = {}
-                    entries_q = data_q.get('entries') if isinstance(data_q.get('entries'), list) else []
-                    top = entries_q[0] if entries_q else {}
-                    
-                    vid_title = top.get('title', '')
-                    upl = (top.get('uploader') or '').lower()
-                    duration = top.get('duration') or 0
-                    passes = (
-                        safe_title.lower() in vid_title.lower()
-                        and (not safe_artist or safe_artist.lower() in upl)
-                        and (not spotify_sec or abs(duration - spotify_sec) <= 10)
-                        and (duration >= duration_min and duration <= duration_max)
-                    )
-                    if passes:
-                        vid_id = top.get('id', '')
-                        if vid_id:
-                            best_track = {
-                                'title': title,
-                                'artist': artist_primary,
-                                'album': album,
-                                'url': top.get('webpage_url', f"https://www.youtube.com/watch?v={vid_id}"),
-                                'thumbnail': f"https://img.youtube.com/vi/{vid_id}/maxresdefault.jpg",
-                                'duration': duration
-                            }
-                            break
-                    else:
-                        # Phase 2: deep-search candidate IDs
+                # Always use deep search - Phase 1: quick flat-playlist probe with scoring
+                proc_q = subprocess.run(
+                    yt_cmd(["--flat-playlist", "--dump-single-json", "--no-playlist"], f"ytsearch1:{q}"),
+                    capture_output=True, text=True, creationflags=creationflags, timeout=30
+                )
+                try:
+                    data_q = json.loads(proc_q.stdout) or {}
+                except Exception:
+                    data_q = {}
+                if not isinstance(data_q, dict):
+                    data_q = {}
+                entries_q = data_q.get('entries') if isinstance(data_q.get('entries'), list) else []
+                top = entries_q[0] if entries_q else {}
+                
+                vid_title = top.get('title', '')
+                upl = top.get('uploader', '')
+                duration = top.get('duration') or 0
+                
+                # Score Phase 1 result (0-100, accept if >= 70)
+                phase1_score = self.score_phase1_result(
+                    vid_title, upl, duration, safe_title, safe_artist, 
+                    spotify_sec, duration_min, duration_max
+                )
+                
+                if phase1_score >= 70:
+                    # Good enough match from Phase 1
+                    vid_id = top.get('id', '')
+                    if vid_id:
+                        best_track = {
+                            'title': title,
+                            'artist': artist_primary,
+                            'album': album,
+                            'url': top.get('webpage_url', f"https://www.youtube.com/watch?v={vid_id}"),
+                            'thumbnail': f"https://img.youtube.com/vi/{vid_id}/maxresdefault.jpg",
+                            'duration': duration
+                        }
+                        break
+                else:
+                        # Phase 2: deep-search candidate IDs with parallel fetching
                         proc_ids = subprocess.run(
                             yt_cmd(["--flat-playlist", "--dump-single-json", "--no-playlist"], f"ytsearch3:{q}"),
                             capture_output=True, text=True, creationflags=creationflags, timeout=30
@@ -778,80 +835,93 @@ class DownloadService:
                         entries_ids = data_ids.get('entries') if isinstance(data_ids.get('entries'), list) else []
                         ids = [e for e in entries_ids if isinstance(e, dict)][:3]
                         
-                        scored = []
-                        first_words = self.normalize(title).split()[:5]
-                        for entry in ids:
-                            vid = entry.get('id')
+                        if not ids:
+                            # No candidates found, skip to next variant
+                            continue
+                        
+                        # Parallel metadata fetching
+                        def fetch_metadata(vid_entry):
+                            """Fetch full metadata for a video ID"""
+                            vid = vid_entry.get('id')
                             if not vid:
-                                continue
+                                return None
                             url = f"https://www.youtube.com/watch?v={vid}"
                             proc_i = subprocess.run(
                                 yt_cmd(["--dump-single-json", "--no-playlist"], url),
                                 capture_output=True, text=True, creationflags=creationflags, timeout=30
                             )
                             if "Sign in to confirm your age" in (proc_i.stderr or ''):
-                                continue
+                                return None
                             try:
-                                info = json.loads(proc_i.stdout) or {}
+                                return json.loads(proc_i.stdout) or {}
                             except Exception:
-                                continue
+                                return None
+                        
+                        scored = []
+                        first_words = self.normalize(title).split()[:5]
+                        found_excellent_match = False
+                        excellent_track = None
+                        
+                        # Fetch all metadata in parallel
+                        with ThreadPoolExecutor(max_workers=3) as executor:
+                            future_to_entry = {executor.submit(fetch_metadata, entry): entry for entry in ids}
                             
-                            raw_title = info.get('title', '')
-                            low = raw_title.lower()
-                            up2 = (info.get('uploader') or '').lower()
-                            dur2 = info.get('duration') or 0
-                            if dur2 < duration_min or dur2 > duration_max:
-                                continue
-                            if 'shorts/' in info.get('webpage_url', '') or '#shorts' in low:
-                                continue
-                            if safe_artist.lower() and safe_artist.lower() not in up2:
-                                continue
-                            if variant and variant.lower() not in low:
-                                continue
-                            if not self.contains_keywords_in_order(raw_title, first_words):
-                                continue
-                            score = 100 if low.startswith(safe_title.lower()) else 80
-                            if spotify_sec:
-                                score -= abs(dur2 - spotify_sec)
-                            vid_id = info.get('id', '')
-                            if vid_id:
-                                scored.append((score, {
-                                    'title': title,
-                                    'artist': artist_primary,
-                                    'album': album,
-                                    'url': info.get('webpage_url', url),
-                                    'thumbnail': f"https://img.youtube.com/vi/{vid_id}/maxresdefault.jpg",
-                                    'duration': dur2
-                                }))
-                        if scored:
+                            for future in as_completed(future_to_entry):
+                                info = future.result()
+                                if not info:
+                                    continue
+                                
+                                raw_title = info.get('title', '')
+                                low = raw_title.lower()
+                                up2 = (info.get('uploader') or '').lower()
+                                dur2 = info.get('duration') or 0
+                                
+                                # Basic filters
+                                if dur2 < duration_min or dur2 > duration_max:
+                                    continue
+                                if 'shorts/' in info.get('webpage_url', '') or '#shorts' in low:
+                                    continue
+                                if safe_artist.lower() and safe_artist.lower() not in up2:
+                                    continue
+                                if variant and variant.lower() not in low:
+                                    continue
+                                if not self.contains_keywords_in_order(raw_title, first_words):
+                                    continue
+                                
+                                # Score the match
+                                score = 100 if low.startswith(safe_title.lower()) else 80
+                                if spotify_sec:
+                                    score -= abs(dur2 - spotify_sec)
+                                
+                                vid_id = info.get('id', '')
+                                if vid_id:
+                                    track_info = {
+                                        'title': title,
+                                        'artist': artist_primary,
+                                        'album': album,
+                                        'url': info.get('webpage_url', f"https://www.youtube.com/watch?v={vid_id}"),
+                                        'thumbnail': f"https://img.youtube.com/vi/{vid_id}/maxresdefault.jpg",
+                                        'duration': dur2
+                                    }
+                                    scored.append((score, track_info))
+                                    
+                                    # Early exit: if we found a very good match (>= 90), stop processing
+                                    if score >= 90:
+                                        excellent_track = track_info
+                                        found_excellent_match = True
+                                        # Cancel remaining futures
+                                        for f in future_to_entry:
+                                            f.cancel()
+                                        break
+                        
+                        if found_excellent_match and excellent_track:
+                            # Use the excellent match immediately
+                            best_track = excellent_track
+                            break  # Break variant loop
+                        elif scored:
+                            # Use the best match from scored results
                             best_track = max(scored, key=lambda x: x[0])[1]
-                            break
-                else:
-                    # Fast search - single result
-                    proc = subprocess.run(
-                        yt_cmd(["--flat-playlist", "--dump-single-json", "--no-playlist"], f"ytsearch1:{q}"),
-                        capture_output=True, text=True, creationflags=creationflags, timeout=30
-                    )
-                    try:
-                        data = json.loads(proc.stdout) or {}
-                    except Exception:
-                        data = {}
-                    if isinstance(data, dict):
-                        entries = data.get('entries') if isinstance(data.get('entries'), list) else []
-                        if entries:
-                            entry = entries[0] if isinstance(entries[0], dict) else {}
-                            vid_id = entry.get('id', '')
-                            duration = entry.get('duration') or 0
-                            if vid_id and duration >= duration_min and duration <= duration_max:
-                                best_track = {
-                                    'title': title,
-                                    'artist': artist_primary,
-                                    'album': album,
-                                    'url': entry.get('webpage_url', f"https://www.youtube.com/watch?v={vid_id}"),
-                                    'thumbnail': f"https://img.youtube.com/vi/{vid_id}/maxresdefault.jpg",
-                                    'duration': duration
-                                }
-                                break
+                            break  # Break variant loop
                 
                 if best_track:
                     break

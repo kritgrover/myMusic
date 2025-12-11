@@ -24,7 +24,6 @@ class _SearchScreenState extends State<SearchScreen> {
   final TextEditingController _searchController = TextEditingController();
   List<VideoInfo> _searchResults = [];
   bool _isSearching = false;
-  bool _deepSearch = true;
 
   @override
   void dispose() {
@@ -42,7 +41,7 @@ class _SearchScreenState extends State<SearchScreen> {
     });
 
     try {
-      final results = await _apiService.searchYoutube(query, deepSearch: _deepSearch);
+      final results = await _apiService.searchYoutube(query);
       setState(() {
         _searchResults = results;
         _isSearching = false;
@@ -94,28 +93,6 @@ class _SearchScreenState extends State<SearchScreen> {
                 ),
                 onSubmitted: (_) => _performSearch(),
                 textInputAction: TextInputAction.search,
-              ),
-              const SizedBox(height: 16),
-              Row(
-                children: [
-                  Checkbox(
-                    value: _deepSearch,
-                    onChanged: (value) {
-                      setState(() {
-                        _deepSearch = value ?? true;
-                      });
-                    },
-                  ),
-                  Text(
-                    'Deep Search',
-                    style: Theme.of(context).textTheme.bodyMedium,
-                  ),
-                  const SizedBox(width: 4),
-                  Text(
-                    '(slower but more accurate)',
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                ],
               ),
             ],
           ),

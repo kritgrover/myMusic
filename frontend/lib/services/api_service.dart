@@ -8,14 +8,13 @@ class ApiService {
   
   ApiService({String? baseUrl}) : baseUrl = baseUrl ?? AppConfig.apiBaseUrl;
   
-  Future<List<VideoInfo>> searchYoutube(String query, {bool deepSearch = true}) async {
+  Future<List<VideoInfo>> searchYoutube(String query) async {
     try {
       final response = await http.post(
         Uri.parse('$baseUrl/search'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'query': query,
-          'deep_search': deepSearch,
           'duration_min': 0,
           'duration_max': 600,
         }),
@@ -164,7 +163,6 @@ class ApiService {
   }
 
   Future<CsvConversionResult> convertCsv(String filename, {
-    bool deepSearch = true,
     int durationMin = 0,
     double durationMax = 600,
     bool excludeInstrumentals = false,
@@ -175,7 +173,6 @@ class ApiService {
         Uri.parse('$baseUrl/csv/convert/$filename'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
-          'deep_search': deepSearch,
           'duration_min': durationMin,
           'duration_max': durationMax,
           'exclude_instrumentals': excludeInstrumentals,

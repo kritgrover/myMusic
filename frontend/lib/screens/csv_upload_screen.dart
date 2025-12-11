@@ -20,7 +20,6 @@ class _CsvUploadScreenState extends State<CsvUploadScreen> {
   bool _isConverting = false;
   bool _conversionComplete = false;
   CsvConversionResult? _conversionResult;
-  bool _deepSearch = true;
   bool _excludeInstrumentals = false;
   int _durationMin = 0;
   double _durationMax = 600.0;
@@ -104,7 +103,6 @@ class _CsvUploadScreenState extends State<CsvUploadScreen> {
       // Convert CSV
       final conversionResult = await _apiService.convertCsv(
         uploadResult.filename,
-        deepSearch: _deepSearch,
         durationMin: _durationMin,
         durationMax: _durationMax,
         excludeInstrumentals: _excludeInstrumentals,
@@ -210,20 +208,6 @@ class _CsvUploadScreenState extends State<CsvUploadScreen> {
               ExpansionTile(
                 title: const Text('Conversion Options'),
                 children: [
-                  SwitchListTile(
-                    title: const Text('Deep Search'),
-                    subtitle: const Text(
-                      'Slower but more accurate search (recommended)',
-                    ),
-                    value: _deepSearch,
-                    onChanged: _isConverting
-                        ? null
-                        : (value) {
-                            setState(() {
-                              _deepSearch = value;
-                            });
-                          },
-                  ),
                   SwitchListTile(
                     title: const Text('Exclude Instrumentals'),
                     subtitle: const Text('Skip instrumental versions'),
