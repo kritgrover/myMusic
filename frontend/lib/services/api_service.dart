@@ -354,33 +354,36 @@ class CsvUploadResult {
 
 class CsvConversionResult {
   final bool success;
-  final List<String> downloaded;
+  final List<Map<String, dynamic>> tracks;
   final List<Map<String, dynamic>> notFound;
-  final String outputDir;
-  final List<CsvConvertedFile> files;
   final int total;
   final int successCount;
+  final String? playlistId;
+  final String? playlistName;
+  final bool playlistCreated;
   
   CsvConversionResult({
     required this.success,
-    required this.downloaded,
+    required this.tracks,
     required this.notFound,
-    required this.outputDir,
-    required this.files,
     required this.total,
     required this.successCount,
+    this.playlistId,
+    this.playlistName,
+    this.playlistCreated = false,
   });
   
   factory CsvConversionResult.fromJson(Map<String, dynamic> json) {
-    final List<dynamic> filesList = json['files'] ?? [];
+    final List<dynamic> tracksList = json['tracks'] ?? [];
     return CsvConversionResult(
       success: json['success'] ?? false,
-      downloaded: List<String>.from(json['downloaded'] ?? []),
+      tracks: List<Map<String, dynamic>>.from(tracksList),
       notFound: List<Map<String, dynamic>>.from(json['not_found'] ?? []),
-      outputDir: json['output_dir'] ?? '',
-      files: filesList.map((item) => CsvConvertedFile.fromJson(item)).toList(),
       total: json['total'] ?? 0,
       successCount: json['success_count'] ?? 0,
+      playlistId: json['playlist_id'],
+      playlistName: json['playlist_name'],
+      playlistCreated: json['playlist_created'] ?? false,
     );
   }
 }

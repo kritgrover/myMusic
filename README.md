@@ -1,4 +1,4 @@
-# Music Downloader App
+# myMusic
 
 A full-stack application for searching YouTube, downloading music, and playing audio files. Built with Flutter (frontend) and Python FastAPI (backend).
 
@@ -6,9 +6,15 @@ A full-stack application for searching YouTube, downloading music, and playing a
 
 ```
 .
-├── frontend/          # Flutter mobile app
+├── frontend/          # Flutter app (web/desktop/mobile)
+│   ├── lib/
+│   │   ├── screens/   # Main app screens (Search, Downloads, Playlists, CSV Upload)
+│   │   ├── services/  # API, playlist, queue, and player services
+│   │   ├── models/    # Data models (Playlist, QueueItem)
+│   │   └── widgets/   # Reusable UI components
 ├── backend/           # Python FastAPI server
-└── spotify2media.py   # Original script (reference)
+│   ├── downloads/     # Downloaded audio files
+│   └── playlists.json # Playlist storage
 ```
 
 ## Features
@@ -18,6 +24,17 @@ A full-stack application for searching YouTube, downloading music, and playing a
 - 🎵 **Media Player**: Built-in audio player with playback controls
 - 📥 **Downloads Management**: View and manage downloaded files
 - 🏷️ **Metadata**: Automatic metadata embedding (title, artist, album)
+- 📋 **Playlists**: Create, manage, and organize playlists
+  - Create, rename, and delete playlists
+  - Add songs from search results or downloads
+  - Download tracks directly from playlists
+  - Play tracks (downloaded or streamed from YouTube)
+- 🎧 **Queue Management**: Build and manage playback queues
+  - Add individual tracks or entire playlists to queue
+  - Shuffle playlists before adding to queue
+  - Auto-play next track in queue
+- 🌐 **Streaming**: Stream tracks directly from YouTube without downloading
+- 📄 **CSV Import**: Import playlists from CSV files with automatic YouTube search
 
 ## Quick Start
 
@@ -67,15 +84,19 @@ flutter run
 
 ### Backend API URL
 
-If running on a different machine or port, update the API URL in `frontend/lib/services/api_service.dart`:
+If running on a different machine or port, update the API URL in `frontend/lib/config.dart`:
 
 ```dart
-ApiService({this.baseUrl = 'http://YOUR_IP:8000'});
+static const String apiBaseUrl = 'http://YOUR_IP:8000';
 ```
+
+For Android emulator, use `http://10.0.2.2:8000`. For iOS simulator or web, use `http://localhost:8000`.
 
 ### Download Format
 
-By default, files are downloaded as M4A. To change to MP3, modify the download request in `frontend/lib/screens/search_screen.dart`:
+By default, files are downloaded as M4A. To change to MP3, modify the `outputFormat` parameter in the download requests:
+- `frontend/lib/screens/search_screen.dart` (line ~197)
+- `frontend/lib/screens/playlist_detail_screen.dart` (lines ~142, ~397)
 
 ```dart
 outputFormat: 'mp3',  // Change from 'm4a' to 'mp3'
@@ -102,8 +123,11 @@ See `backend/README.md` for detailed API documentation.
 
 - The backend uses yt-dlp to search and download from YouTube
 - Downloaded files are saved in `backend/downloads/`
+- Playlists are stored in `backend/playlists.json`
 - Audio metadata is automatically embedded using mutagen
+- The app supports both local file playback and streaming from YouTube
 - The app requires network access to connect to the backend API
+- The frontend works on web, desktop (Windows/macOS/Linux), and mobile platforms
 
 ## Troubleshooting
 

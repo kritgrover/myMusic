@@ -100,6 +100,11 @@ class AudioPlayerService {
     }
     return PlayerState.stopped;
   });
+
+  // Stream that emits when a song completes
+  Stream<void> get completionStream => _audioPlayer.playerStateStream
+      .where((state) => state.processingState == ProcessingState.completed)
+      .map((_) => null);
   
   // Get buffering state
   bool get isBuffering {

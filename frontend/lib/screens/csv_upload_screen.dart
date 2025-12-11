@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'dart:html' as html;
 import 'dart:typed_data';
 import '../services/api_service.dart';
+import '../services/playlist_service.dart';
 import '../config.dart';
 
 const Color neonBlue = Color(0xFF00D9FF);
@@ -15,12 +16,12 @@ class CsvUploadScreen extends StatefulWidget {
 
 class _CsvUploadScreenState extends State<CsvUploadScreen> {
   final ApiService _apiService = ApiService();
+  final PlaylistService _playlistService = PlaylistService();
   String? _uploadedFilename;
   String? _playlistName;
   bool _isConverting = false;
   bool _conversionComplete = false;
   CsvConversionResult? _conversionResult;
-  List<CsvConvertedFile> _convertedFiles = [];
   bool _deepSearch = true;
   bool _excludeInstrumentals = false;
   int _durationMin = 0;
@@ -113,7 +114,6 @@ class _CsvUploadScreenState extends State<CsvUploadScreen> {
 
       setState(() {
         _conversionResult = conversionResult;
-        _convertedFiles = conversionResult.files;
         _isConverting = false;
         _conversionComplete = true;
       });
@@ -122,10 +122,13 @@ class _CsvUploadScreenState extends State<CsvUploadScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              'Conversion complete! ${conversionResult.successCount}/${conversionResult.total} songs downloaded.',
+              conversionResult.playlistCreated
+                  ? 'Playlist created! ${conversionResult.successCount}/${conversionResult.total} songs found. You can download them from the playlist page.'
+                  : 'Search complete! ${conversionResult.successCount}/${conversionResult.total} songs found.',
             ),
             backgroundColor: neonBlue,
             behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 5),
           ),
         );
       }
@@ -145,22 +148,6 @@ class _CsvUploadScreenState extends State<CsvUploadScreen> {
     }
   }
 
-  Future<void> _downloadFile(String downloadUrl, String filename) async {
-    try {
-      final fullUrl = '${AppConfig.apiBaseUrl}$downloadUrl';
-      html.window.open(fullUrl, '_blank');
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Download error: $e'),
-            backgroundColor: Colors.red,
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-      }
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -321,80 +308,109 @@ class _CsvUploadScreenState extends State<CsvUploadScreen> {
             ),
           ),
         // Results
-        if (_conversionComplete && _convertedFiles.isNotEmpty)
+        if (_conversionComplete && _conversionResult != null)
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Padding(
                   padding: const EdgeInsets.all(16.0),
-                  child: Row(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Icon(Icons.check_circle, color: neonBlue),
-                      const SizedBox(width: 8),
-                      Text(
-                        'Conversion Complete',
-                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                              color: neonBlue,
-                              fontWeight: FontWeight.bold,
-                            ),
-                      ),
-                      const Spacer(),
-                      if (_conversionResult != null)
-                        Text(
-                          '${_conversionResult!.successCount}/${_conversionResult!.total} songs',
-                          style: Theme.of(context).textTheme.bodyLarge,
-                        ),
-                    ],
-                  ),
-                ),
-                Expanded(
-                  child: ListView.builder(
-                    itemCount: _convertedFiles.length,
-                    itemBuilder: (context, index) {
-                      final file = _convertedFiles[index];
-                      return Column(
+                      Row(
                         children: [
-                          Material(
-                            color: Colors.transparent,
-                            child: InkWell(
-                              onTap: () => _downloadFile(
-                                file.downloadUrl,
-                                file.filename,
-                              ),
-                              hoverColor: neonBlue.withOpacity(0.1),
-                              child: ListTile(
-                                leading: Icon(
-                                  Icons.music_note,
-                                  color: neonBlue,
-                                ),
-                                title: Text(file.filename),
-                                subtitle: Text(file.formattedSize),
-                                trailing: IconButton(
-                                  icon: const Icon(Icons.download),
-                                  onPressed: () => _downloadFile(
-                                    file.downloadUrl,
-                                    file.filename,
-                                  ),
-                                  tooltip: 'Download',
-                                ),
-                              ),
-                            ),
+                          Icon(
+                            _conversionResult!.playlistCreated
+                                ? Icons.check_circle
+                                : Icons.info_outline,
+                            color: neonBlue,
                           ),
-                          Divider(
-                            height: 1,
-                            thickness: 1,
-                            color: Colors.grey[800],
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              _conversionResult!.playlistCreated
+                                  ? 'Playlist Created Successfully!'
+                                  : 'Search Complete',
+                              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                                    color: neonBlue,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                            ),
                           ),
                         ],
-                      );
-                    },
+                      ),
+                      const SizedBox(height: 16),
+                      Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: Colors.grey[900],
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: neonBlue.withOpacity(0.3),
+                            width: 1,
+                          ),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            if (_conversionResult!.playlistName != null) ...[
+                              Row(
+                                children: [
+                                  Icon(Icons.playlist_play, color: neonBlue, size: 20),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    'Playlist: ${_conversionResult!.playlistName}',
+                                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 12),
+                            ],
+                            Row(
+                              children: [
+                                Icon(Icons.music_note, color: neonBlue, size: 20),
+                                const SizedBox(width: 8),
+                                Text(
+                                  '${_conversionResult!.successCount}/${_conversionResult!.total} songs found',
+                                  style: Theme.of(context).textTheme.bodyLarge,
+                                ),
+                              ],
+                            ),
+                            if (_conversionResult!.notFound.isNotEmpty) ...[
+                              const SizedBox(height: 8),
+                              Row(
+                                children: [
+                                  Icon(Icons.warning_amber, color: Colors.orange, size: 20),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    '${_conversionResult!.notFound.length} songs not found',
+                                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                          color: Colors.orange,
+                                        ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                            const SizedBox(height: 16),
+                            Text(
+                              'You can now download the songs from the playlist page by clicking the download button.',
+                              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                    color: Colors.grey[400],
+                                  ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ],
             ),
           )
-        else if (_conversionComplete && _convertedFiles.isEmpty)
+        else if (_conversionComplete && _conversionResult != null && _conversionResult!.tracks.isEmpty)
           Expanded(
             child: Center(
               child: Column(

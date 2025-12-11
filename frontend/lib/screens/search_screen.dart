@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import '../services/api_service.dart';
 import '../services/player_state_service.dart';
 import '../services/playlist_service.dart';
+import '../services/queue_service.dart';
+import '../models/queue_item.dart';
 import '../widgets/video_card.dart';
 import '../widgets/playlist_selection_dialog.dart';
 import '../models/playlist.dart';
@@ -10,8 +12,9 @@ const Color neonBlue = Color(0xFF00D9FF);
 
 class SearchScreen extends StatefulWidget {
   final PlayerStateService? playerStateService;
+  final QueueService? queueService;
   
-  const SearchScreen({super.key, this.playerStateService});
+  const SearchScreen({super.key, this.playerStateService, this.queueService});
 
   @override
   State<SearchScreen> createState() => _SearchScreenState();
@@ -123,6 +126,11 @@ class _SearchScreenState extends State<SearchScreen> {
                           onAddToPlaylist: () async {
                             await _showAddToPlaylistDialog(_searchResults[index]);
                           },
+                          onAddToQueue: widget.queueService != null
+                              ? () async {
+                                  await _addToQueue(_searchResults[index]);
+                                }
+                              : null,
                         );
                       },
                     ),
@@ -225,6 +233,52 @@ class _SearchScreenState extends State<SearchScreen> {
         track: track,
       ),
     );
+  }
+
+  Future<void> _addToQueue(VideoInfo video) async {
+    if (widget.queueService == null) return;
+
+    try {
+      // Get streaming URL
+      final result = await _apiService.getStreamingUrl(
+        url: video.url,
+        title: video.title,
+        artist: video.uploader,
+      );
+
+      // Create queue item
+      final queueItem = QueueItem.fromVideoInfo(
+        videoId: video.id,
+        title: result.title,
+        artist: result.artist,
+        streamingUrl: result.streamingUrl,
+        thumbnail: video.thumbnail,
+      );
+
+      // Add to queue
+      widget.queueService!.addToQueue(queueItem);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Added to queue: ${result.title}'),
+            backgroundColor: neonBlue,
+            behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to add to queue: $e'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    }
   }
 }
 

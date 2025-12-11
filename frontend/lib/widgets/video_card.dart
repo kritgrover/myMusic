@@ -8,6 +8,7 @@ class VideoCard extends StatelessWidget {
   final VoidCallback onStream;
   final VoidCallback onDownload;
   final VoidCallback? onAddToPlaylist;
+  final VoidCallback? onAddToQueue;
 
   const VideoCard({
     super.key,
@@ -15,6 +16,7 @@ class VideoCard extends StatelessWidget {
     required this.onStream,
     required this.onDownload,
     this.onAddToPlaylist,
+    this.onAddToQueue,
   });
 
   @override
@@ -68,6 +70,41 @@ class VideoCard extends StatelessWidget {
           trailing: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
+              if (onAddToQueue != null)
+                Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    onTap: onAddToQueue,
+                    borderRadius: BorderRadius.circular(24),
+                    child: Stack(
+                      children: [
+                        IconButton(
+                          icon: const Icon(Icons.more_vert),
+                          onPressed: onAddToQueue,
+                          tooltip: 'Add to queue',
+                        ),
+                        Positioned(
+                          right: 8,
+                          top: 8,
+                          child: IgnorePointer(
+                            child: Container(
+                              padding: const EdgeInsets.all(2),
+                              decoration: BoxDecoration(
+                                color: neonBlue,
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Icon(
+                                Icons.add,
+                                size: 12,
+                                color: Colors.black,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
               if (onAddToPlaylist != null)
                 IconButton(
                   icon: const Icon(Icons.add),

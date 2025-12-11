@@ -1,0 +1,140 @@
+import 'package:flutter/material.dart';
+import '../models/queue_item.dart';
+import 'player_state_service.dart';
+
+class QueueService extends ChangeNotifier {
+  final List<QueueItem> _queue = [];
+  int _currentIndex = -1; // -1 means no current track
+
+  List<QueueItem> get queue => List.unmodifiable(_queue);
+  int get currentIndex => _currentIndex;
+  QueueItem? get currentItem => _currentIndex >= 0 && _currentIndex < _queue.length 
+      ? _queue[_currentIndex] 
+      : null;
+  bool get hasNext => _currentIndex >= 0 && _currentIndex < _queue.length - 1;
+  bool get hasPrevious => _currentIndex > 0;
+  int get queueLength => _queue.length;
+
+  // Add item to the end of queue
+  void addToQueue(QueueItem item) {
+    _queue.add(item);
+    notifyListeners();
+  }
+
+  // Add multiple items to queue
+  void addAllToQueue(List<QueueItem> items) {
+    _queue.addAll(items);
+    notifyListeners();
+  }
+
+  // Remove item from queue
+  void removeFromQueue(int index) {
+    if (index >= 0 && index < _queue.length) {
+      _queue.removeAt(index);
+      // Adjust current index if needed
+      if (_currentIndex == index) {
+        // If we removed the current track, try to keep playing the same position
+        if (_currentIndex >= _queue.length) {
+          _currentIndex = _queue.length - 1;
+        }
+      } else if (_currentIndex > index) {
+        _currentIndex--;
+      }
+      notifyListeners();
+    }
+  }
+
+  // Clear the entire queue
+  void clearQueue() {
+    _queue.clear();
+    _currentIndex = -1;
+    notifyListeners();
+  }
+
+  // Set current index (when a track starts playing)
+  void setCurrentIndex(int index) {
+    if (index >= 0 && index < _queue.length) {
+      _currentIndex = index;
+      notifyListeners();
+    }
+  }
+
+  // Get next item
+  QueueItem? getNext() {
+    if (hasNext) {
+      return _queue[_currentIndex + 1];
+    }
+    return null;
+  }
+
+  // Get previous item
+  QueueItem? getPrevious() {
+    if (hasPrevious) {
+      return _queue[_currentIndex - 1];
+    }
+    return null;
+  }
+
+  // Move to next track
+  Future<void> playNext(PlayerStateService playerService) async {
+    if (hasNext) {
+      _currentIndex++;
+      final nextItem = _queue[_currentIndex];
+      await _playItem(nextItem, playerService);
+    }
+  }
+
+  // Move to previous track
+  Future<void> playPrevious(PlayerStateService playerService) async {
+    if (hasPrevious) {
+      _currentIndex--;
+      final previousItem = _queue[_currentIndex];
+      await _playItem(previousItem, playerService);
+    }
+  }
+
+  // Play a specific item from queue
+  Future<void> playItem(int index, PlayerStateService playerService) async {
+    if (index >= 0 && index < _queue.length) {
+      _currentIndex = index;
+      final item = _queue[index];
+      await _playItem(item, playerService);
+    }
+  }
+
+  // Internal method to play an item
+  Future<void> _playItem(QueueItem item, PlayerStateService playerService) async {
+    if (item.url != null) {
+      // Stream from URL
+      await playerService.streamTrack(
+        item.url!,
+        trackName: item.title,
+        trackArtist: item.artist,
+      );
+    } else if (item.filename != null) {
+      // Play local file
+      await playerService.playTrack(
+        item.filename!,
+        trackName: item.title,
+        trackArtist: item.artist,
+      );
+    }
+    notifyListeners();
+  }
+
+  // Add item and play it immediately (replaces current track)
+  Future<void> addAndPlay(QueueItem item, PlayerStateService playerService) async {
+    // If queue is empty or we're at the end, just add and play
+    if (_queue.isEmpty || _currentIndex == _queue.length - 1) {
+      _queue.add(item);
+      _currentIndex = _queue.length - 1;
+      await _playItem(item, playerService);
+    } else {
+      // Insert after current position
+      _currentIndex++;
+      _queue.insert(_currentIndex, item);
+      await _playItem(item, playerService);
+    }
+  }
+}
+

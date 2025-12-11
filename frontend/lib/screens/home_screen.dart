@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
+import 'dart:async';
 import 'search_screen.dart';
 import 'downloads_screen.dart';
 import 'playlists_screen.dart';
 import 'csv_upload_screen.dart';
 import '../widgets/bottom_player.dart';
+import '../widgets/queue_panel.dart';
 import '../services/player_state_service.dart';
+import '../services/queue_service.dart';
 
 const Color neonBlue = Color(0xFF00D9FF);
 
@@ -18,6 +21,9 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   int _currentIndex = 0;
   final PlayerStateService _playerStateService = PlayerStateService();
+  final QueueService _queueService = QueueService();
+  bool _showQueuePanel = false;
+  StreamSubscription? _completionSubscription;
 
   final List<Widget> _screens = [];
 
@@ -25,11 +31,28 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     _screens.addAll([
-      SearchScreen(playerStateService: _playerStateService),
-      DownloadsScreen(playerStateService: _playerStateService),
-      PlaylistsScreen(playerStateService: _playerStateService),
+      SearchScreen(
+        playerStateService: _playerStateService,
+        queueService: _queueService,
+      ),
+      DownloadsScreen(
+        playerStateService: _playerStateService,
+        queueService: _queueService,
+      ),
+      PlaylistsScreen(
+        playerStateService: _playerStateService,
+        queueService: _queueService,
+      ),
       const CsvUploadScreen(),
     ]);
+
+    // Listen for song completion and auto-play next song in queue
+    _completionSubscription = _playerStateService.audioPlayer.completionStream.listen((_) {
+      // Only auto-play next if we're playing from queue
+      if (_queueService.currentIndex >= 0 && _queueService.hasNext) {
+        _queueService.playNext(_playerStateService);
+      }
+    });
   }
 
   @override
@@ -94,12 +117,35 @@ class _HomeScreenState extends State<HomeScreen> {
                       playerService: _playerStateService.audioPlayer,
                       currentTrackName: _playerStateService.currentTrackName,
                       currentTrackArtist: _playerStateService.currentTrackArtist,
+                      queueService: _queueService,
+                      playerStateService: _playerStateService,
+                      onQueueToggle: () {
+                        setState(() {
+                          _showQueuePanel = !_showQueuePanel;
+                        });
+                      },
                     );
                   },
                 ),
               ],
             ),
           ),
+          // Queue panel
+          if (_showQueuePanel)
+            QueuePanel(
+              queueService: _queueService,
+              onClose: () {
+                setState(() {
+                  _showQueuePanel = false;
+                });
+              },
+              onItemTap: (item) async {
+                final index = _queueService.queue.indexOf(item);
+                if (index >= 0) {
+                  await _queueService.playItem(index, _playerStateService);
+                }
+              },
+            ),
         ],
       ),
     );
@@ -107,7 +153,9 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
+    _completionSubscription?.cancel();
     _playerStateService.dispose();
+    _queueService.dispose();
     super.dispose();
   }
 }
