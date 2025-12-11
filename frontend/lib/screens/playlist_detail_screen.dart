@@ -10,6 +10,12 @@ import '../utils/song_display_utils.dart';
 
 const Color neonBlue = Color(0xFF00D9FF);
 
+enum PlaylistSortOption {
+  defaultOrder,
+  artistName,
+  songName,
+}
+
 class PlaylistDetailScreen extends StatefulWidget {
   final Playlist playlist;
   final PlaylistService playlistService;
@@ -34,6 +40,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
   late Playlist _playlist;
   bool _isLoading = false;
   bool _showAddSongs = false;
+  PlaylistSortOption _sortOption = PlaylistSortOption.defaultOrder;
   final ApiService _apiService = ApiService();
 
   @override
@@ -79,6 +86,47 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
     });
     // Reload playlist when returning from add songs
     _loadPlaylist();
+  }
+
+  // Get sorted tracks based on current sort option
+  List<PlaylistTrack> get _sortedTracks {
+    final tracks = List<PlaylistTrack>.from(_playlist.tracks);
+    
+    switch (_sortOption) {
+      case PlaylistSortOption.defaultOrder:
+        // Return tracks in original order (as stored)
+        return tracks;
+      case PlaylistSortOption.artistName:
+        // Sort by artist name, then by song name
+        tracks.sort((a, b) {
+          final artistA = (a.artist ?? '').toLowerCase();
+          final artistB = (b.artist ?? '').toLowerCase();
+          if (artistA != artistB) {
+            return artistA.compareTo(artistB);
+          }
+          // If artists are the same, sort by song name
+          final titleA = (a.title ?? '').toLowerCase();
+          final titleB = (b.title ?? '').toLowerCase();
+          return titleA.compareTo(titleB);
+        });
+        return tracks;
+      case PlaylistSortOption.songName:
+        // Sort by song name
+        tracks.sort((a, b) {
+          final titleA = (a.title ?? '').toLowerCase();
+          final titleB = (b.title ?? '').toLowerCase();
+          return titleA.compareTo(titleB);
+        });
+        return tracks;
+    }
+  }
+
+  void _changeSortOption(PlaylistSortOption? newOption) {
+    if (newOption != null) {
+      setState(() {
+        _sortOption = newOption;
+      });
+    }
   }
 
   Future<void> _removeTrack(PlaylistTrack track) async {
@@ -506,8 +554,8 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
     );
 
     try {
-      // Create a copy of tracks list
-      final tracks = List<PlaylistTrack>.from(_playlist.tracks);
+      // Use sorted tracks
+      final tracks = _sortedTracks;
 
       final queueItems = <QueueItem>[];
       int successCount = 0;
@@ -560,6 +608,9 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
         Navigator.of(context).pop(); // Close loading dialog
 
         if (queueItems.isNotEmpty) {
+          // Clear the queue first
+          widget.queueService!.clearQueue();
+          
           // Add all items to queue
           widget.queueService!.addAllToQueue(queueItems);
           
@@ -637,8 +688,8 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
     );
 
     try {
-      // Create a copy of tracks list and shuffle if needed
-      final tracks = List<PlaylistTrack>.from(_playlist.tracks);
+      // Use sorted tracks and shuffle if needed
+      final tracks = List<PlaylistTrack>.from(_sortedTracks);
       if (shuffle) {
         tracks.shuffle(Random());
       }
@@ -897,6 +948,67 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                                 tooltip: 'Add songs',
                                 color: neonBlue,
                               ),
+                              PopupMenuButton<PlaylistSortOption>(
+                                icon: const Icon(Icons.sort, color: neonBlue),
+                                tooltip: 'Sort playlist',
+                                onSelected: _changeSortOption,
+                                itemBuilder: (context) => [
+                                  PopupMenuItem(
+                                    value: PlaylistSortOption.defaultOrder,
+                                    child: Row(
+                                      children: [
+                                        Icon(
+                                          _sortOption == PlaylistSortOption.defaultOrder
+                                              ? Icons.check
+                                              : null,
+                                          size: 20,
+                                          color: _sortOption == PlaylistSortOption.defaultOrder
+                                              ? neonBlue
+                                              : null,
+                                        ),
+                                        const SizedBox(width: 8),
+                                        const Text('Default'),
+                                      ],
+                                    ),
+                                  ),
+                                  PopupMenuItem(
+                                    value: PlaylistSortOption.artistName,
+                                    child: Row(
+                                      children: [
+                                        Icon(
+                                          _sortOption == PlaylistSortOption.artistName
+                                              ? Icons.check
+                                              : null,
+                                          size: 20,
+                                          color: _sortOption == PlaylistSortOption.artistName
+                                              ? neonBlue
+                                              : null,
+                                        ),
+                                        const SizedBox(width: 8),
+                                        const Text('Sort by Artist'),
+                                      ],
+                                    ),
+                                  ),
+                                  PopupMenuItem(
+                                    value: PlaylistSortOption.songName,
+                                    child: Row(
+                                      children: [
+                                        Icon(
+                                          _sortOption == PlaylistSortOption.songName
+                                              ? Icons.check
+                                              : null,
+                                          size: 20,
+                                          color: _sortOption == PlaylistSortOption.songName
+                                              ? neonBlue
+                                              : null,
+                                        ),
+                                        const SizedBox(width: 8),
+                                        const Text('Sort by Song'),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
                               if (widget.queueService != null && widget.playerStateService != null) ...[
                                 IconButton(
                                   icon: const Icon(Icons.play_arrow),
@@ -982,9 +1094,9 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                         )
                       : ListView.builder(
                           padding: const EdgeInsets.symmetric(vertical: 8.0),
-                          itemCount: _playlist.tracks.length,
+                          itemCount: _sortedTracks.length,
                           itemBuilder: (context, index) {
-                            final track = _playlist.tracks[index];
+                            final track = _sortedTracks[index];
                             final isCurrentlyPlaying = widget.playerStateService != null &&
                                 widget.playerStateService.currentTrackUrl?.contains(track.filename ?? '') == true;
                             
