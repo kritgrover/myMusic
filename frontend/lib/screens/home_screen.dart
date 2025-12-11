@@ -99,7 +99,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 NavigationRailDestination(
                   icon: const Icon(Icons.upload_file_outlined),
                   selectedIcon: const Icon(Icons.upload_file),
-                  label: const Text('CSV Upload'),
+                  label: const Text('CSV'),
                 ),
               ],
             ),

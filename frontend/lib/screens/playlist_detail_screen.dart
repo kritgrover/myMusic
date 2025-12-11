@@ -765,7 +765,17 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
         Navigator.of(context).pop(); // Close loading dialog
 
         if (queueItems.isNotEmpty) {
+          // If shuffle is enabled, clear the existing queue first
+          if (shuffle) {
+            widget.queueService!.clearQueue();
+          }
+          
           widget.queueService!.addAllToQueue(queueItems);
+
+          // If shuffle is enabled and player service is available, start playing the first song
+          if (shuffle && widget.playerStateService != null) {
+            await widget.queueService!.playItem(0, widget.playerStateService!);
+          }
 
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
