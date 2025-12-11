@@ -462,6 +462,146 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
     await _addPlaylistToQueueInternal(shuffle: true);
   }
 
+  Future<void> _playPlaylist() async {
+    if (widget.queueService == null || widget.playerStateService == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Player or queue service not available'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+      return;
+    }
+
+    if (_playlist.tracks.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Playlist is empty'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+      return;
+    }
+
+    // Show loading indicator
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CircularProgressIndicator(),
+            SizedBox(height: 16),
+            Text('Preparing playlist...'),
+          ],
+        ),
+      ),
+    );
+
+    try {
+      // Create a copy of tracks list
+      final tracks = List<PlaylistTrack>.from(_playlist.tracks);
+
+      final queueItems = <QueueItem>[];
+      int successCount = 0;
+      int failCount = 0;
+
+      for (final track in tracks) {
+        try {
+          QueueItem? queueItem;
+
+          if (track.filename.isNotEmpty) {
+            // Local file
+            queueItem = QueueItem.fromDownloadedFile(
+              filename: track.filename,
+              title: track.title,
+              artist: track.artist,
+            );
+            queueItems.add(queueItem);
+            successCount++;
+          } else if (track.url != null && track.url!.isNotEmpty) {
+            // Need to get streaming URL
+            try {
+              final result = await _apiService.getStreamingUrl(
+                url: track.url!,
+                title: track.title,
+                artist: track.artist ?? '',
+              );
+
+              queueItem = QueueItem.fromPlaylistTrack(
+                trackId: track.id,
+                title: result.title,
+                artist: result.artist,
+                streamingUrl: result.streamingUrl,
+              );
+              queueItems.add(queueItem);
+              successCount++;
+            } catch (e) {
+              failCount++;
+              // Continue with next track
+            }
+          } else {
+            failCount++;
+          }
+        } catch (e) {
+          failCount++;
+          // Continue with next track
+        }
+      }
+
+      if (mounted) {
+        Navigator.of(context).pop(); // Close loading dialog
+
+        if (queueItems.isNotEmpty) {
+          // Add all items to queue
+          widget.queueService!.addAllToQueue(queueItems);
+          
+          // Start playing the first item
+          await widget.queueService!.playItem(0, widget.playerStateService!);
+
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                failCount > 0
+                    ? 'Playing playlist: $successCount tracks added${failCount > 0 ? ' ($failCount failed)' : ''}'
+                    : 'Playing playlist: ${queueItems.length} tracks',
+              ),
+              backgroundColor: neonBlue,
+              behavior: SnackBarBehavior.floating,
+              duration: const Duration(seconds: 3),
+            ),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('No tracks could be added to queue'),
+              backgroundColor: Colors.red,
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        Navigator.of(context).pop(); // Close loading dialog
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to play playlist: $e'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    }
+  }
+
   Future<void> _addPlaylistToQueueInternal({required bool shuffle}) async {
     if (widget.queueService == null) return;
 
@@ -757,7 +897,14 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                                 tooltip: 'Add songs',
                                 color: neonBlue,
                               ),
-                              if (widget.queueService != null) ...[
+                              if (widget.queueService != null && widget.playerStateService != null) ...[
+                                IconButton(
+                                  icon: const Icon(Icons.play_arrow),
+                                  onPressed: _playPlaylist,
+                                  tooltip: 'Play playlist',
+                                  color: neonBlue,
+                                  iconSize: 32,
+                                ),
                                 IconButton(
                                   icon: const Icon(Icons.shuffle),
                                   onPressed: _shufflePlaylistToQueue,
