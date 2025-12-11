@@ -3,18 +3,22 @@ import '../services/api_service.dart';
 
 class VideoCard extends StatelessWidget {
   final VideoInfo video;
-  final VoidCallback onStream;
-  final VoidCallback onDownload;
+  final VoidCallback? onStream;
+  final VoidCallback? onDownload;
   final VoidCallback? onAddToPlaylist;
   final VoidCallback? onAddToQueue;
+  final VoidCallback? onTap;
+  final bool isSelected;
 
   const VideoCard({
     super.key,
     required this.video,
-    required this.onStream,
-    required this.onDownload,
+    this.onStream,
+    this.onDownload,
     this.onAddToPlaylist,
     this.onAddToQueue,
+    this.onTap,
+    this.isSelected = false,
   });
 
   @override
@@ -23,10 +27,11 @@ class VideoCard extends StatelessWidget {
     final surfaceHover = Theme.of(context).colorScheme.surfaceVariant;
     
     return Card(
+      color: isSelected ? primaryColor.withOpacity(0.1) : null,
       child: Material(
         color: Colors.transparent,
         child: InkWell(
-          onTap: onStream,
+          onTap: onTap ?? onStream ?? () {},
           borderRadius: BorderRadius.circular(12),
           hoverColor: surfaceHover,
           child: Padding(
@@ -107,11 +112,12 @@ class VideoCard extends StatelessWidget {
                         onPressed: onAddToPlaylist,
                         tooltip: 'Add to playlist',
                       ),
-                    IconButton(
-                      icon: const Icon(Icons.download_outlined, size: 20),
-                      onPressed: onDownload,
-                      tooltip: 'Download',
-                    ),
+                    if (onDownload != null)
+                      IconButton(
+                        icon: const Icon(Icons.download_outlined, size: 20),
+                        onPressed: onDownload,
+                        tooltip: 'Download',
+                      ),
                   ],
                 ),
               ],

@@ -162,6 +162,21 @@ class ApiService {
     }
   }
 
+  Future<CsvProgress> getCsvProgress(String filename) async {
+    try {
+      final response = await http.get(Uri.parse('$baseUrl/csv/progress/$filename'));
+      
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        return CsvProgress.fromJson(data);
+      } else {
+        throw Exception('Failed to get progress: ${response.statusCode}');
+      }
+    } catch (e) {
+      throw Exception('Get progress error: $e');
+    }
+  }
+
   Future<CsvConversionResult> convertCsv(String filename, {
     int durationMin = 0,
     double durationMax = 600,
@@ -189,6 +204,23 @@ class ApiService {
       }
     } catch (e) {
       throw Exception('CSV conversion error: $e');
+    }
+  }
+
+  Future<void> addSongToPlaylist(String playlistId, Map<String, dynamic> songData) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/playlists/$playlistId/songs'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode(songData),
+      );
+      
+      if (response.statusCode != 200) {
+        final error = jsonDecode(response.body);
+        throw Exception(error['detail'] ?? 'Failed to add song');
+      }
+    } catch (e) {
+      throw Exception('Add song error: $e');
     }
   }
 
@@ -412,5 +444,35 @@ class CsvConvertedFile {
     if (size < 1024 * 1024) return '${(size / 1024).toStringAsFixed(1)} KB';
     return '${(size / (1024 * 1024)).toStringAsFixed(1)} MB';
   }
+}
+
+class CsvProgress {
+  final int current;
+  final int total;
+  final String status;
+  final int processed;
+  final int notFound;
+  
+  CsvProgress({
+    required this.current,
+    required this.total,
+    required this.status,
+    required this.processed,
+    required this.notFound,
+  });
+  
+  factory CsvProgress.fromJson(Map<String, dynamic> json) {
+    return CsvProgress(
+      current: json['current'] ?? 0,
+      total: json['total'] ?? 0,
+      status: json['status'] ?? '',
+      processed: json['processed'] ?? 0,
+      notFound: json['not_found'] ?? 0,
+    );
+  }
+  
+  bool get isCompleted => status == 'completed';
+  bool get hasError => status.startsWith('error');
+  double get progress => total > 0 ? current / total : 0.0;
 }
 

@@ -34,6 +34,9 @@ os.makedirs(DOWNLOADS_DIR, exist_ok=True)
 
 download_service = DownloadService(output_dir=DOWNLOADS_DIR)
 
+# Global progress tracking for CSV conversions
+csv_progress: Dict[str, Dict] = {}
+
 
 class SearchRequest(BaseModel):
     query: str
@@ -402,13 +405,15 @@ def convert_csv_file(filename: str, request: CsvConversionRequest):
         if not os.path.isfile(csv_path):
             raise HTTPException(status_code=404, detail="CSV file not found")
         
-        # Progress tracking
-        progress_data = {"current": 0, "total": 0, "status": ""}
+        # Initialize progress tracking for this filename
+        csv_progress[filename] = {"current": 0, "total": 0, "status": "", "processed": 0, "not_found": 0}
         
         def progress_callback(current, total, status):
-            progress_data["current"] = current
-            progress_data["total"] = total
-            progress_data["status"] = status
+            csv_progress[filename]["current"] = current
+            csv_progress[filename]["total"] = total
+            csv_progress[filename]["status"] = status
+            # During processing, processed count is same as current
+            csv_progress[filename]["processed"] = current
         
         # Search for tracks without downloading
         result = download_service.convert_csv_to_playlist(
@@ -470,6 +475,11 @@ def convert_csv_file(filename: str, request: CsvConversionRequest):
             traceback.print_exc()
             # Continue even if playlist creation fails
         
+        # Update final progress
+        csv_progress[filename]["processed"] = result['success_count']
+        csv_progress[filename]["not_found"] = len(result['not_found'])
+        csv_progress[filename]["status"] = "completed"
+        
         return {
             "success": True,
             "tracks": result.get('tracks', []),
@@ -484,7 +494,18 @@ def convert_csv_file(filename: str, request: CsvConversionRequest):
         import traceback
         error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
         print(f"CSV conversion error: {error_detail}")
+        # Mark as error in progress
+        if filename in csv_progress:
+            csv_progress[filename]["status"] = f"error: {str(e)}"
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/csv/progress/{filename}")
+def get_csv_progress(filename: str):
+    """Get progress for a CSV conversion"""
+    if filename not in csv_progress:
+        raise HTTPException(status_code=404, detail="Progress not found")
+    return csv_progress[filename]
 
 
 @app.get("/csv/download/{playlist_name}/{filename}")

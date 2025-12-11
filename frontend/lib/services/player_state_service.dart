@@ -23,10 +23,12 @@ class PlayerStateService extends ChangeNotifier {
 
   Future<void> playTrack(String filename, {String? trackName, String? trackArtist}) async {
     try {
-      await _audioPlayerService.playFromBackend(filename);
+      // Set track info BEFORE starting playback to avoid race condition
+      // where stateStream fires notifyListeners() before track name is set
       _currentTrackName = trackName ?? filename;
       _currentTrackArtist = trackArtist;
       notifyListeners();
+      await _audioPlayerService.playFromBackend(filename);
     } catch (e) {
       rethrow;
     }
@@ -34,10 +36,12 @@ class PlayerStateService extends ChangeNotifier {
 
   Future<void> streamTrack(String streamingUrl, {String? trackName, String? trackArtist}) async {
     try {
-      await _audioPlayerService.playFromUrl(streamingUrl);
+      // Set track info BEFORE starting playback to avoid race condition
+      // where stateStream fires notifyListeners() before track name is set
       _currentTrackName = trackName ?? 'Streaming';
       _currentTrackArtist = trackArtist;
       notifyListeners();
+      await _audioPlayerService.playFromUrl(streamingUrl);
     } catch (e) {
       rethrow;
     }

@@ -6,8 +6,12 @@ import 'playlists_screen.dart';
 import 'csv_upload_screen.dart';
 import '../widgets/bottom_player.dart';
 import '../widgets/queue_panel.dart';
+import '../widgets/csv_progress_bar.dart';
+import '../widgets/not_found_songs_dialog.dart';
 import '../services/player_state_service.dart';
 import '../services/queue_service.dart';
+import '../services/api_service.dart';
+import '../services/playlist_service.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -22,6 +26,19 @@ class _HomeScreenState extends State<HomeScreen> {
   final QueueService _queueService = QueueService();
   bool _showQueuePanel = false;
   StreamSubscription? _completionSubscription;
+  
+  // CSV progress tracking
+  CsvProgress? _csvProgress;
+  Timer? _csvProgressTimer;
+  String? _csvFilename;
+  
+  // Pending dialog data
+  List<Map<String, dynamic>>? _pendingNotFoundSongs;
+  String? _pendingPlaylistId;
+  
+  // Services for dialog
+  final ApiService _apiService = ApiService();
+  final PlaylistService _playlistService = PlaylistService();
 
   final List<Widget> _screens = [];
 
@@ -41,7 +58,45 @@ class _HomeScreenState extends State<HomeScreen> {
         playerStateService: _playerStateService,
         queueService: _queueService,
       ),
-      const CsvUploadScreen(),
+      CsvUploadScreen(
+        onConversionStart: (filename) {
+          setState(() {
+            _csvFilename = filename;
+            _csvProgress = null;
+          });
+          _startProgressPolling(filename);
+        },
+        onConversionComplete: (conversionResult) {
+          _stopProgressPolling();
+          setState(() {
+            _csvFilename = null;
+            _csvProgress = null;
+            
+            // Store pending dialog data
+            if (conversionResult.notFound.isNotEmpty) {
+              _pendingNotFoundSongs = conversionResult.notFound;
+              _pendingPlaylistId = conversionResult.playlistId;
+            }
+          });
+          
+          // Show dialog after state update
+          if (conversionResult.notFound.isNotEmpty) {
+            print('CSV Conversion: ${conversionResult.notFound.length} songs not found, showing dialog...');
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted && _pendingNotFoundSongs != null) {
+                final notFound = _pendingNotFoundSongs!;
+                final playlistId = _pendingPlaylistId;
+                _pendingNotFoundSongs = null;
+                _pendingPlaylistId = null;
+                print('Showing dialog with ${notFound.length} not found songs');
+                _showNotFoundSongsDialog(notFound, playlistId);
+              }
+            });
+          } else {
+            print('CSV Conversion: All songs found, no dialog needed');
+          }
+        },
+      ),
     ]);
 
     // Listen for song completion and auto-play next song in queue
@@ -51,6 +106,70 @@ class _HomeScreenState extends State<HomeScreen> {
         _queueService.playNext(_playerStateService);
       }
     });
+  }
+
+  void _startProgressPolling(String filename) {
+    final apiService = ApiService();
+    _csvProgressTimer?.cancel();
+    _csvProgressTimer = Timer.periodic(const Duration(milliseconds: 500), (timer) async {
+      try {
+        final progress = await apiService.getCsvProgress(filename);
+        if (mounted) {
+          setState(() {
+            _csvProgress = progress;
+          });
+          if (progress.isCompleted || progress.hasError) {
+            timer.cancel();
+          }
+        }
+      } catch (e) {
+        // Progress not available yet or conversion finished
+        timer.cancel();
+      }
+    });
+  }
+
+  void _stopProgressPolling() {
+    _csvProgressTimer?.cancel();
+    _csvProgressTimer = null;
+  }
+
+  Future<void> _showNotFoundSongsDialog(List<Map<String, dynamic>> notFoundSongs, String? playlistId) async {
+    if (!mounted || notFoundSongs.isEmpty) return;
+    
+    try {
+      // Find the root navigator to ensure dialog shows above everything
+      final navigator = Navigator.of(context, rootNavigator: true);
+      
+      await showDialog(
+        context: context,
+        barrierDismissible: false,
+        useRootNavigator: true,
+        builder: (dialogContext) => NotFoundSongsDialog(
+          notFoundSongs: notFoundSongs,
+          playlistId: playlistId,
+          apiService: _apiService,
+          playlistService: _playlistService,
+        ),
+      );
+    } catch (e) {
+      // If dialog fails, try again after a short delay
+      Future.delayed(const Duration(milliseconds: 500), () {
+        if (mounted && notFoundSongs.isNotEmpty) {
+          showDialog(
+            context: context,
+            barrierDismissible: false,
+            useRootNavigator: true,
+            builder: (dialogContext) => NotFoundSongsDialog(
+              notFoundSongs: notFoundSongs,
+              playlistId: playlistId,
+              apiService: _apiService,
+              playlistService: _playlistService,
+            ),
+          );
+        }
+      });
+    }
   }
 
   @override
@@ -111,6 +230,15 @@ class _HomeScreenState extends State<HomeScreen> {
                 Expanded(
                   child: _screens[_currentIndex],
                 ),
+                // CSV Progress bar (above bottom player)
+                if (_csvProgress != null && _csvFilename != null)
+                  CsvProgressBar(
+                    processed: _csvProgress!.processed,
+                    notFound: _csvProgress!.notFound,
+                    total: _csvProgress!.total,
+                    status: _csvProgress!.status,
+                    progress: _csvProgress!.progress,
+                  ),
                 // Bottom player
                 ListenableBuilder(
                   listenable: _playerStateService,
@@ -156,6 +284,7 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void dispose() {
     _completionSubscription?.cancel();
+    _csvProgressTimer?.cancel();
     _playerStateService.dispose();
     _queueService.dispose();
     super.dispose();

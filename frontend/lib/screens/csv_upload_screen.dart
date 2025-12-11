@@ -6,7 +6,14 @@ import '../services/playlist_service.dart';
 import '../config.dart';
 
 class CsvUploadScreen extends StatefulWidget {
-  const CsvUploadScreen({super.key});
+  final Function(String filename)? onConversionStart;
+  final Function(CsvConversionResult)? onConversionComplete;
+  
+  const CsvUploadScreen({
+    super.key,
+    this.onConversionStart,
+    this.onConversionComplete,
+  });
 
   @override
   State<CsvUploadScreen> createState() => _CsvUploadScreenState();
@@ -43,6 +50,7 @@ class _CsvUploadScreenState extends State<CsvUploadScreen> {
   }
 
   void _updateDurationMin() {
+    if (!mounted) return;
     final value = int.tryParse(_durationMinController.text);
     if (value != null && value != _durationMin) {
       setState(() {
@@ -52,6 +60,7 @@ class _CsvUploadScreenState extends State<CsvUploadScreen> {
   }
 
   void _updateDurationMax() {
+    if (!mounted) return;
     final value = double.tryParse(_durationMaxController.text);
     if (value != null && value != _durationMax) {
       setState(() {
@@ -75,12 +84,14 @@ class _CsvUploadScreenState extends State<CsvUploadScreen> {
 
   Future<void> _uploadFile(html.File file) async {
     try {
-      setState(() {
-        _isConverting = true;
-        _conversionComplete = false;
-        _uploadedFilename = file.name;
-        _playlistName = file.name.replaceAll('.csv', '');
-      });
+      if (mounted) {
+        setState(() {
+          _isConverting = true;
+          _conversionComplete = false;
+          _uploadedFilename = file.name;
+          _playlistName = file.name.replaceAll('.csv', '');
+        });
+      }
 
       // Read file as bytes
       final reader = html.FileReader();
@@ -100,7 +111,10 @@ class _CsvUploadScreenState extends State<CsvUploadScreen> {
       // Upload file using API service
       final uploadResult = await _apiService.uploadCsvBytes(fileBytes, file.name);
       
-      // Convert CSV
+      // Notify parent that conversion started
+      widget.onConversionStart?.call(uploadResult.filename);
+      
+      // Convert CSV (this will run in background, progress is polled by home screen)
       final conversionResult = await _apiService.convertCsv(
         uploadResult.filename,
         durationMin: _durationMin,
@@ -108,11 +122,17 @@ class _CsvUploadScreenState extends State<CsvUploadScreen> {
         excludeInstrumentals: _excludeInstrumentals,
       );
 
-      setState(() {
-        _conversionResult = conversionResult;
-        _isConverting = false;
-        _conversionComplete = true;
-      });
+      // Notify parent that conversion completed (pass result so dialog can be shown at home screen level)
+      // Call this before setState in case widget is disposed
+      widget.onConversionComplete?.call(conversionResult);
+      
+      if (mounted) {
+        setState(() {
+          _conversionResult = conversionResult;
+          _isConverting = false;
+          _conversionComplete = true;
+        });
+      }
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -131,10 +151,10 @@ class _CsvUploadScreenState extends State<CsvUploadScreen> {
         );
       }
     } catch (e) {
-      setState(() {
-        _isConverting = false;
-      });
       if (mounted) {
+        setState(() {
+          _isConverting = false;
+        });
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Error: $e'),
@@ -148,7 +168,6 @@ class _CsvUploadScreenState extends State<CsvUploadScreen> {
       }
     }
   }
-
 
   @override
   Widget build(BuildContext context) {
@@ -215,9 +234,11 @@ class _CsvUploadScreenState extends State<CsvUploadScreen> {
                     onChanged: _isConverting
                         ? null
                         : (value) {
-                            setState(() {
-                              _excludeInstrumentals = value;
-                            });
+                            if (mounted) {
+                              setState(() {
+                                _excludeInstrumentals = value;
+                              });
+                            }
                           },
                   ),
                   ListTile(
