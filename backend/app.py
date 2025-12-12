@@ -332,7 +332,7 @@ def get_download_file(filename: str, request: Request):
 
 @app.delete("/downloads/{filename:path}")
 def delete_download_file(filename: str):
-    """Delete a downloaded file (supports subdirectory paths)"""
+    """Delete a downloaded file (supports subdirectory paths) and update playlists"""
     try:
         # Handle subdirectory paths and prevent directory traversal
         filename = filename.replace('\\', os.sep).replace('/', os.sep)
@@ -343,7 +343,37 @@ def delete_download_file(filename: str):
         if not os.path.isfile(file_path):
             raise HTTPException(status_code=404, detail="File not found")
         
+        # Delete the file
         os.remove(file_path)
+        
+        # Update all playlists to clear filename for tracks that reference this file
+        # Normalize filename for comparison (handle both forward and back slashes)
+        normalized_deleted_filename = filename.replace('\\', '/')
+        playlists = load_playlists()
+        playlists_updated = False
+        
+        for playlist_id, playlist_data in playlists.items():
+            songs_updated = False
+            for song in playlist_data.get("songs", []):
+                song_filename = song.get("filename", "")
+                if song_filename:
+                    # Normalize the song filename for comparison
+                    normalized_song_filename = song_filename.replace('\\', '/')
+                    # Check if filenames match (exact match or basename match)
+                    if normalized_song_filename == normalized_deleted_filename or \
+                       normalized_song_filename.endswith('/' + normalized_deleted_filename) or \
+                       normalized_song_filename == os.path.basename(normalized_deleted_filename):
+                        song["filename"] = ""
+                        song["file_path"] = ""
+                        songs_updated = True
+            
+            if songs_updated:
+                playlist_data["updatedAt"] = datetime.now().isoformat()
+                playlists_updated = True
+        
+        if playlists_updated:
+            save_playlists(playlists)
+        
         return {"success": True, "message": f"File {filename} deleted successfully"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
