@@ -343,39 +343,51 @@ class _BottomPlayerState extends State<BottomPlayer> {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       if (widget.queueService != null && widget.onQueueToggle != null)
-                        Stack(
-                          children: [
-                            IconButton(
-                              icon: const Icon(Icons.queue_music, size: 20),
-                              onPressed: widget.onQueueToggle,
-                              tooltip: 'Queue',
-                            ),
-                            if (widget.queueService!.queueLength > 0)
-                              Positioned(
-                                right: 8,
-                                top: 8,
-                                child: Container(
-                                  padding: const EdgeInsets.all(4),
-                                  decoration: BoxDecoration(
-                                    color: primaryColor,
-                                    shape: BoxShape.circle,
-                                  ),
+                        ListenableBuilder(
+                          listenable: widget.queueService!,
+                          builder: (context, _) {
+                            return Stack(
+                              clipBehavior: Clip.none,
+                              children: [
+                                IconButton(
+                                  icon: const Icon(Icons.queue_music, size: 20),
+                                  onPressed: widget.onQueueToggle,
+                                  tooltip: 'Queue',
                                   constraints: const BoxConstraints(
-                                    minWidth: 16,
-                                    minHeight: 16,
-                                  ),
-                                  child: Text(
-                                    '${widget.queueService!.queueLength}',
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 10,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                    textAlign: TextAlign.center,
+                                    minWidth: 48,
+                                    minHeight: 48,
                                   ),
                                 ),
-                              ),
-                          ],
+                                if (widget.queueService!.queueLength > 0)
+                                  Positioned(
+                                    right: 8,
+                                    top: 8,
+                                    child: IgnorePointer(
+                                      child: Container(
+                                        padding: const EdgeInsets.all(4),
+                                        decoration: BoxDecoration(
+                                          color: primaryColor,
+                                          shape: BoxShape.circle,
+                                        ),
+                                        constraints: const BoxConstraints(
+                                          minWidth: 16,
+                                          minHeight: 16,
+                                        ),
+                                        child: Text(
+                                          '${widget.queueService!.queueLength}',
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 10,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                          textAlign: TextAlign.center,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            );
+                          },
                         ),
                       Icon(
                         _isDraggingVolume
