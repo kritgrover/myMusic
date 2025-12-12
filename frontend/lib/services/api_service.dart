@@ -115,6 +115,42 @@ class ApiService {
     }
   }
 
+  Future<Map<String, dynamic>> startBatchDownload(List<Map<String, dynamic>> downloads) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/downloads/batch'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'downloads': downloads,
+        }),
+      );
+      
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body);
+      } else {
+        final error = jsonDecode(response.body);
+        throw Exception(error['detail'] ?? 'Batch download failed');
+      }
+    } catch (e) {
+      throw Exception('Batch download error: $e');
+    }
+  }
+
+  Future<DownloadProgress> getDownloadProgress(String downloadId) async {
+    try {
+      final response = await http.get(Uri.parse('$baseUrl/downloads/progress/$downloadId'));
+      
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        return DownloadProgress.fromJson(data);
+      } else {
+        throw Exception('Failed to get progress: ${response.statusCode}');
+      }
+    } catch (e) {
+      throw Exception('Get download progress error: $e');
+    }
+  }
+
   // CSV Upload and Conversion
   Future<CsvUploadResult> uploadCsv(String filePath) async {
     try {
@@ -468,6 +504,51 @@ class CsvProgress {
       status: json['status'] ?? '',
       processed: json['processed'] ?? 0,
       notFound: json['not_found'] ?? 0,
+    );
+  }
+  
+  bool get isCompleted => status == 'completed';
+  bool get hasError => status.startsWith('error');
+  double get progress => total > 0 ? current / total : 0.0;
+}
+
+class BatchDownloadRequest {
+  final List<Map<String, dynamic>> downloads;
+  
+  BatchDownloadRequest({required this.downloads});
+  
+  Map<String, dynamic> toJson() {
+    return {
+      'downloads': downloads,
+    };
+  }
+}
+
+class DownloadProgress {
+  final int current;
+  final int total;
+  final String status;
+  final int processed;
+  final int failed;
+  final List<Map<String, dynamic>> downloads;
+  
+  DownloadProgress({
+    required this.current,
+    required this.total,
+    required this.status,
+    required this.processed,
+    required this.failed,
+    required this.downloads,
+  });
+  
+  factory DownloadProgress.fromJson(Map<String, dynamic> json) {
+    return DownloadProgress(
+      current: json['current'] ?? 0,
+      total: json['total'] ?? 0,
+      status: json['status'] ?? '',
+      processed: json['processed'] ?? 0,
+      failed: json['failed'] ?? 0,
+      downloads: List<Map<String, dynamic>>.from(json['downloads'] ?? []),
     );
   }
   

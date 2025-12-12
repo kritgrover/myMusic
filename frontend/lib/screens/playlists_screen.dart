@@ -8,8 +8,9 @@ import 'playlist_detail_screen.dart';
 class PlaylistsScreen extends StatefulWidget {
   final PlayerStateService? playerStateService;
   final QueueService? queueService;
+  final Function(String)? onDownloadStart;
 
-  const PlaylistsScreen({super.key, this.playerStateService, this.queueService});
+  const PlaylistsScreen({super.key, this.playerStateService, this.queueService, this.onDownloadStart});
 
   @override
   State<PlaylistsScreen> createState() => _PlaylistsScreenState();
@@ -232,6 +233,7 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
         playerStateService: widget.playerStateService,
         queueService: widget.queueService,
         onBack: _hidePlaylistDetail,
+        onDownloadStart: widget.onDownloadStart,
       );
     }
 

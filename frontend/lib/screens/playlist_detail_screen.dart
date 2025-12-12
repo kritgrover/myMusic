@@ -20,6 +20,7 @@ class PlaylistDetailScreen extends StatefulWidget {
   final dynamic playerStateService; // Optional, for playing tracks
   final QueueService? queueService;
   final VoidCallback? onBack; // Callback to return to playlists list
+  final Function(String)? onDownloadStart; // Callback to start download progress tracking
 
   const PlaylistDetailScreen({
     super.key,
@@ -28,6 +29,7 @@ class PlaylistDetailScreen extends StatefulWidget {
     this.playerStateService,
     this.queueService,
     this.onBack,
+    this.onDownloadStart,
   });
 
   @override
@@ -40,12 +42,29 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
   bool _showAddSongs = false;
   PlaylistSortOption _sortOption = PlaylistSortOption.defaultOrder;
   final ApiService _apiService = ApiService();
+  DateTime? _lastSyncTime;
 
   @override
   void initState() {
     super.initState();
     _playlist = widget.playlist;
     _loadPlaylist();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Sync downloaded files when screen becomes visible again
+    // This helps update tracks if user navigated away during download
+    // Debounce to prevent excessive syncing (max once per 2 seconds)
+    if (mounted && !_isLoading) {
+      final now = DateTime.now();
+      if (_lastSyncTime == null || 
+          now.difference(_lastSyncTime!).inSeconds >= 2) {
+        _lastSyncTime = now;
+        _syncDownloadedFiles();
+      }
+    }
   }
 
   Future<void> _loadPlaylist() async {
@@ -60,6 +79,9 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
           _playlist = updatedPlaylist;
           _isLoading = false;
         });
+        
+        // Sync downloaded files with playlist tracks
+        _syncDownloadedFiles();
       } else {
         setState(() {
           _isLoading = false;
@@ -69,6 +91,75 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
       setState(() {
         _isLoading = false;
       });
+    }
+  }
+
+  Future<void> _syncDownloadedFiles() async {
+    // Check if any tracks need to be updated with downloaded filenames
+    final tracksNeedingUpdate = _playlist.tracks.where((track) => 
+      track.filename.isEmpty && track.url != null && track.url!.isNotEmpty
+    ).toList();
+    
+    if (tracksNeedingUpdate.isEmpty) return;
+    
+    try {
+      // Get list of downloaded files
+      final downloadedFiles = await _apiService.listDownloads();
+      if (downloadedFiles.isEmpty) return;
+      
+      int updateCount = 0;
+      final updatedTrackIds = <String>{};
+      
+      // Match tracks to downloaded files by title
+      for (final track in tracksNeedingUpdate) {
+        if (updatedTrackIds.contains(track.id)) continue;
+        
+        // Try to find matching downloaded file
+        DownloadedFile? matchingFile;
+        final trackTitle = track.title.toLowerCase().trim();
+        
+        for (final file in downloadedFiles) {
+          final fileTitle = file.title?.toLowerCase().trim() ?? '';
+          if (fileTitle.isNotEmpty) {
+            // Match if titles are similar
+            if (fileTitle == trackTitle ||
+                fileTitle.contains(trackTitle) ||
+                trackTitle.contains(fileTitle)) {
+              matchingFile = file;
+              break;
+            }
+          }
+        }
+        
+        if (matchingFile != null) {
+          try {
+            final updatedTrack = PlaylistTrack(
+              id: track.id,
+              title: track.title,
+              artist: track.artist,
+              album: track.album,
+              filename: matchingFile.filename,
+              url: track.url,
+              thumbnail: track.thumbnail,
+              duration: track.duration,
+            );
+
+            await widget.playlistService.removeTrackFromPlaylist(_playlist.id, track.id);
+            await widget.playlistService.addTrackToPlaylist(_playlist.id, updatedTrack);
+            updatedTrackIds.add(track.id);
+            updateCount++;
+          } catch (e) {
+            print('Error syncing track ${track.title}: $e');
+          }
+        }
+      }
+      
+      if (updateCount > 0) {
+        // Reload playlist to show updated tracks
+        await _loadPlaylist();
+      }
+    } catch (e) {
+      print('Error syncing downloaded files: $e');
     }
   }
 
@@ -174,58 +265,30 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
     }
 
     try {
-      // Show loading indicator
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (context) => const Center(
-          child: CircularProgressIndicator(),
-        ),
-      );
+      // Use batch download API for progress tracking
+      final downloads = [
+        {
+          'url': track.url!,
+          'title': track.title,
+          'artist': track.artist ?? '',
+          'album': track.album ?? '',
+          'output_format': 'm4a',
+          'embed_thumbnail': true,
+        }
+      ];
 
-      final result = await _apiService.downloadAudio(
-        url: track.url!,
-        title: track.title,
-        artist: track.artist ?? '',
-        outputFormat: 'm4a',
-        embedThumbnail: true,
-      );
+      final result = await _apiService.startBatchDownload(downloads);
+      final downloadId = result['download_id'] as String;
 
-      if (mounted) {
-        Navigator.of(context).pop(); // Close loading dialog
-
-        // Update the track in the playlist with the new filename
-        final updatedTrack = PlaylistTrack(
-          id: track.id,
-          title: track.title,
-          artist: track.artist,
-          album: track.album,
-          filename: result.filename,
-          url: track.url,
-          thumbnail: track.thumbnail,
-          duration: track.duration,
-        );
-
-        // Remove old track and add updated track
-        await widget.playlistService.removeTrackFromPlaylist(_playlist.id, track.id);
-        await widget.playlistService.addTrackToPlaylist(_playlist.id, updatedTrack);
-
-        // Reload playlist to show updated track
-        await _loadPlaylist();
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Downloaded: ${result.filename}'),
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(8),
-            ),
-          ),
-        );
+      // Start progress tracking if callback is provided
+      if (widget.onDownloadStart != null) {
+        widget.onDownloadStart!(downloadId);
       }
+
+      // Poll for completion and update playlist
+      _waitForDownloadAndUpdate(downloadId, [track]);
     } catch (e) {
       if (mounted) {
-        Navigator.of(context).pop(); // Close loading dialog
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Download failed: $e'),
@@ -233,6 +296,112 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
             behavior: SnackBarBehavior.floating,
           ),
         );
+      }
+    }
+  }
+
+  Future<void> _waitForDownloadAndUpdate(String downloadId, List<PlaylistTrack> tracks) async {
+    // Poll until download is complete
+    while (mounted) {
+      try {
+        final progress = await _apiService.getDownloadProgress(downloadId);
+        
+        if (progress.isCompleted) {
+          // Update tracks with downloaded filenames
+          // Match by index (downloads are processed in the same order as sent)
+          final updatedTrackIds = <String>{};
+          int updateCount = 0;
+          
+          print('Progress completed. Downloads: ${progress.downloads.length}, Tracks: ${tracks.length}');
+          
+          for (int i = 0; i < progress.downloads.length && i < tracks.length; i++) {
+            final downloadResult = progress.downloads[i];
+            final track = tracks[i];
+            
+            if (downloadResult['success'] == true && 
+                downloadResult['filename'] != null &&
+                downloadResult['filename'].toString().isNotEmpty &&
+                !updatedTrackIds.contains(track.id)) {
+              
+              try {
+                final filename = downloadResult['filename'] as String;
+                print('Updating track ${track.title} (index $i) with filename: $filename');
+                
+                final updatedTrack = PlaylistTrack(
+                  id: track.id,
+                  title: track.title,
+                  artist: track.artist,
+                  album: track.album,
+                  filename: filename,
+                  url: track.url,
+                  thumbnail: track.thumbnail,
+                  duration: track.duration,
+                );
+
+                print('Removing track ${track.id} from playlist');
+                await widget.playlistService.removeTrackFromPlaylist(_playlist.id, track.id);
+                
+                print('Adding updated track ${track.id} to playlist with filename: $filename');
+                await widget.playlistService.addTrackToPlaylist(_playlist.id, updatedTrack);
+                
+                updatedTrackIds.add(track.id);
+                updateCount++;
+                print('Successfully updated track ${track.title}');
+              } catch (e) {
+                print('Error updating track ${track.title}: $e');
+              }
+            } else {
+              print('Skipping track ${track.title} (index $i): success=${downloadResult['success']}, filename=${downloadResult['filename']}, alreadyUpdated=${updatedTrackIds.contains(track.id)}');
+            }
+          }
+          
+          print('Updated $updateCount out of ${tracks.length} tracks with downloaded filenames');
+
+          // Wait a moment for all updates to complete
+          await Future.delayed(const Duration(milliseconds: 300));
+
+          // Reload playlist to show updated tracks
+          await _loadPlaylist();
+
+          if (mounted) {
+            final successCount = progress.processed;
+            final failCount = progress.failed;
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                  failCount > 0
+                      ? 'Downloaded $successCount ${successCount == 1 ? 'track' : 'tracks'}${failCount > 0 ? ' ($failCount failed)' : ''}'
+                      : 'Downloaded ${successCount} ${successCount == 1 ? 'track' : 'tracks'}',
+                ),
+                backgroundColor: failCount > 0 ? Colors.orange : null,
+                behavior: SnackBarBehavior.floating,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+            );
+          }
+          break;
+        } else if (progress.hasError) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Download error: ${progress.status}'),
+                backgroundColor: Colors.red,
+                behavior: SnackBarBehavior.floating,
+              ),
+            );
+          }
+          break;
+        }
+        
+        // Wait before polling again
+        await Future.delayed(const Duration(milliseconds: 500));
+      } catch (e) {
+        // If progress is not available, the download might have finished
+        // Try to reload playlist anyway
+        await _loadPlaylist();
+        break;
       }
     }
   }
@@ -415,91 +584,30 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
 
     if (confirmed != true) return;
 
-    int successCount = 0;
-    int failCount = 0;
-
-    // Show loading dialog
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => PopScope(
-        canPop: false,
-        child: AlertDialog(
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const CircularProgressIndicator(),
-              const SizedBox(height: 16),
-              Text(
-                'Downloading ${tracksToDownload.length} ${tracksToDownload.length == 1 ? 'track' : 'tracks'}...\nPlease wait',
-                textAlign: TextAlign.center,
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-
     try {
-      for (final track in tracksToDownload) {
+      // Prepare batch download requests
+      final downloads = tracksToDownload.map((track) => {
+        'url': track.url!,
+        'title': track.title,
+        'artist': track.artist ?? '',
+        'album': track.album ?? '',
+        'output_format': 'm4a',
+        'embed_thumbnail': true,
+      }).toList();
 
-        try {
-          final result = await _apiService.downloadAudio(
-            url: track.url!,
-            title: track.title,
-            artist: track.artist ?? '',
-            outputFormat: 'm4a',
-            embedThumbnail: true,
-          );
+      // Start batch download
+      final result = await _apiService.startBatchDownload(downloads);
+      final downloadId = result['download_id'] as String;
 
-          // Update the track in the playlist with the new filename
-          final updatedTrack = PlaylistTrack(
-            id: track.id,
-            title: track.title,
-            artist: track.artist,
-            album: track.album,
-            filename: result.filename,
-            url: track.url,
-            thumbnail: track.thumbnail,
-            duration: track.duration,
-          );
-
-          // Remove old track and add updated track
-          await widget.playlistService.removeTrackFromPlaylist(_playlist.id, track.id);
-          await widget.playlistService.addTrackToPlaylist(_playlist.id, updatedTrack);
-
-          successCount++;
-        } catch (e) {
-          failCount++;
-          // Continue with next track
-        }
+      // Start progress tracking if callback is provided
+      if (widget.onDownloadStart != null) {
+        widget.onDownloadStart!(downloadId);
       }
 
-      // Reload playlist to show updated tracks
-      await _loadPlaylist();
-
-      if (mounted) {
-        Navigator.of(context).pop(); // Close progress dialog
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              failCount > 0
-                  ? 'Downloaded $successCount ${successCount == 1 ? 'track' : 'tracks'}${failCount > 0 ? ' ($failCount failed)' : ''}'
-                  : 'Downloaded ${successCount} ${successCount == 1 ? 'track' : 'tracks'}',
-            ),
-            backgroundColor: failCount > 0 ? Colors.orange : null,
-            behavior: SnackBarBehavior.floating,
-            duration: const Duration(seconds: 3),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(8),
-            ),
-          ),
-        );
-      }
+      // Wait for download to complete and update playlist
+      await _waitForDownloadAndUpdate(downloadId, tracksToDownload);
     } catch (e) {
       if (mounted) {
-        Navigator.of(context).pop(); // Close progress dialog
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Download error: $e'),

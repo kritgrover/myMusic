@@ -7,6 +7,7 @@ import 'csv_upload_screen.dart';
 import '../widgets/bottom_player.dart';
 import '../widgets/queue_panel.dart';
 import '../widgets/csv_progress_bar.dart';
+import '../widgets/download_progress_bar.dart';
 import '../widgets/not_found_songs_dialog.dart';
 import '../services/player_state_service.dart';
 import '../services/queue_service.dart';
@@ -31,6 +32,11 @@ class _HomeScreenState extends State<HomeScreen> {
   CsvProgress? _csvProgress;
   Timer? _csvProgressTimer;
   String? _csvFilename;
+  
+  // Download progress tracking
+  DownloadProgress? _downloadProgress;
+  Timer? _downloadProgressTimer;
+  String? _downloadId;
   
   // Pending dialog data
   List<Map<String, dynamic>>? _pendingNotFoundSongs;
@@ -57,6 +63,13 @@ class _HomeScreenState extends State<HomeScreen> {
       PlaylistsScreen(
         playerStateService: _playerStateService,
         queueService: _queueService,
+        onDownloadStart: (downloadId) {
+          setState(() {
+            _downloadId = downloadId;
+            _downloadProgress = null;
+          });
+          _startDownloadProgressPolling(downloadId);
+        },
       ),
       CsvUploadScreen(
         onConversionStart: (filename) {
@@ -132,6 +145,46 @@ class _HomeScreenState extends State<HomeScreen> {
   void _stopProgressPolling() {
     _csvProgressTimer?.cancel();
     _csvProgressTimer = null;
+  }
+
+  void _startDownloadProgressPolling(String downloadId) {
+    _downloadProgressTimer?.cancel();
+    _downloadProgressTimer = Timer.periodic(const Duration(milliseconds: 500), (timer) async {
+      try {
+        final progress = await _apiService.getDownloadProgress(downloadId);
+        if (mounted) {
+          setState(() {
+            _downloadProgress = progress;
+          });
+          if (progress.isCompleted || progress.hasError) {
+            timer.cancel();
+            // Clear progress after a short delay
+            Future.delayed(const Duration(seconds: 2), () {
+              if (mounted) {
+                setState(() {
+                  _downloadProgress = null;
+                  _downloadId = null;
+                });
+              }
+            });
+          }
+        }
+      } catch (e) {
+        // Progress not available yet or download finished
+        timer.cancel();
+        if (mounted) {
+          setState(() {
+            _downloadProgress = null;
+            _downloadId = null;
+          });
+        }
+      }
+    });
+  }
+
+  void _stopDownloadProgressPolling() {
+    _downloadProgressTimer?.cancel();
+    _downloadProgressTimer = null;
   }
 
   Future<void> _showNotFoundSongsDialog(List<Map<String, dynamic>> notFoundSongs, String? playlistId) async {
@@ -239,6 +292,15 @@ class _HomeScreenState extends State<HomeScreen> {
                     status: _csvProgress!.status,
                     progress: _csvProgress!.progress,
                   ),
+                // Download Progress bar (above bottom player)
+                if (_downloadProgress != null && _downloadId != null)
+                  DownloadProgressBar(
+                    processed: _downloadProgress!.processed,
+                    failed: _downloadProgress!.failed,
+                    total: _downloadProgress!.total,
+                    status: _downloadProgress!.status,
+                    progress: _downloadProgress!.progress,
+                  ),
                 // Bottom player
                 ListenableBuilder(
                   listenable: _playerStateService,
@@ -285,6 +347,7 @@ class _HomeScreenState extends State<HomeScreen> {
   void dispose() {
     _completionSubscription?.cancel();
     _csvProgressTimer?.cancel();
+    _downloadProgressTimer?.cancel();
     _playerStateService.dispose();
     _queueService.dispose();
     super.dispose();

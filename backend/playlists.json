@@ -1,10 +1,10 @@
 {
-    "ac0dabbe-2ea5-4bf5-ba32-78bfa0ad4f7c": {
-        "id": "ac0dabbe-2ea5-4bf5-ba32-78bfa0ad4f7c",
+    "9bf360df-30f6-4019-a2fa-a5ea327bad5c": {
+        "id": "9bf360df-30f6-4019-a2fa-a5ea327bad5c",
         "name": "Mathy",
         "songs": [
             {
-                "id": "5f65eaf0-e396-4f6b-8b39-afe38c50be2a",
+                "id": "c2805824-b918-416d-8260-05ea3fab6103",
                 "title": "Playing God",
                 "artist": "Polyphia",
                 "album": "Remember That You Will Die",
@@ -15,29 +15,7 @@
                 "duration": 204.0
             },
             {
-                "id": "86031947-1d10-4032-b073-b7affd72708b",
-                "title": "G.O.A.T.",
-                "artist": "Polyphia",
-                "album": "New Levels New Devils",
-                "filename": "",
-                "file_path": "",
-                "url": "https://www.youtube.com/watch?v=9_gkpYORQLU",
-                "thumbnail": "https://img.youtube.com/vi/9_gkpYORQLU/maxresdefault.jpg",
-                "duration": 216.0
-            },
-            {
-                "id": "2d75b29c-5ace-4564-8976-f1c0d6d4f32c",
-                "title": "Reverie",
-                "artist": "Polyphia",
-                "album": "Remember That You Will Die",
-                "filename": "Reverie - Polyphia.m4a",
-                "file_path": "",
-                "url": "https://www.youtube.com/watch?v=0oCnt13S-1g",
-                "thumbnail": "https://img.youtube.com/vi/0oCnt13S-1g/maxresdefault.jpg",
-                "duration": 245.0
-            },
-            {
-                "id": "65ffe799-7890-4931-8f6e-d493b1f0d3bd",
+                "id": "d4bccb11-169d-49f1-bb32-909c20a92780",
                 "title": "Neurotica",
                 "artist": "Polyphia",
                 "album": "Remember That You Will Die",
@@ -48,18 +26,103 @@
                 "duration": 196.0
             },
             {
-                "id": "1JNmz17gnMw",
-                "title": "Polyphia - Ego Death feat. Steve Vai (Official Music Video)",
+                "id": "607d06c1-4ed4-4d8e-93a9-60b18d05bdd6",
+                "title": "G.O.A.T.",
+                "artist": "Polyphia",
+                "album": "New Levels New Devils",
+                "filename": "GOAT - Polyphia.m4a",
+                "file_path": "",
+                "url": "https://www.youtube.com/watch?v=9_gkpYORQLU",
+                "thumbnail": "https://img.youtube.com/vi/9_gkpYORQLU/maxresdefault.jpg",
+                "duration": 216.0
+            },
+            {
+                "id": "a3d0efb1-7d5f-437c-a5b4-4a2185425c07",
+                "title": "Reverie",
                 "artist": "Polyphia",
                 "album": "Remember That You Will Die",
-                "filename": "Polyphia  Ego Death feat Steve Vai Official Music Video - Polyphia.m4a",
+                "filename": "Reverie - Polyphia.m4a",
                 "file_path": "",
-                "url": "https://www.youtube.com/watch?v=1JNmz17gnMw",
-                "thumbnail": "https://img.youtube.com/vi/1JNmz17gnMw/maxresdefault.jpg",
-                "duration": 351.0
+                "url": "https://www.youtube.com/watch?v=0oCnt13S-1g",
+                "thumbnail": "https://img.youtube.com/vi/0oCnt13S-1g/maxresdefault.jpg",
+                "duration": 245.0
             }
         ],
-        "createdAt": "2025-12-11T23:11:02.312747",
-        "updatedAt": "2025-12-11T23:12:26.698052"
+        "createdAt": "2025-12-11T23:30:51.714028",
+        "updatedAt": "2025-12-11T23:33:33.611200"
+    },
+    "eff355be-5907-4da3-9a58-085a7cd98000": {
+        "id": "eff355be-5907-4da3-9a58-085a7cd98000",
+        "name": "Brainstorm",
+        "songs": [
+            {
+                "id": "u7jrNCB0DPY",
+                "title": "NxWorries (Anderson .Paak & Knxwledge) - FromHere feat. Snoop Dogg & October London",
+                "artist": "NxWorries",
+                "album": "FromHere (feat. Snoop Dogg & October London)",
+                "filename": "NxWorries Anderson Paak  Knxwledge  FromHere feat Snoop Dogg  October London - NxWorries.m4a",
+                "file_path": "",
+                "url": "https://www.youtube.com/watch?v=u7jrNCB0DPY",
+                "thumbnail": "https://img.youtube.com/vi/u7jrNCB0DPY/maxresdefault.jpg",
+                "duration": 265.0
+            },
+            {
+                "id": "5754b3bc-e833-47a9-bca1-22910325552b",
+                "title": "Yours",
+                "artist": "Post Malone",
+                "album": "F-1 Trillion",
+                "filename": "Yours - Post Malone.m4a",
+                "file_path": "",
+                "url": "https://www.youtube.com/watch?v=hrAeuPqYnRQ",
+                "thumbnail": "https://img.youtube.com/vi/hrAeuPqYnRQ/maxresdefault.jpg",
+                "duration": 200.0
+            },
+            {
+                "id": "3c7aaa70-e12f-48d9-80b1-02bb467c69f0",
+                "title": "Wednesday",
+                "artist": "Good Morning",
+                "album": "Shawcross",
+                "filename": "Wednesday - Good Morning.m4a",
+                "file_path": "",
+                "url": "https://www.youtube.com/watch?v=Kkk80x-dh84",
+                "thumbnail": "https://img.youtube.com/vi/Kkk80x-dh84/maxresdefault.jpg",
+                "duration": 144.0
+            },
+            {
+                "id": "3c6edbad-3101-4a38-afdc-b0a331258be6",
+                "title": "Maybe Tomorrow",
+                "artist": "Hayien",
+                "album": "Left in You",
+                "filename": "Maybe Tomorrow - Hayien.m4a",
+                "file_path": "",
+                "url": "https://www.youtube.com/watch?v=k7kvwbd9LRE",
+                "thumbnail": "https://img.youtube.com/vi/k7kvwbd9LRE/maxresdefault.jpg",
+                "duration": 244.0
+            },
+            {
+                "id": "18085447-0105-440d-a76e-536e128a1768",
+                "title": "Wicked Games",
+                "artist": "The Weeknd",
+                "album": "Trilogy",
+                "filename": "Wicked Games - The Weeknd.m4a",
+                "file_path": "",
+                "url": "https://www.youtube.com/watch?v=O1OTWCd40bc",
+                "thumbnail": "https://img.youtube.com/vi/O1OTWCd40bc/maxresdefault.jpg",
+                "duration": 282.0
+            },
+            {
+                "id": "b1aBzAE-IFY",
+                "title": "Post Malone ft. Luke Combs - Guy For That (Official Music Video) ft. Luke Combs",
+                "artist": "Post Malone",
+                "album": "Guy For That",
+                "filename": "Post Malone ft Luke Combs  Guy For That Official Music Video ft Luke Combs - Post Malone.m4a",
+                "file_path": "",
+                "url": "https://www.youtube.com/watch?v=b1aBzAE-IFY",
+                "thumbnail": "https://img.youtube.com/vi/b1aBzAE-IFY/maxresdefault.jpg",
+                "duration": 194.0
+            }
+        ],
+        "createdAt": "2025-12-11T23:34:09.465894",
+        "updatedAt": "2025-12-11T23:35:36.161811"
     }
 }

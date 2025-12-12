@@ -37,6 +37,9 @@ download_service = DownloadService(output_dir=DOWNLOADS_DIR)
 # Global progress tracking for CSV conversions
 csv_progress: Dict[str, Dict] = {}
 
+# Global progress tracking for downloads
+download_progress: Dict[str, Dict] = {}
+
 
 class SearchRequest(BaseModel):
     query: str
@@ -250,6 +253,76 @@ def download_audio(request: DownloadRequest):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+class BatchDownloadRequest(BaseModel):
+    downloads: List[DownloadRequest]
+
+
+@app.post("/downloads/batch")
+def start_batch_download(request: BatchDownloadRequest):
+    """Start a batch download with progress tracking"""
+    import uuid
+    download_id = str(uuid.uuid4())
+    
+    # Initialize progress tracking
+    download_progress[download_id] = {
+        "current": 0,
+        "total": len(request.downloads),
+        "status": "downloading",
+        "processed": 0,
+        "failed": 0,
+        "downloads": []
+    }
+    
+    # Start downloads in background
+    def download_worker():
+        try:
+            for idx, download_req in enumerate(request.downloads):
+                try:
+                    result = download_service.download_audio(
+                        url=download_req.url,
+                        title=download_req.title,
+                        artist=download_req.artist,
+                        album=download_req.album,
+                        output_format=download_req.output_format,
+                        embed_thumbnail=download_req.embed_thumbnail
+                    )
+                    download_progress[download_id]["processed"] += 1
+                    download_progress[download_id]["downloads"].append({
+                        "success": True,
+                        "filename": result['filename'],
+                        "title": result['title'],
+                        "artist": result['artist']
+                    })
+                except Exception as e:
+                    download_progress[download_id]["failed"] += 1
+                    download_progress[download_id]["downloads"].append({
+                        "success": False,
+                        "title": download_req.title,
+                        "error": str(e)
+                    })
+                
+                download_progress[download_id]["current"] = idx + 1
+                download_progress[download_id]["status"] = f"Downloading {download_req.title}..."
+            
+            download_progress[download_id]["status"] = "completed"
+        except Exception as e:
+            download_progress[download_id]["status"] = f"error: {str(e)}"
+    
+    import threading
+    thread = threading.Thread(target=download_worker, daemon=True)
+    thread.start()
+    
+    return {"download_id": download_id, "total": len(request.downloads)}
+
+
+@app.get("/downloads/progress/{download_id}")
+def get_download_progress(download_id: str):
+    """Get progress for a batch download"""
+    if download_id not in download_progress:
+        raise HTTPException(status_code=404, detail="Download progress not found")
+    return download_progress[download_id]
 
 
 @app.get("/downloads")
