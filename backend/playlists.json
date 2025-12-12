@@ -15,22 +15,11 @@
                 "duration": 204.0
             },
             {
-                "id": "d4bccb11-169d-49f1-bb32-909c20a92780",
-                "title": "Neurotica",
-                "artist": "Polyphia",
-                "album": "Remember That You Will Die",
-                "filename": "Neurotica - Polyphia.m4a",
-                "file_path": "",
-                "url": "https://www.youtube.com/watch?v=NkuOJNBICyQ",
-                "thumbnail": "https://img.youtube.com/vi/NkuOJNBICyQ/maxresdefault.jpg",
-                "duration": 196.0
-            },
-            {
                 "id": "607d06c1-4ed4-4d8e-93a9-60b18d05bdd6",
                 "title": "G.O.A.T.",
                 "artist": "Polyphia",
                 "album": "New Levels New Devils",
-                "filename": "GOAT - Polyphia.m4a",
+                "filename": "",
                 "file_path": "",
                 "url": "https://www.youtube.com/watch?v=9_gkpYORQLU",
                 "thumbnail": "https://img.youtube.com/vi/9_gkpYORQLU/maxresdefault.jpg",
@@ -46,10 +35,21 @@
                 "url": "https://www.youtube.com/watch?v=0oCnt13S-1g",
                 "thumbnail": "https://img.youtube.com/vi/0oCnt13S-1g/maxresdefault.jpg",
                 "duration": 245.0
+            },
+            {
+                "id": "d4bccb11-169d-49f1-bb32-909c20a92780",
+                "title": "Neurotica",
+                "artist": "Polyphia",
+                "album": "Remember That You Will Die",
+                "filename": "Neurotica - Polyphia.m4a",
+                "file_path": "",
+                "url": "https://www.youtube.com/watch?v=NkuOJNBICyQ",
+                "thumbnail": "https://img.youtube.com/vi/NkuOJNBICyQ/maxresdefault.jpg",
+                "duration": 196.0
             }
         ],
         "createdAt": "2025-12-11T23:30:51.714028",
-        "updatedAt": "2025-12-11T23:33:33.611200"
+        "updatedAt": "2025-12-11T23:50:16.385808"
     },
     "eff355be-5907-4da3-9a58-085a7cd98000": {
         "id": "eff355be-5907-4da3-9a58-085a7cd98000",
@@ -93,7 +93,7 @@
                 "title": "Maybe Tomorrow",
                 "artist": "Hayien",
                 "album": "Left in You",
-                "filename": "Maybe Tomorrow - Hayien.m4a",
+                "filename": "",
                 "file_path": "",
                 "url": "https://www.youtube.com/watch?v=k7kvwbd9LRE",
                 "thumbnail": "https://img.youtube.com/vi/k7kvwbd9LRE/maxresdefault.jpg",
@@ -123,6 +123,6 @@
             }
         ],
         "createdAt": "2025-12-11T23:34:09.465894",
-        "updatedAt": "2025-12-11T23:35:36.161811"
+        "updatedAt": "2025-12-11T23:46:45.962401"
     }
 }

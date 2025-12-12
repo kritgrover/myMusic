@@ -141,18 +141,6 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
       try {
         await _apiService.deleteDownload(file.filename);
         await _loadDownloads();
-        
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Deleted: ${file.filename}'),
-              behavior: SnackBarBehavior.floating,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
-              ),
-            ),
-          );
-        }
       } catch (e) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -178,19 +166,6 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
       );
 
       widget.queueService!.addToQueue(queueItem);
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Added to queue: ${getDisplayTitle(file.title, file.filename)}'),
-            behavior: SnackBarBehavior.floating,
-            duration: const Duration(seconds: 2),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(8),
-            ),
-          ),
-        );
-      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

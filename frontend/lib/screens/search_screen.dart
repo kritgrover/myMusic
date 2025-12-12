@@ -280,19 +280,6 @@ class _SearchScreenState extends State<SearchScreen> {
 
       // Add to queue
       widget.queueService!.addToQueue(queueItem);
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Added to queue: ${result.title}'),
-            behavior: SnackBarBehavior.floating,
-            duration: const Duration(seconds: 2),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(8),
-            ),
-          ),
-        );
-      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

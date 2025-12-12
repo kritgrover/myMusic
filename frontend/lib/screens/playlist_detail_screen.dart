@@ -736,32 +736,6 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
           
           // Start playing the first item
           await widget.queueService!.playItem(0, widget.playerStateService!);
-
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                failCount > 0
-                    ? 'Playing playlist: $successCount tracks added${failCount > 0 ? ' ($failCount failed)' : ''}'
-                    : 'Playing playlist: ${queueItems.length} tracks',
-              ),
-              behavior: SnackBarBehavior.floating,
-              duration: const Duration(seconds: 3),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
-              ),
-            ),
-          );
-        } else {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: const Text('No tracks could be added to queue'),
-              backgroundColor: Colors.red,
-              behavior: SnackBarBehavior.floating,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
-              ),
-            ),
-          );
         }
       }
     } catch (e) {
@@ -884,36 +858,6 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
           if (shuffle && widget.playerStateService != null) {
             await widget.queueService!.playItem(0, widget.playerStateService!);
           }
-
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                shuffle
-                    ? (failCount > 0
-                        ? 'Shuffled and added $successCount tracks to queue${failCount > 0 ? ' ($failCount failed)' : ''}'
-                        : 'Shuffled and added ${queueItems.length} tracks to queue')
-                    : (failCount > 0
-                        ? 'Added $successCount tracks to queue${failCount > 0 ? ' ($failCount failed)' : ''}'
-                        : 'Added ${queueItems.length} tracks to queue'),
-              ),
-              behavior: SnackBarBehavior.floating,
-              duration: const Duration(seconds: 3),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
-              ),
-            ),
-          );
-        } else {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: const Text('No tracks could be added to queue'),
-              backgroundColor: Colors.red,
-              behavior: SnackBarBehavior.floating,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
-              ),
-            ),
-          );
         }
       }
     } catch (e) {
@@ -988,19 +932,6 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
 
       if (queueItem != null) {
         widget.queueService!.addToQueue(queueItem);
-
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Added to queue: ${getDisplayTitle(track.title, track.filename)}'),
-              behavior: SnackBarBehavior.floating,
-              duration: const Duration(seconds: 2),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
-              ),
-            ),
-          );
-        }
       }
     } catch (e) {
       if (mounted) {
