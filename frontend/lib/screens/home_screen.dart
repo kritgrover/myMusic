@@ -115,8 +115,12 @@ class _HomeScreenState extends State<HomeScreen> {
     // Listen for song completion and auto-play next song in queue
     _completionSubscription = _playerStateService.audioPlayer.completionStream.listen((_) {
       // Only auto-play next if we're playing from queue
-      if (_queueService.currentIndex >= 0 && _queueService.hasNext) {
-        _queueService.playNext(_playerStateService);
+      if (_queueService.currentIndex >= 0) {
+        final nextItem = _queueService.getNextForCompletion();
+        if (nextItem != null) {
+          // playNext() already handles all loop modes (none, queue, single)
+          _queueService.playNext(_playerStateService);
+        }
       }
     });
   }

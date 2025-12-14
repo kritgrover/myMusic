@@ -342,6 +342,68 @@ class _BottomPlayerState extends State<BottomPlayer> {
                   Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
+                      // Loop button
+                      if (widget.queueService != null)
+                        ListenableBuilder(
+                          listenable: widget.queueService!,
+                          builder: (context, _) {
+                            final loopMode = widget.queueService!.loopMode;
+                            final isHighlighted = loopMode == LoopMode.queue || loopMode == LoopMode.single;
+                            
+                            return Stack(
+                              clipBehavior: Clip.none,
+                              children: [
+                                IconButton(
+                                  icon: Icon(
+                                    Icons.loop,
+                                    size: 20,
+                                    color: isHighlighted ? primaryColor : null,
+                                  ),
+                                  onPressed: () {
+                                    widget.queueService!.toggleLoopMode();
+                                  },
+                                  tooltip: loopMode == LoopMode.none
+                                      ? 'Loop off'
+                                      : loopMode == LoopMode.queue
+                                          ? 'Loop queue'
+                                          : 'Loop single',
+                                  constraints: const BoxConstraints(
+                                    minWidth: 48,
+                                    minHeight: 48,
+                                  ),
+                                ),
+                                // Show "1" badge when in single loop mode
+                                if (loopMode == LoopMode.single)
+                                  Positioned(
+                                    right: 8,
+                                    top: 8,
+                                    child: IgnorePointer(
+                                      child: Container(
+                                        padding: const EdgeInsets.all(2),
+                                        decoration: BoxDecoration(
+                                          color: primaryColor,
+                                          shape: BoxShape.circle,
+                                        ),
+                                        constraints: const BoxConstraints(
+                                          minWidth: 14,
+                                          minHeight: 14,
+                                        ),
+                                        child: const Text(
+                                          '1',
+                                          style: TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 9,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                          textAlign: TextAlign.center,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            );
+                          },
+                        ),
                       if (widget.queueService != null && widget.onQueueToggle != null)
                         ListenableBuilder(
                           listenable: widget.queueService!,
