@@ -1,56 +1,4 @@
 {
-    "9bf360df-30f6-4019-a2fa-a5ea327bad5c": {
-        "id": "9bf360df-30f6-4019-a2fa-a5ea327bad5c",
-        "name": "Mathy",
-        "songs": [
-            {
-                "id": "c2805824-b918-416d-8260-05ea3fab6103",
-                "title": "Playing God",
-                "artist": "Polyphia",
-                "album": "Remember That You Will Die",
-                "filename": "Playing God - Polyphia.m4a",
-                "file_path": "",
-                "url": "https://www.youtube.com/watch?v=Z5NoQg8LdDk",
-                "thumbnail": "https://img.youtube.com/vi/Z5NoQg8LdDk/maxresdefault.jpg",
-                "duration": 204.0
-            },
-            {
-                "id": "607d06c1-4ed4-4d8e-93a9-60b18d05bdd6",
-                "title": "G.O.A.T.",
-                "artist": "Polyphia",
-                "album": "New Levels New Devils",
-                "filename": "",
-                "file_path": "",
-                "url": "https://www.youtube.com/watch?v=9_gkpYORQLU",
-                "thumbnail": "https://img.youtube.com/vi/9_gkpYORQLU/maxresdefault.jpg",
-                "duration": 216.0
-            },
-            {
-                "id": "a3d0efb1-7d5f-437c-a5b4-4a2185425c07",
-                "title": "Reverie",
-                "artist": "Polyphia",
-                "album": "Remember That You Will Die",
-                "filename": "Reverie - Polyphia.m4a",
-                "file_path": "",
-                "url": "https://www.youtube.com/watch?v=0oCnt13S-1g",
-                "thumbnail": "https://img.youtube.com/vi/0oCnt13S-1g/maxresdefault.jpg",
-                "duration": 245.0
-            },
-            {
-                "id": "d4bccb11-169d-49f1-bb32-909c20a92780",
-                "title": "Neurotica",
-                "artist": "Polyphia",
-                "album": "Remember That You Will Die",
-                "filename": "Neurotica - Polyphia.m4a",
-                "file_path": "",
-                "url": "https://www.youtube.com/watch?v=NkuOJNBICyQ",
-                "thumbnail": "https://img.youtube.com/vi/NkuOJNBICyQ/maxresdefault.jpg",
-                "duration": 196.0
-            }
-        ],
-        "createdAt": "2025-12-11T23:30:51.714028",
-        "updatedAt": "2025-12-11T23:50:16.385808"
-    },
     "eff355be-5907-4da3-9a58-085a7cd98000": {
         "id": "eff355be-5907-4da3-9a58-085a7cd98000",
         "name": "Brainstorm",
@@ -60,7 +8,7 @@
                 "title": "NxWorries (Anderson .Paak & Knxwledge) - FromHere feat. Snoop Dogg & October London",
                 "artist": "NxWorries",
                 "album": "FromHere (feat. Snoop Dogg & October London)",
-                "filename": "NxWorries Anderson Paak  Knxwledge  FromHere feat Snoop Dogg  October London - NxWorries.m4a",
+                "filename": "",
                 "file_path": "",
                 "url": "https://www.youtube.com/watch?v=u7jrNCB0DPY",
                 "thumbnail": "https://img.youtube.com/vi/u7jrNCB0DPY/maxresdefault.jpg",
@@ -71,7 +19,7 @@
                 "title": "Yours",
                 "artist": "Post Malone",
                 "album": "F-1 Trillion",
-                "filename": "Yours - Post Malone.m4a",
+                "filename": "",
                 "file_path": "",
                 "url": "https://www.youtube.com/watch?v=hrAeuPqYnRQ",
                 "thumbnail": "https://img.youtube.com/vi/hrAeuPqYnRQ/maxresdefault.jpg",
@@ -104,7 +52,7 @@
                 "title": "Wicked Games",
                 "artist": "The Weeknd",
                 "album": "Trilogy",
-                "filename": "Wicked Games - The Weeknd.m4a",
+                "filename": "",
                 "file_path": "",
                 "url": "https://www.youtube.com/watch?v=O1OTWCd40bc",
                 "thumbnail": "https://img.youtube.com/vi/O1OTWCd40bc/maxresdefault.jpg",
@@ -115,14 +63,25 @@
                 "title": "Post Malone ft. Luke Combs - Guy For That (Official Music Video) ft. Luke Combs",
                 "artist": "Post Malone",
                 "album": "Guy For That",
-                "filename": "Post Malone ft Luke Combs  Guy For That Official Music Video ft Luke Combs - Post Malone.m4a",
+                "filename": "",
                 "file_path": "",
                 "url": "https://www.youtube.com/watch?v=b1aBzAE-IFY",
                 "thumbnail": "https://img.youtube.com/vi/b1aBzAE-IFY/maxresdefault.jpg",
                 "duration": 194.0
+            },
+            {
+                "id": "Neurotica - Polyphia.m4a",
+                "title": "Neurotica",
+                "artist": "Polyphia",
+                "album": null,
+                "filename": "",
+                "file_path": "",
+                "url": null,
+                "thumbnail": null,
+                "duration": null
             }
         ],
         "createdAt": "2025-12-11T23:34:09.465894",
-        "updatedAt": "2025-12-17T23:31:13.677427"
+        "updatedAt": "2025-12-17T23:38:46.334864"
     }
 }
