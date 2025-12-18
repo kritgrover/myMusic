@@ -5,8 +5,6 @@ import '../services/queue_service.dart';
 import '../services/player_state_service.dart';
 import '../utils/song_display_utils.dart';
 
-const Color neonBlue = Color(0xFF00D9FF);
-
 class BottomPlayer extends StatefulWidget {
   final AudioPlayerService playerService;
   final String? currentTrackName;
@@ -169,16 +167,21 @@ class _BottomPlayerState extends State<BottomPlayer> {
   @override
   Widget build(BuildContext context) {
     final hasTrack = widget.playerService.currentUrl != null;
+    final primaryColor = Theme.of(context).colorScheme.primary;
+    final surfaceElevated = Theme.of(context).colorScheme.surface;
 
     return Container(
       decoration: BoxDecoration(
-        color: Colors.black,
-        border: const Border(
-          top: BorderSide(color: neonBlue, width: 1),
+        color: surfaceElevated,
+        border: Border(
+          top: BorderSide(
+            color: Theme.of(context).dividerColor,
+            width: 1,
+          ),
         ),
         boxShadow: [
           BoxShadow(
-            color: neonBlue.withOpacity(0.3),
+            color: Colors.black.withOpacity(0.2),
             blurRadius: 8,
             offset: const Offset(0, -2),
           ),
@@ -191,180 +194,124 @@ class _BottomPlayerState extends State<BottomPlayer> {
           children: [
             // Progress bar - only show if track is loaded
             if (hasTrack)
-            Slider(
-              value: _isDragging
-                  ? _dragValue
-                  : (_duration.inMilliseconds > 0
-                      ? _position.inMilliseconds.toDouble()
-                      : 0.0),
-              max: _duration.inMilliseconds > 0
-                  ? _duration.inMilliseconds.toDouble()
-                  : 1.0,
-              onChangeStart: _onSliderStart,
-              onChangeEnd: _onSliderEnd,
-              onChanged: _onSliderUpdate,
-            ),
-            // Player controls - all on one line
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24.0),
+                child: Slider(
+                  value: _isDragging
+                      ? _dragValue
+                      : (_duration.inMilliseconds > 0
+                          ? _position.inMilliseconds.toDouble()
+                          : 0.0),
+                  max: _duration.inMilliseconds > 0
+                      ? _duration.inMilliseconds.toDouble()
+                      : 1.0,
+                  onChangeStart: _onSliderStart,
+                  onChangeEnd: _onSliderEnd,
+                  onChanged: _onSliderUpdate,
+                ),
+              ),
+            // Player controls
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-              child: SizedBox(
-                height: 48,
-                child: Stack(
-                  alignment: Alignment.center,
-                  clipBehavior: Clip.none,
-                  children: [
-                    // Song name with timestamp on the left, volume on the right
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      crossAxisAlignment: CrossAxisAlignment.center,
+              padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 12.0),
+              child: Row(
+                children: [
+                  // Track info
+                  Expanded(
+                    child: Row(
                       children: [
-                        // Song name and artist with timestamp
+                        Container(
+                          width: 56,
+                          height: 56,
+                          decoration: BoxDecoration(
+                            color: primaryColor.withOpacity(0.15),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Icon(
+                            Icons.music_note,
+                            color: primaryColor,
+                            size: 28,
+                          ),
+                        ),
+                        const SizedBox(width: 16),
                         Expanded(
-                          child: Row(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              Flexible(
-                                flex: 1,
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Text(
-                                      hasTrack
-                                          ? getDisplayTitle(widget.currentTrackName, widget.playerService.currentUrl)
-                                          : 'No track selected',
-                                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                        color: hasTrack ? neonBlue : null,
-                                      ),
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      textAlign: TextAlign.left,
-                                    ),
-                                    if (hasTrack && widget.currentTrackArtist != null && widget.currentTrackArtist!.isNotEmpty)
-                                      Text(
-                                        widget.currentTrackArtist!,
-                                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                          color: neonBlue.withOpacity(0.7),
-                                        ),
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        textAlign: TextAlign.left,
-                                      ),
-                                  ],
+                              Text(
+                                hasTrack
+                                    ? getDisplayTitle(widget.currentTrackName, widget.playerService.currentUrl)
+                                    : 'No track selected',
+                                style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                                  color: hasTrack ? null : Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+                                  fontWeight: FontWeight.w500,
                                 ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
                               ),
-                              if (hasTrack && _duration.inMilliseconds > 0)
-                                Padding(
-                                  padding: const EdgeInsets.only(left: 8.0),
-                                  child: Text(
-                                    () {
-                                      try {
-                                        return '${_formatDuration(_displayPosition)} / ${_formatDuration(_duration)}';
-                                      } catch (e) {
-                                        return '00:00 / 00:00';
-                                      }
-                                    }(),
-                                    style: Theme.of(context).textTheme.bodySmall,
-                                  ),
+                              if (hasTrack && widget.currentTrackArtist != null && widget.currentTrackArtist!.isNotEmpty) ...[
+                                const SizedBox(height: 2),
+                                Text(
+                                  widget.currentTrackArtist!,
+                                  style: Theme.of(context).textTheme.bodySmall,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
                                 ),
+                              ],
+                              if (hasTrack && _duration.inMilliseconds > 0) ...[
+                                const SizedBox(height: 4),
+                                Text(
+                                  () {
+                                    try {
+                                      return '${_formatDuration(_displayPosition)} / ${_formatDuration(_duration)}';
+                                    } catch (e) {
+                                      return '00:00 / 00:00';
+                                    }
+                                  }(),
+                                  style: Theme.of(context).textTheme.labelSmall,
+                                ),
+                              ],
                             ],
                           ),
                         ),
-                        // Volume control and queue icon on the right
-                        Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            if (widget.queueService != null && widget.onQueueToggle != null)
-                              IconButton(
-                                icon: Stack(
-                                  children: [
-                                    const Icon(Icons.queue_music),
-                                    if (widget.queueService!.queueLength > 0)
-                                      Positioned(
-                                        right: 0,
-                                        top: 0,
-                                        child: Container(
-                                          padding: const EdgeInsets.all(2),
-                                          decoration: BoxDecoration(
-                                            color: neonBlue,
-                                            shape: BoxShape.circle,
-                                          ),
-                                          constraints: const BoxConstraints(
-                                            minWidth: 16,
-                                            minHeight: 16,
-                                          ),
-                                          child: Text(
-                                            '${widget.queueService!.queueLength}',
-                                            style: const TextStyle(
-                                              color: Colors.black,
-                                              fontSize: 10,
-                                              fontWeight: FontWeight.bold,
-                                            ),
-                                            textAlign: TextAlign.center,
-                                          ),
-                                        ),
-                                      ),
-                                  ],
-                                ),
-                                onPressed: widget.onQueueToggle,
-                                tooltip: 'Queue',
-                                color: neonBlue,
-                              ),
-                            Icon(
-                              _isDraggingVolume
-                                  ? (_dragVolumeValue > 0.5
-                                      ? Icons.volume_up
-                                      : _dragVolumeValue > 0.0
-                                          ? Icons.volume_down
-                                          : Icons.volume_off)
-                                  : (_volume > 0.5
-                                      ? Icons.volume_up
-                                      : _volume > 0.0
-                                          ? Icons.volume_down
-                                          : Icons.volume_off),
-                              size: 20,
-                              color: neonBlue,
-                            ),
-                            const SizedBox(width: 4),
-                            SizedBox(
-                              width: 120,
-                              child: Slider(
-                                value: _isDraggingVolume ? _dragVolumeValue : _volume,
-                                min: 0.0,
-                                max: 1.0,
-                                onChangeStart: _onVolumeSliderStart,
-                                onChangeEnd: _onVolumeSliderEnd,
-                                onChanged: _onVolumeSliderUpdate,
-                                activeColor: neonBlue,
-                              ),
-                            ),
-                          ],
-                        ),
                       ],
                     ),
-                    // Control buttons centered
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        IconButton(
-                          icon: const Icon(Icons.skip_previous),
-                          onPressed: hasTrack && widget.queueService != null && widget.playerStateService != null
-                              ? () async {
-                                  if (widget.queueService!.hasPrevious) {
-                                    await widget.queueService!.playPrevious(widget.playerStateService!);
-                                  }
+                  ),
+                  // Control buttons
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.skip_previous, size: 24),
+                        onPressed: hasTrack && widget.queueService != null && widget.playerStateService != null
+                            ? () async {
+                                final qs = widget.queueService!;
+                                // Allow previous when there's a previous item,
+                                if (qs.hasPrevious ||
+                                    qs.loopMode == LoopMode.queue ||
+                                    qs.loopMode == LoopMode.single) {
+                                  await qs.playPrevious(widget.playerStateService!);
                                 }
-                              : hasTrack
-                                  ? () {
-                                      // Previous track functionality (no queue)
-                                    }
-                                  : null,
-                          tooltip: 'Previous',
-                          color: hasTrack ? neonBlue : null,
+                              }
+                            : hasTrack
+                                ? () {
+                                    // Previous track functionality (no queue)
+                                  }
+                                : null,
+                        tooltip: 'Previous',
+                      ),
+                      Container(
+                        margin: const EdgeInsets.symmetric(horizontal: 8),
+                        decoration: BoxDecoration(
+                          color: primaryColor,
+                          shape: BoxShape.circle,
                         ),
-                        IconButton(
-                          icon: Icon(_isPlaying ? Icons.pause : Icons.play_arrow),
-                          iconSize: 32,
+                        child: IconButton(
+                          icon: Icon(
+                            _isPlaying ? Icons.pause : Icons.play_arrow,
+                            size: 28,
+                          ),
+                          color: Colors.white,
                           onPressed: hasTrack
                               ? () async {
                                   if (_isPlaying) {
@@ -375,28 +322,172 @@ class _BottomPlayerState extends State<BottomPlayer> {
                                 }
                               : null,
                           tooltip: _isPlaying ? 'Pause' : 'Play',
-                          color: hasTrack ? neonBlue : null,
                         ),
-                        IconButton(
-                          icon: const Icon(Icons.skip_next),
-                          onPressed: hasTrack && widget.queueService != null && widget.playerStateService != null
-                              ? () async {
-                                  if (widget.queueService!.hasNext) {
-                                    await widget.queueService!.playNext(widget.playerStateService!);
-                                  }
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.skip_next, size: 24),
+                        onPressed: hasTrack && widget.queueService != null && widget.playerStateService != null
+                            ? () async {
+                                final qs = widget.queueService!;
+                                // Allow next when there's a next item,
+                                if (qs.hasNext ||
+                                    qs.loopMode == LoopMode.queue ||
+                                    qs.loopMode == LoopMode.single) {
+                                  await qs.playNext(widget.playerStateService!);
                                 }
-                              : hasTrack
-                                  ? () {
-                                      // Next track functionality (no queue)
-                                    }
-                                  : null,
-                          tooltip: 'Next',
-                          color: hasTrack ? neonBlue : null,
+                              }
+                            : hasTrack
+                                ? () {
+                                    // Next track functionality (no queue)
+                                  }
+                                : null,
+                        tooltip: 'Next',
+                      ),
+                    ],
+                  ),
+                  const SizedBox(width: 16),
+                  // Queue and volume controls
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // Loop button
+                      if (widget.queueService != null)
+                        ListenableBuilder(
+                          listenable: widget.queueService!,
+                          builder: (context, _) {
+                            final loopMode = widget.queueService!.loopMode;
+                            final isHighlighted = loopMode == LoopMode.queue || loopMode == LoopMode.single;
+                            
+                            return Stack(
+                              clipBehavior: Clip.none,
+                              children: [
+                                IconButton(
+                                  icon: Icon(
+                                    Icons.loop,
+                                    size: 20,
+                                    color: isHighlighted ? primaryColor : null,
+                                  ),
+                                  onPressed: () {
+                                    widget.queueService!.toggleLoopMode();
+                                  },
+                                  tooltip: loopMode == LoopMode.none
+                                      ? 'Loop off'
+                                      : loopMode == LoopMode.queue
+                                          ? 'Loop queue'
+                                          : 'Loop single',
+                                  constraints: const BoxConstraints(
+                                    minWidth: 48,
+                                    minHeight: 48,
+                                  ),
+                                ),
+                                // Show "1" badge when in single loop mode
+                                if (loopMode == LoopMode.single)
+                                  Positioned(
+                                    right: 8,
+                                    top: 8,
+                                    child: IgnorePointer(
+                                      child: Container(
+                                        padding: const EdgeInsets.all(2),
+                                        decoration: BoxDecoration(
+                                          color: primaryColor,
+                                          shape: BoxShape.circle,
+                                        ),
+                                        constraints: const BoxConstraints(
+                                          minWidth: 14,
+                                          minHeight: 14,
+                                        ),
+                                        child: const Text(
+                                          '1',
+                                          style: TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 9,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                          textAlign: TextAlign.center,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            );
+                          },
                         ),
-                      ],
-                    ),
-                  ],
-                ),
+                      if (widget.queueService != null && widget.onQueueToggle != null)
+                        ListenableBuilder(
+                          listenable: widget.queueService!,
+                          builder: (context, _) {
+                            return Stack(
+                              clipBehavior: Clip.none,
+                              children: [
+                                IconButton(
+                                  icon: const Icon(Icons.queue_music, size: 20),
+                                  onPressed: widget.onQueueToggle,
+                                  tooltip: 'Queue',
+                                  constraints: const BoxConstraints(
+                                    minWidth: 48,
+                                    minHeight: 48,
+                                  ),
+                                ),
+                                if (widget.queueService!.queueLength > 0)
+                                  Positioned(
+                                    right: 8,
+                                    top: 8,
+                                    child: IgnorePointer(
+                                      child: Container(
+                                        padding: const EdgeInsets.all(4),
+                                        decoration: BoxDecoration(
+                                          color: primaryColor,
+                                          shape: BoxShape.circle,
+                                        ),
+                                        constraints: const BoxConstraints(
+                                          minWidth: 16,
+                                          minHeight: 16,
+                                        ),
+                                        child: Text(
+                                          '${widget.queueService!.queueLength}',
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 10,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                          textAlign: TextAlign.center,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            );
+                          },
+                        ),
+                      Icon(
+                        _isDraggingVolume
+                            ? (_dragVolumeValue > 0.5
+                                ? Icons.volume_up
+                                : _dragVolumeValue > 0.0
+                                    ? Icons.volume_down
+                                    : Icons.volume_off)
+                            : (_volume > 0.5
+                                ? Icons.volume_up
+                                : _volume > 0.0
+                                    ? Icons.volume_down
+                                    : Icons.volume_off),
+                        size: 20,
+                      ),
+                      const SizedBox(width: 8),
+                      SizedBox(
+                        width: 100,
+                        child: Slider(
+                          value: _isDraggingVolume ? _dragVolumeValue : _volume,
+                          min: 0.0,
+                          max: 1.0,
+                          onChangeStart: _onVolumeSliderStart,
+                          onChangeEnd: _onVolumeSliderEnd,
+                          onChanged: _onVolumeSliderUpdate,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
               ),
             ),
           ],

@@ -3,8 +3,6 @@ import '../services/queue_service.dart';
 import '../models/queue_item.dart';
 import '../utils/song_display_utils.dart';
 
-const Color neonBlue = Color(0xFF00D9FF);
-
 class QueuePanel extends StatelessWidget {
   final QueueService queueService;
   final VoidCallback onClose;
@@ -19,22 +17,26 @@ class QueuePanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final primaryColor = Theme.of(context).colorScheme.primary;
+    final surfaceHover = Theme.of(context).colorScheme.surfaceVariant;
+    final dividerColor = Theme.of(context).dividerColor;
+    
     return Container(
       width: 400,
       decoration: BoxDecoration(
-        color: Colors.black,
+        color: Theme.of(context).colorScheme.surface,
         border: Border(
-          left: BorderSide(color: neonBlue, width: 1),
+          left: BorderSide(color: dividerColor, width: 1),
         ),
       ),
       child: Column(
         children: [
           // Header
           Container(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(20),
             decoration: BoxDecoration(
               border: Border(
-                bottom: BorderSide(color: neonBlue.withOpacity(0.3), width: 1),
+                bottom: BorderSide(color: dividerColor, width: 1),
               ),
             ),
             child: Row(
@@ -42,16 +44,39 @@ class QueuePanel extends StatelessWidget {
               children: [
                 Row(
                   children: [
-                    const Icon(Icons.queue_music, color: neonBlue),
-                    const SizedBox(width: 8),
+                    Icon(Icons.queue_music, color: primaryColor, size: 24),
+                    const SizedBox(width: 12),
                     Text(
-                      'Queue (${queueService.queueLength})',
-                      style: Theme.of(context).textTheme.titleLarge,
+                      'Queue',
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    ListenableBuilder(
+                      listenable: queueService,
+                      builder: (context, _) {
+                        return Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: primaryColor.withOpacity(0.15),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(
+                            '${queueService.queueLength}',
+                            style: TextStyle(
+                              color: primaryColor,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        );
+                      },
                     ),
                   ],
                 ),
                 IconButton(
-                  icon: const Icon(Icons.close),
+                  icon: const Icon(Icons.close, size: 20),
                   onPressed: onClose,
                   tooltip: 'Close',
                 ),
@@ -69,23 +94,21 @@ class QueuePanel extends StatelessWidget {
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         Icon(
-                          Icons.queue_music,
+                          Icons.queue_music_outlined,
                           size: 64,
-                          color: Colors.grey[600],
+                          color: Theme.of(context).colorScheme.onSurface.withOpacity(0.3),
                         ),
                         const SizedBox(height: 16),
                         Text(
                           'Queue is empty',
-                          style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                            color: Colors.grey[600],
+                          style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
                           ),
                         ),
                         const SizedBox(height: 8),
                         Text(
                           'Add songs to queue to see them here',
-                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: Colors.grey[600],
-                          ),
+                          style: Theme.of(context).textTheme.bodySmall,
                           textAlign: TextAlign.center,
                         ),
                       ],
@@ -93,57 +116,82 @@ class QueuePanel extends StatelessWidget {
                   );
                 }
 
-                return ListView.builder(
+                return ListView.separated(
+                  padding: const EdgeInsets.all(8),
                   itemCount: queueService.queue.length,
+                  separatorBuilder: (context, index) => const Divider(height: 1),
                   itemBuilder: (context, index) {
                     final item = queueService.queue[index];
                     final isCurrent = index == queueService.currentIndex;
 
                     return Material(
                       color: isCurrent 
-                          ? neonBlue.withOpacity(0.15) 
+                          ? primaryColor.withOpacity(0.1) 
                           : Colors.transparent,
+                      borderRadius: BorderRadius.circular(8),
                       child: InkWell(
                         onTap: () {
                           if (onItemTap != null) {
                             onItemTap!(item);
                           }
                         },
-                        hoverColor: neonBlue.withOpacity(0.1),
-                        child: ListTile(
-                          leading: Icon(
-                            Icons.music_note,
-                            color: isCurrent ? neonBlue : Colors.grey[400],
-                          ),
-                          title: Text(
-                            getDisplayTitle(item.title, item.filename),
-                            style: TextStyle(
-                              color: isCurrent ? neonBlue : null,
-                              fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal,
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          subtitle: item.artist != null && item.artist!.isNotEmpty
-                              ? Text(
-                                  item.artist!,
-                                  style: TextStyle(
-                                    color: isCurrent 
-                                        ? neonBlue.withOpacity(0.8) 
-                                        : Colors.grey[400],
-                                  ),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                )
-                              : null,
-                          trailing: IconButton(
-                            icon: const Icon(Icons.close, size: 18),
-                            onPressed: () {
-                              queueService.removeFromQueue(index);
-                            },
-                            tooltip: 'Remove from queue',
-                            padding: EdgeInsets.zero,
-                            constraints: const BoxConstraints(),
+                        borderRadius: BorderRadius.circular(8),
+                        hoverColor: surfaceHover,
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          child: Row(
+                            children: [
+                              Container(
+                                width: 40,
+                                height: 40,
+                                decoration: BoxDecoration(
+                                  color: isCurrent 
+                                      ? primaryColor.withOpacity(0.2)
+                                      : surfaceHover,
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Icon(
+                                  Icons.music_note,
+                                  color: isCurrent ? primaryColor : Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+                                  size: 20,
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      getDisplayTitle(item.title, item.filename),
+                                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                        color: isCurrent ? primaryColor : null,
+                                        fontWeight: isCurrent ? FontWeight.w600 : FontWeight.w400,
+                                      ),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                    if (item.artist != null && item.artist!.isNotEmpty) ...[
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        item.artist!,
+                                        style: Theme.of(context).textTheme.bodySmall,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ],
+                                  ],
+                                ),
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.close, size: 18),
+                                onPressed: () {
+                                  queueService.removeFromQueue(index);
+                                },
+                                tooltip: 'Remove from queue',
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints(),
+                              ),
+                            ],
                           ),
                         ),
                       ),
@@ -154,28 +202,31 @@ class QueuePanel extends StatelessWidget {
             ),
           ),
           // Footer with clear button
-          if (queueService.queue.isNotEmpty)
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                border: Border(
-                  top: BorderSide(color: neonBlue.withOpacity(0.3), width: 1),
-                ),
-              ),
-              child: SizedBox(
-                width: double.infinity,
-                child: OutlinedButton(
-                  onPressed: () {
-                    queueService.clearQueue();
-                  },
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: neonBlue,
-                    side: const BorderSide(color: neonBlue),
+          ListenableBuilder(
+            listenable: queueService,
+            builder: (context, _) {
+              if (queueService.queue.isEmpty) {
+                return const SizedBox.shrink();
+              }
+              return Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  border: Border(
+                    top: BorderSide(color: dividerColor, width: 1),
                   ),
-                  child: const Text('Clear Queue'),
                 ),
-              ),
-            ),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton(
+                    onPressed: () {
+                      queueService.clearQueue();
+                    },
+                    child: const Text('Clear Queue'),
+                  ),
+                ),
+              );
+            },
+          ),
         ],
       ),
     );

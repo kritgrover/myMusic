@@ -8,8 +8,6 @@ import '../widgets/video_card.dart';
 import '../widgets/playlist_selection_dialog.dart';
 import '../models/playlist.dart';
 
-const Color neonBlue = Color(0xFF00D9FF);
-
 class SearchScreen extends StatefulWidget {
   final PlayerStateService? playerStateService;
   final QueueService? queueService;
@@ -26,7 +24,6 @@ class _SearchScreenState extends State<SearchScreen> {
   final TextEditingController _searchController = TextEditingController();
   List<VideoInfo> _searchResults = [];
   bool _isSearching = false;
-  bool _deepSearch = true;
 
   @override
   void dispose() {
@@ -44,7 +41,7 @@ class _SearchScreenState extends State<SearchScreen> {
     });
 
     try {
-      final results = await _apiService.searchYoutube(query, deepSearch: _deepSearch);
+      final results = await _apiService.searchYoutube(query);
       setState(() {
         _searchResults = results;
         _isSearching = false;
@@ -66,36 +63,36 @@ class _SearchScreenState extends State<SearchScreen> {
     return Column(
       children: [
         Padding(
-          padding: const EdgeInsets.all(16.0),
+          padding: const EdgeInsets.all(24.0),
           child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              Text(
+                'Discover Music',
+                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 20),
               TextField(
                 controller: _searchController,
                 decoration: InputDecoration(
-                  hintText: 'Search for music...',
-                  suffixIcon: IconButton(
-                    icon: const Icon(Icons.search),
-                    onPressed: _performSearch,
-                  ),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
+                  hintText: 'Search for songs, artists, albums...',
+                  prefixIcon: const Icon(Icons.search, size: 24),
+                  suffixIcon: _searchController.text.isNotEmpty
+                      ? IconButton(
+                          icon: const Icon(Icons.clear, size: 20),
+                          onPressed: () {
+                            _searchController.clear();
+                            setState(() {
+                              _searchResults = [];
+                            });
+                          },
+                        )
+                      : null,
                 ),
                 onSubmitted: (_) => _performSearch(),
-              ),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  Checkbox(
-                    value: _deepSearch,
-                    onChanged: (value) {
-                      setState(() {
-                        _deepSearch = value ?? true;
-                      });
-                    },
-                  ),
-                  const Text('Deep Search (slower but more accurate)'),
-                ],
+                textInputAction: TextInputAction.search,
               ),
             ],
           ),
@@ -105,15 +102,39 @@ class _SearchScreenState extends State<SearchScreen> {
               ? const Center(child: CircularProgressIndicator())
               : _searchResults.isEmpty
                   ? Center(
-                      child: Text(
-                        _searchController.text.isEmpty
-                            ? 'Enter a search query to find music'
-                            : 'No results found',
-                        style: Theme.of(context).textTheme.bodyLarge,
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            _searchController.text.isEmpty
+                                ? Icons.search
+                                : Icons.search_off,
+                            size: 64,
+                            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.3),
+                          ),
+                          const SizedBox(height: 16),
+                          Text(
+                            _searchController.text.isEmpty
+                                ? 'Search for your favorite music'
+                                : 'No results found',
+                            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                              color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+                            ),
+                          ),
+                          if (_searchController.text.isNotEmpty) ...[
+                            const SizedBox(height: 8),
+                            Text(
+                              'Try a different search term',
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
+                          ],
+                        ],
                       ),
                     )
-                  : ListView.builder(
+                  : ListView.separated(
+                      padding: const EdgeInsets.symmetric(horizontal: 24),
                       itemCount: _searchResults.length,
+                      separatorBuilder: (context, index) => const SizedBox(height: 12),
                       itemBuilder: (context, index) {
                         return VideoCard(
                           video: _searchResults[index],
@@ -203,8 +224,10 @@ class _SearchScreenState extends State<SearchScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Downloaded: ${result.filename}'),
-            backgroundColor: neonBlue,
             behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
           ),
         );
       }
@@ -257,17 +280,6 @@ class _SearchScreenState extends State<SearchScreen> {
 
       // Add to queue
       widget.queueService!.addToQueue(queueItem);
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Added to queue: ${result.title}'),
-            backgroundColor: neonBlue,
-            behavior: SnackBarBehavior.floating,
-            duration: const Duration(seconds: 2),
-          ),
-        );
-      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

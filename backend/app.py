@@ -34,10 +34,15 @@ os.makedirs(DOWNLOADS_DIR, exist_ok=True)
 
 download_service = DownloadService(output_dir=DOWNLOADS_DIR)
 
+# Global progress tracking for CSV conversions
+csv_progress: Dict[str, Dict] = {}
+
+# Global progress tracking for downloads
+download_progress: Dict[str, Dict] = {}
+
 
 class SearchRequest(BaseModel):
     query: str
-    deep_search: bool = True
     duration_min: int = 0
     duration_max: float = 600
 
@@ -118,7 +123,6 @@ def search_youtube(request: SearchRequest):
     try:
         results = download_service.search_youtube(
             query=request.query,
-            deep_search=request.deep_search,
             duration_min=request.duration_min,
             duration_max=request.duration_max
         )
@@ -251,6 +255,76 @@ def download_audio(request: DownloadRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class BatchDownloadRequest(BaseModel):
+    downloads: List[DownloadRequest]
+
+
+@app.post("/downloads/batch")
+def start_batch_download(request: BatchDownloadRequest):
+    """Start a batch download with progress tracking"""
+    import uuid
+    download_id = str(uuid.uuid4())
+    
+    # Initialize progress tracking
+    download_progress[download_id] = {
+        "current": 0,
+        "total": len(request.downloads),
+        "status": "downloading",
+        "processed": 0,
+        "failed": 0,
+        "downloads": []
+    }
+    
+    # Start downloads in background
+    def download_worker():
+        try:
+            for idx, download_req in enumerate(request.downloads):
+                try:
+                    result = download_service.download_audio(
+                        url=download_req.url,
+                        title=download_req.title,
+                        artist=download_req.artist,
+                        album=download_req.album,
+                        output_format=download_req.output_format,
+                        embed_thumbnail=download_req.embed_thumbnail
+                    )
+                    download_progress[download_id]["processed"] += 1
+                    download_progress[download_id]["downloads"].append({
+                        "success": True,
+                        "filename": result['filename'],
+                        "title": result['title'],
+                        "artist": result['artist']
+                    })
+                except Exception as e:
+                    download_progress[download_id]["failed"] += 1
+                    download_progress[download_id]["downloads"].append({
+                        "success": False,
+                        "title": download_req.title,
+                        "error": str(e)
+                    })
+                
+                download_progress[download_id]["current"] = idx + 1
+                download_progress[download_id]["status"] = f"Downloading {download_req.title}..."
+            
+            download_progress[download_id]["status"] = "completed"
+        except Exception as e:
+            download_progress[download_id]["status"] = f"error: {str(e)}"
+    
+    import threading
+    thread = threading.Thread(target=download_worker, daemon=True)
+    thread.start()
+    
+    return {"download_id": download_id, "total": len(request.downloads)}
+
+
+@app.get("/downloads/progress/{download_id}")
+def get_download_progress(download_id: str):
+    """Get progress for a batch download"""
+    if download_id not in download_progress:
+        raise HTTPException(status_code=404, detail="Download progress not found")
+    return download_progress[download_id]
+
+
 @app.get("/downloads")
 def list_downloads():
     """List all downloaded files (including subdirectories from CSV conversions)"""
@@ -331,7 +405,7 @@ def get_download_file(filename: str, request: Request):
 
 @app.delete("/downloads/{filename:path}")
 def delete_download_file(filename: str):
-    """Delete a downloaded file (supports subdirectory paths)"""
+    """Delete a downloaded file (supports subdirectory paths) and update playlists"""
     try:
         # Handle subdirectory paths and prevent directory traversal
         filename = filename.replace('\\', os.sep).replace('/', os.sep)
@@ -342,7 +416,37 @@ def delete_download_file(filename: str):
         if not os.path.isfile(file_path):
             raise HTTPException(status_code=404, detail="File not found")
         
+        # Delete the file
         os.remove(file_path)
+        
+        # Update all playlists to clear filename for tracks that reference this file
+        # Normalize filename for comparison (handle both forward and back slashes)
+        normalized_deleted_filename = filename.replace('\\', '/')
+        playlists = load_playlists()
+        playlists_updated = False
+        
+        for playlist_id, playlist_data in playlists.items():
+            songs_updated = False
+            for song in playlist_data.get("songs", []):
+                song_filename = song.get("filename", "")
+                if song_filename:
+                    # Normalize the song filename for comparison
+                    normalized_song_filename = song_filename.replace('\\', '/')
+                    # Check if filenames match (exact match or basename match)
+                    if normalized_song_filename == normalized_deleted_filename or \
+                       normalized_song_filename.endswith('/' + normalized_deleted_filename) or \
+                       normalized_song_filename == os.path.basename(normalized_deleted_filename):
+                        song["filename"] = ""
+                        song["file_path"] = ""
+                        songs_updated = True
+            
+            if songs_updated:
+                playlist_data["updatedAt"] = datetime.now().isoformat()
+                playlists_updated = True
+        
+        if playlists_updated:
+            save_playlists(playlists)
+        
         return {"success": True, "message": f"File {filename} deleted successfully"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -351,7 +455,6 @@ def delete_download_file(filename: str):
 # CSV Conversion Endpoints
 
 class CsvConversionRequest(BaseModel):
-    deep_search: bool = True
     duration_min: int = 0
     duration_max: float = 600
     exclude_instrumentals: bool = False
@@ -405,18 +508,19 @@ def convert_csv_file(filename: str, request: CsvConversionRequest):
         if not os.path.isfile(csv_path):
             raise HTTPException(status_code=404, detail="CSV file not found")
         
-        # Progress tracking
-        progress_data = {"current": 0, "total": 0, "status": ""}
+        # Initialize progress tracking for this filename
+        csv_progress[filename] = {"current": 0, "total": 0, "status": "", "processed": 0, "not_found": 0}
         
         def progress_callback(current, total, status):
-            progress_data["current"] = current
-            progress_data["total"] = total
-            progress_data["status"] = status
+            csv_progress[filename]["current"] = current
+            csv_progress[filename]["total"] = total
+            csv_progress[filename]["status"] = status
+            # During processing, processed count is same as current
+            csv_progress[filename]["processed"] = current
         
         # Search for tracks without downloading
         result = download_service.convert_csv_to_playlist(
             csv_path=csv_path,
-            deep_search=request.deep_search,
             duration_min=request.duration_min,
             duration_max=request.duration_max,
             exclude_instrumentals=request.exclude_instrumentals,
@@ -474,6 +578,11 @@ def convert_csv_file(filename: str, request: CsvConversionRequest):
             traceback.print_exc()
             # Continue even if playlist creation fails
         
+        # Update final progress
+        csv_progress[filename]["processed"] = result['success_count']
+        csv_progress[filename]["not_found"] = len(result['not_found'])
+        csv_progress[filename]["status"] = "completed"
+        
         return {
             "success": True,
             "tracks": result.get('tracks', []),
@@ -488,7 +597,18 @@ def convert_csv_file(filename: str, request: CsvConversionRequest):
         import traceback
         error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
         print(f"CSV conversion error: {error_detail}")
+        # Mark as error in progress
+        if filename in csv_progress:
+            csv_progress[filename]["status"] = f"error: {str(e)}"
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/csv/progress/{filename}")
+def get_csv_progress(filename: str):
+    """Get progress for a CSV conversion"""
+    if filename not in csv_progress:
+        raise HTTPException(status_code=404, detail="Progress not found")
+    return csv_progress[filename]
 
 
 @app.get("/csv/download/{playlist_name}/{filename}")

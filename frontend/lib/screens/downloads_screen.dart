@@ -5,8 +5,6 @@ import '../services/queue_service.dart';
 import '../models/queue_item.dart';
 import '../utils/song_display_utils.dart';
 
-const Color neonBlue = Color(0xFF00D9FF);
-
 class DownloadsScreen extends StatefulWidget {
   final PlayerStateService playerStateService;
   final QueueService? queueService;
@@ -143,16 +141,6 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
       try {
         await _apiService.deleteDownload(file.filename);
         await _loadDownloads();
-        
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Deleted: ${file.filename}'),
-              backgroundColor: neonBlue,
-              behavior: SnackBarBehavior.floating,
-            ),
-          );
-        }
       } catch (e) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -178,17 +166,6 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
       );
 
       widget.queueService!.addToQueue(queueItem);
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Added to queue: ${getDisplayTitle(file.title, file.filename)}'),
-            backgroundColor: neonBlue,
-            behavior: SnackBarBehavior.floating,
-            duration: const Duration(seconds: 2),
-          ),
-        );
-      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -207,28 +184,39 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
     final filteredDownloads = _filteredDownloads;
     final hasDownloads = _downloads.isNotEmpty;
     final hasFilteredResults = filteredDownloads.isNotEmpty;
+    final primaryColor = Theme.of(context).colorScheme.primary;
+    final surfaceHover = Theme.of(context).colorScheme.surfaceVariant;
     
     return Column(
       children: [
         Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: TextField(
-            controller: _searchController,
-            decoration: InputDecoration(
-              hintText: 'Search downloads...',
-              prefixIcon: const Icon(Icons.search),
-              suffixIcon: _searchQuery.isNotEmpty && _searchQuery.trim().isNotEmpty
-                  ? IconButton(
-                      icon: const Icon(Icons.clear),
-                      onPressed: () {
-                        _searchController.clear();
-                      },
-                    )
-                  : null,
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
+          padding: const EdgeInsets.all(24.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'My Library',
+                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
               ),
-            ),
+              const SizedBox(height: 20),
+              TextField(
+                controller: _searchController,
+                decoration: InputDecoration(
+                  hintText: 'Search your library...',
+                  prefixIcon: const Icon(Icons.search, size: 24),
+                  suffixIcon: _searchQuery.isNotEmpty && _searchQuery.trim().isNotEmpty
+                      ? IconButton(
+                          icon: const Icon(Icons.clear, size: 20),
+                          onPressed: () {
+                            _searchController.clear();
+                          },
+                        )
+                      : null,
+                ),
+              ),
+            ],
           ),
         ),
         Expanded(
@@ -242,19 +230,21 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
                             Icon(
-                              Icons.download_done,
+                              Icons.library_music_outlined,
                               size: 64,
-                              color: Colors.grey[400],
+                              color: Theme.of(context).colorScheme.onSurface.withOpacity(0.3),
                             ),
                             const SizedBox(height: 16),
                             Text(
                               'No downloads yet',
-                              style: Theme.of(context).textTheme.titleLarge,
+                              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+                              ),
                             ),
                             const SizedBox(height: 8),
                             Text(
                               'Search and download music to see it here',
-                              style: Theme.of(context).textTheme.bodyMedium,
+                              style: Theme.of(context).textTheme.bodySmall,
                             ),
                           ],
                         ),
@@ -267,122 +257,116 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
                                 Icon(
                                   Icons.search_off,
                                   size: 64,
-                                  color: Colors.grey[400],
+                                  color: Theme.of(context).colorScheme.onSurface.withOpacity(0.3),
                                 ),
                                 const SizedBox(height: 16),
                                 Text(
                                   'No results found',
-                                  style: Theme.of(context).textTheme.titleLarge,
+                                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                                    color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+                                  ),
                                 ),
                                 const SizedBox(height: 8),
                                 Text(
                                   'Try a different search term',
-                                  style: Theme.of(context).textTheme.bodyMedium,
+                                  style: Theme.of(context).textTheme.bodySmall,
                                 ),
                               ],
                             ),
                           )
-                        : ListView.builder(
+                        : ListView.separated(
+                            padding: const EdgeInsets.symmetric(horizontal: 24),
                             itemCount: filteredDownloads.length,
+                            separatorBuilder: (context, index) => const Divider(height: 1),
                             itemBuilder: (context, index) {
                               final file = filteredDownloads[index];
                               final isCurrentlyPlaying = widget.playerStateService.currentTrackUrl?.contains(file.filename) ?? false;
                     
-                    return Column(
-                      children: [
-                        Material(
-                          color: isCurrentlyPlaying 
-                              ? neonBlue.withOpacity(0.1) 
-                              : Colors.transparent,
-                          child: InkWell(
-                            onTap: () => _playFile(file),
-                            hoverColor: neonBlue.withOpacity(0.15),
-                            child: ListTile(
-                              leading: Icon(
-                                Icons.music_note,
-                                color: isCurrentlyPlaying ? neonBlue : null,
-                              ),
-                              title: Text(
-                                getDisplayTitle(file.title, file.filename),
-                                style: TextStyle(
-                                  color: isCurrentlyPlaying ? neonBlue : null,
-                                ),
-                              ),
-                              subtitle: file.artist != null && file.artist!.isNotEmpty
-                                  ? Text(
-                                      file.artist!,
-                                      style: TextStyle(
-                                        color: isCurrentlyPlaying 
-                                            ? neonBlue.withOpacity(0.8) 
-                                            : Colors.grey[400],
-                                      ),
-                                    )
-                                  : Text(file.formattedSize),
-                              trailing: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  if (widget.queueService != null)
-                                    Material(
-                                      color: Colors.transparent,
-                                      child: InkWell(
-                                        onTap: () => _addToQueue(file),
-                                        borderRadius: BorderRadius.circular(24),
-                                        child: Stack(
-                                          children: [
-                                            IconButton(
-                                              icon: const Icon(Icons.more_vert),
-                                              onPressed: () => _addToQueue(file),
-                                              tooltip: 'Add to queue',
-                                            ),
-                                            Positioned(
-                                              right: 8,
-                                              top: 8,
-                                              child: IgnorePointer(
-                                                child: Container(
-                                                  padding: const EdgeInsets.all(2),
-                                                  decoration: BoxDecoration(
-                                                    color: neonBlue,
-                                                    shape: BoxShape.circle,
-                                                  ),
-                                                  child: const Icon(
-                                                    Icons.add,
-                                                    size: 12,
-                                                    color: Colors.black,
-                                                  ),
+                              return Material(
+                                color: isCurrentlyPlaying 
+                                    ? primaryColor.withOpacity(0.1) 
+                                    : Colors.transparent,
+                                borderRadius: BorderRadius.circular(8),
+                                child: InkWell(
+                                  onTap: () => _playFile(file),
+                                  borderRadius: BorderRadius.circular(8),
+                                  hoverColor: surfaceHover,
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                    child: Row(
+                                      children: [
+                                        Container(
+                                          width: 48,
+                                          height: 48,
+                                          decoration: BoxDecoration(
+                                            color: isCurrentlyPlaying 
+                                                ? primaryColor.withOpacity(0.2)
+                                                : surfaceHover,
+                                            borderRadius: BorderRadius.circular(8),
+                                          ),
+                                          child: Icon(
+                                            Icons.music_note,
+                                            color: isCurrentlyPlaying ? primaryColor : Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+                                            size: 24,
+                                          ),
+                                        ),
+                                        const SizedBox(width: 16),
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            children: [
+                                              Text(
+                                                getDisplayTitle(file.title, file.filename),
+                                                style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                                                  color: isCurrentlyPlaying ? primaryColor : null,
+                                                  fontWeight: isCurrentlyPlaying ? FontWeight.w600 : FontWeight.w400,
                                                 ),
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
                                               ),
+                                              const SizedBox(height: 4),
+                                              Text(
+                                                file.artist != null && file.artist!.isNotEmpty
+                                                    ? file.artist!
+                                                    : file.formattedSize,
+                                                style: Theme.of(context).textTheme.bodySmall,
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                        Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            if (widget.queueService != null)
+                                              IconButton(
+                                                icon: const Icon(Icons.queue_music, size: 20),
+                                                onPressed: () => _addToQueue(file),
+                                                tooltip: 'Add to queue',
+                                              ),
+                                            IconButton(
+                                              icon: Icon(
+                                                Icons.play_arrow,
+                                                color: isCurrentlyPlaying ? primaryColor : null,
+                                              ),
+                                              onPressed: () => _playFile(file),
+                                              tooltip: 'Play',
+                                            ),
+                                            IconButton(
+                                              icon: const Icon(Icons.delete_outline, size: 20),
+                                              onPressed: () => _deleteFile(file),
+                                              tooltip: 'Delete',
                                             ),
                                           ],
                                         ),
-                                      ),
+                                      ],
                                     ),
-                                  IconButton(
-                                    icon: Icon(
-                                      Icons.play_arrow,
-                                      color: isCurrentlyPlaying ? neonBlue : null,
-                                    ),
-                                    onPressed: () => _playFile(file),
-                                    tooltip: 'Play',
                                   ),
-                                  IconButton(
-                                    icon: const Icon(Icons.delete_outline),
-                                    onPressed: () => _deleteFile(file),
-                                    tooltip: 'Delete',
-                                  ),
-                                ],
-                              ),
-                            ),
+                                ),
+                              );
+                            },
                           ),
-                        ),
-                        Divider(
-                          height: 1,
-                          thickness: 1,
-                          color: Colors.grey[800],
-                        ),
-                      ],
-                            );
-                          },
-                        ),
           ),
         ),
       ],

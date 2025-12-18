@@ -6,10 +6,13 @@ import 'playlists_screen.dart';
 import 'csv_upload_screen.dart';
 import '../widgets/bottom_player.dart';
 import '../widgets/queue_panel.dart';
+import '../widgets/csv_progress_bar.dart';
+import '../widgets/download_progress_bar.dart';
+import '../widgets/not_found_songs_dialog.dart';
 import '../services/player_state_service.dart';
 import '../services/queue_service.dart';
-
-const Color neonBlue = Color(0xFF00D9FF);
+import '../services/api_service.dart';
+import '../services/playlist_service.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -24,6 +27,24 @@ class _HomeScreenState extends State<HomeScreen> {
   final QueueService _queueService = QueueService();
   bool _showQueuePanel = false;
   StreamSubscription? _completionSubscription;
+  
+  // CSV progress tracking
+  CsvProgress? _csvProgress;
+  Timer? _csvProgressTimer;
+  String? _csvFilename;
+  
+  // Download progress tracking
+  DownloadProgress? _downloadProgress;
+  Timer? _downloadProgressTimer;
+  String? _downloadId;
+  
+  // Pending dialog data
+  List<Map<String, dynamic>>? _pendingNotFoundSongs;
+  String? _pendingPlaylistId;
+  
+  // Services for dialog
+  final ApiService _apiService = ApiService();
+  final PlaylistService _playlistService = PlaylistService();
 
   final List<Widget> _screens = [];
 
@@ -42,17 +63,170 @@ class _HomeScreenState extends State<HomeScreen> {
       PlaylistsScreen(
         playerStateService: _playerStateService,
         queueService: _queueService,
+        onDownloadStart: (downloadId) {
+          setState(() {
+            _downloadId = downloadId;
+            _downloadProgress = null;
+          });
+          _startDownloadProgressPolling(downloadId);
+        },
       ),
-      const CsvUploadScreen(),
+      CsvUploadScreen(
+        onConversionStart: (filename) {
+          setState(() {
+            _csvFilename = filename;
+            _csvProgress = null;
+          });
+          _startProgressPolling(filename);
+        },
+        onConversionComplete: (conversionResult) {
+          _stopProgressPolling();
+          setState(() {
+            _csvFilename = null;
+            _csvProgress = null;
+            
+            // Store pending dialog data
+            if (conversionResult.notFound.isNotEmpty) {
+              _pendingNotFoundSongs = conversionResult.notFound;
+              _pendingPlaylistId = conversionResult.playlistId;
+            }
+          });
+          
+          // Show dialog after state update
+          if (conversionResult.notFound.isNotEmpty) {
+            print('CSV Conversion: ${conversionResult.notFound.length} songs not found, showing dialog...');
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted && _pendingNotFoundSongs != null) {
+                final notFound = _pendingNotFoundSongs!;
+                final playlistId = _pendingPlaylistId;
+                _pendingNotFoundSongs = null;
+                _pendingPlaylistId = null;
+                print('Showing dialog with ${notFound.length} not found songs');
+                _showNotFoundSongsDialog(notFound, playlistId);
+              }
+            });
+          } else {
+            print('CSV Conversion: All songs found, no dialog needed');
+          }
+        },
+      ),
     ]);
 
     // Listen for song completion and auto-play next song in queue
     _completionSubscription = _playerStateService.audioPlayer.completionStream.listen((_) {
       // Only auto-play next if we're playing from queue
-      if (_queueService.currentIndex >= 0 && _queueService.hasNext) {
-        _queueService.playNext(_playerStateService);
+      if (_queueService.currentIndex >= 0) {
+        final nextItem = _queueService.getNextForCompletion();
+        if (nextItem != null) {
+          // playNext() already handles all loop modes (none, queue, single)
+          _queueService.playNext(_playerStateService);
+        }
       }
     });
+  }
+
+  void _startProgressPolling(String filename) {
+    final apiService = ApiService();
+    _csvProgressTimer?.cancel();
+    _csvProgressTimer = Timer.periodic(const Duration(milliseconds: 500), (timer) async {
+      try {
+        final progress = await apiService.getCsvProgress(filename);
+        if (mounted) {
+          setState(() {
+            _csvProgress = progress;
+          });
+          if (progress.isCompleted || progress.hasError) {
+            timer.cancel();
+          }
+        }
+      } catch (e) {
+        // Progress not available yet or conversion finished
+        timer.cancel();
+      }
+    });
+  }
+
+  void _stopProgressPolling() {
+    _csvProgressTimer?.cancel();
+    _csvProgressTimer = null;
+  }
+
+  void _startDownloadProgressPolling(String downloadId) {
+    _downloadProgressTimer?.cancel();
+    _downloadProgressTimer = Timer.periodic(const Duration(milliseconds: 500), (timer) async {
+      try {
+        final progress = await _apiService.getDownloadProgress(downloadId);
+        if (mounted) {
+          setState(() {
+            _downloadProgress = progress;
+          });
+          if (progress.isCompleted || progress.hasError) {
+            timer.cancel();
+            // Clear progress after a short delay
+            Future.delayed(const Duration(seconds: 2), () {
+              if (mounted) {
+                setState(() {
+                  _downloadProgress = null;
+                  _downloadId = null;
+                });
+              }
+            });
+          }
+        }
+      } catch (e) {
+        // Progress not available yet or download finished
+        timer.cancel();
+        if (mounted) {
+          setState(() {
+            _downloadProgress = null;
+            _downloadId = null;
+          });
+        }
+      }
+    });
+  }
+
+  void _stopDownloadProgressPolling() {
+    _downloadProgressTimer?.cancel();
+    _downloadProgressTimer = null;
+  }
+
+  Future<void> _showNotFoundSongsDialog(List<Map<String, dynamic>> notFoundSongs, String? playlistId) async {
+    if (!mounted || notFoundSongs.isEmpty) return;
+    
+    try {
+      // Find the root navigator to ensure dialog shows above everything
+      final navigator = Navigator.of(context, rootNavigator: true);
+      
+      await showDialog(
+        context: context,
+        barrierDismissible: false,
+        useRootNavigator: true,
+        builder: (dialogContext) => NotFoundSongsDialog(
+          notFoundSongs: notFoundSongs,
+          playlistId: playlistId,
+          apiService: _apiService,
+          playlistService: _playlistService,
+        ),
+      );
+    } catch (e) {
+      // If dialog fails, try again after a short delay
+      Future.delayed(const Duration(milliseconds: 500), () {
+        if (mounted && notFoundSongs.isNotEmpty) {
+          showDialog(
+            context: context,
+            barrierDismissible: false,
+            useRootNavigator: true,
+            builder: (dialogContext) => NotFoundSongsDialog(
+              notFoundSongs: notFoundSongs,
+              playlistId: playlistId,
+              apiService: _apiService,
+              playlistService: _playlistService,
+            ),
+          );
+        }
+      });
+    }
   }
 
   @override
@@ -60,48 +234,52 @@ class _HomeScreenState extends State<HomeScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('myMusic'),
-        backgroundColor: Colors.black,
-        foregroundColor: neonBlue,
       ),
       body: Row(
         children: [
           // Side Navigation
-          NavigationRail(
-            selectedIndex: _currentIndex,
-            onDestinationSelected: (index) {
-              setState(() {
-                _currentIndex = index;
-              });
-            },
-            labelType: NavigationRailLabelType.all,
-            useIndicator: true,
-            indicatorColor: Colors.grey[900],
-            selectedIconTheme: const IconThemeData(color: neonBlue, size: 24),
-            unselectedIconTheme: const IconThemeData(color: Colors.grey, size: 24),
-            destinations: [
-              NavigationRailDestination(
-                icon: const Icon(Icons.search),
-                selectedIcon: const Icon(Icons.search),
-                label: const Text('Search'),
+          Container(
+            width: 80,
+            decoration: const BoxDecoration(
+              border: Border(
+                right: BorderSide(color: Color(0xFF262626), width: 1),
               ),
-              NavigationRailDestination(
-                icon: const Icon(Icons.download),
-                selectedIcon: const Icon(Icons.download),
-                label: const Text('Downloads'),
-              ),
-              NavigationRailDestination(
-                icon: const Icon(Icons.playlist_play),
-                selectedIcon: const Icon(Icons.playlist_play),
-                label: const Text('Playlists'),
-              ),
-              NavigationRailDestination(
-                icon: const Icon(Icons.upload_file),
-                selectedIcon: const Icon(Icons.upload_file),
-                label: const Text('CSV Upload'),
-              ),
-            ],
+            ),
+            child: NavigationRail(
+              selectedIndex: _currentIndex,
+              onDestinationSelected: (index) {
+                setState(() {
+                  _currentIndex = index;
+                });
+              },
+              labelType: NavigationRailLabelType.all,
+              useIndicator: true,
+              extended: false,
+              minExtendedWidth: 80,
+              destinations: [
+                NavigationRailDestination(
+                  icon: const Icon(Icons.search_outlined),
+                  selectedIcon: const Icon(Icons.search),
+                  label: const Text('Search'),
+                ),
+                NavigationRailDestination(
+                  icon: const Icon(Icons.download_outlined),
+                  selectedIcon: const Icon(Icons.download),
+                  label: const Text('Downloads'),
+                ),
+                NavigationRailDestination(
+                  icon: const Icon(Icons.playlist_play_outlined),
+                  selectedIcon: const Icon(Icons.playlist_play),
+                  label: const Text('Playlists'),
+                ),
+                NavigationRailDestination(
+                  icon: const Icon(Icons.upload_file_outlined),
+                  selectedIcon: const Icon(Icons.upload_file),
+                  label: const Text('CSV'),
+                ),
+              ],
+            ),
           ),
-          const VerticalDivider(thickness: 1, width: 1),
           // Main content
           Expanded(
             child: Column(
@@ -109,6 +287,24 @@ class _HomeScreenState extends State<HomeScreen> {
                 Expanded(
                   child: _screens[_currentIndex],
                 ),
+                // CSV Progress bar (above bottom player)
+                if (_csvProgress != null && _csvFilename != null)
+                  CsvProgressBar(
+                    processed: _csvProgress!.processed,
+                    notFound: _csvProgress!.notFound,
+                    total: _csvProgress!.total,
+                    status: _csvProgress!.status,
+                    progress: _csvProgress!.progress,
+                  ),
+                // Download Progress bar (above bottom player)
+                if (_downloadProgress != null && _downloadId != null)
+                  DownloadProgressBar(
+                    processed: _downloadProgress!.processed,
+                    failed: _downloadProgress!.failed,
+                    total: _downloadProgress!.total,
+                    status: _downloadProgress!.status,
+                    progress: _downloadProgress!.progress,
+                  ),
                 // Bottom player
                 ListenableBuilder(
                   listenable: _playerStateService,
@@ -154,6 +350,8 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void dispose() {
     _completionSubscription?.cancel();
+    _csvProgressTimer?.cancel();
+    _downloadProgressTimer?.cancel();
     _playerStateService.dispose();
     _queueService.dispose();
     super.dispose();

@@ -4,8 +4,6 @@ import '../services/api_service.dart';
 import '../models/playlist.dart';
 import '../utils/song_display_utils.dart';
 
-const Color neonBlue = Color(0xFF00D9FF);
-
 class AddToPlaylistScreen extends StatefulWidget {
   final String playlistId;
   final PlaylistService playlistService;
@@ -95,7 +93,7 @@ class _AddToPlaylistScreenState extends State<AddToPlaylistScreen>
     });
 
     try {
-      final results = await _apiService.searchYoutube(query, deepSearch: true);
+      final results = await _apiService.searchYoutube(query);
       setState(() {
         _searchResults = results;
         _isSearching = false;
@@ -121,7 +119,6 @@ class _AddToPlaylistScreenState extends State<AddToPlaylistScreen>
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Added "${video.title}" to playlist'),
-            backgroundColor: neonBlue,
             behavior: SnackBarBehavior.floating,
           ),
         );
@@ -147,7 +144,6 @@ class _AddToPlaylistScreenState extends State<AddToPlaylistScreen>
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Added "${getDisplayTitle(file.title, file.filename)}" to playlist'),
-            backgroundColor: neonBlue,
             behavior: SnackBarBehavior.floating,
           ),
         );
@@ -168,17 +164,28 @@ class _AddToPlaylistScreenState extends State<AddToPlaylistScreen>
   @override
   Widget build(BuildContext context) {
     final playlistName = _playlist?.name ?? 'Playlist';
+    final primaryColor = Theme.of(context).colorScheme.primary;
+    final surfaceHover = Theme.of(context).colorScheme.surfaceVariant;
     
     return Column(
       children: [
         // Header with back button and tabs
         Container(
-          color: Colors.grey[900],
+          padding: const EdgeInsets.only(top: 8),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surface,
+            border: Border(
+              bottom: BorderSide(
+                color: Theme.of(context).dividerColor,
+                width: 1,
+              ),
+            ),
+          ),
           child: Column(
             children: [
               // Title bar with back button
               Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+                padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 8.0),
                 child: Row(
                   children: [
                     if (widget.onBack != null)
@@ -186,14 +193,15 @@ class _AddToPlaylistScreenState extends State<AddToPlaylistScreen>
                         icon: const Icon(Icons.arrow_back),
                         onPressed: widget.onBack,
                         tooltip: 'Back to playlist',
-                        color: neonBlue,
                       ),
                     Expanded(
                       child: Text(
-                        'Add Songs to $playlistName',
-                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                          fontWeight: FontWeight.bold,
-                        ),
+                        'Add songs to "$playlistName"',
+                        style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                              fontWeight: FontWeight.w700,
+                            ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                       ),
                     ),
                   ],
@@ -202,9 +210,9 @@ class _AddToPlaylistScreenState extends State<AddToPlaylistScreen>
               // Tab bar
               TabBar(
                 controller: _tabController,
-                indicatorColor: neonBlue,
-                labelColor: neonBlue,
-                unselectedLabelColor: Colors.grey[400],
+                indicatorColor: primaryColor,
+                labelColor: primaryColor,
+                unselectedLabelColor: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
                 tabs: const [
                   Tab(icon: Icon(Icons.search), text: 'Search'),
                   Tab(icon: Icon(Icons.download), text: 'Downloads'),
@@ -216,165 +224,196 @@ class _AddToPlaylistScreenState extends State<AddToPlaylistScreen>
         // Tab content
         Expanded(
           child: TabBarView(
-        controller: _tabController,
-        children: [
-          // Search Tab
-          Column(
+            controller: _tabController,
             children: [
-              Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: TextField(
-                  controller: _searchController,
-                  decoration: InputDecoration(
-                    hintText: 'Search for music...',
-                    suffixIcon: IconButton(
-                      icon: const Icon(Icons.search),
-                      onPressed: _performSearch,
-                    ),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
+              // Search Tab
+              Column(
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.all(24.0),
+                    child: TextField(
+                      controller: _searchController,
+                      decoration: InputDecoration(
+                        hintText: 'Search for music...',
+                        prefixIcon: const Icon(Icons.search),
+                        suffixIcon: IconButton(
+                          icon: const Icon(Icons.search),
+                          onPressed: _performSearch,
+                        ),
+                      ),
+                      onSubmitted: (_) => _performSearch(),
                     ),
                   ),
-                  onSubmitted: (_) => _performSearch(),
-                ),
+                  Expanded(
+                    child: _isSearching
+                        ? const Center(child: CircularProgressIndicator())
+                        : _searchResults.isEmpty
+                            ? Center(
+                                child: Text(
+                                  _searchController.text.isEmpty
+                                      ? 'Enter a search query to find music'
+                                      : 'No results found',
+                                  style: Theme.of(context).textTheme.bodyLarge,
+                                ),
+                              )
+                            : ListView.separated(
+                                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+                                itemCount: _searchResults.length,
+                                separatorBuilder: (context, index) => const SizedBox(height: 8),
+                                itemBuilder: (context, index) {
+                                  final video = _searchResults[index];
+                                  return Card(
+                                    child: Material(
+                                      color: Colors.transparent,
+                                      child: InkWell(
+                                        onTap: () => _addVideoToPlaylist(video),
+                                        borderRadius: BorderRadius.circular(12),
+                                        hoverColor: surfaceHover,
+                                        child: Padding(
+                                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                          child: ListTile(
+                                            contentPadding: EdgeInsets.zero,
+                                            leading: Container(
+                                              width: 40,
+                                              height: 40,
+                                              decoration: BoxDecoration(
+                                                color: primaryColor.withOpacity(0.1),
+                                                borderRadius: BorderRadius.circular(8),
+                                              ),
+                                              child: Icon(
+                                                Icons.music_video,
+                                                color: primaryColor,
+                                              ),
+                                            ),
+                                            title: Text(
+                                              video.title,
+                                              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                                                    fontWeight: FontWeight.w500,
+                                                  ),
+                                              maxLines: 2,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                            subtitle: Text(
+                                              video.uploader,
+                                              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                                    color: Theme.of(context)
+                                                        .colorScheme
+                                                        .onSurface
+                                                        .withOpacity(0.7),
+                                                  ),
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                            trailing: Icon(
+                                              Icons.add_circle_outline,
+                                              color: primaryColor,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  );
+                                },
+                              ),
+                  ),
+                ],
               ),
-              Expanded(
-                child: _isSearching
-                    ? const Center(child: CircularProgressIndicator())
-                    : _searchResults.isEmpty
-                        ? Center(
-                            child: Text(
-                              _searchController.text.isEmpty
-                                  ? 'Enter a search query to find music'
-                                  : 'No results found',
-                              style: Theme.of(context).textTheme.bodyLarge,
-                            ),
-                          )
-                        : ListView.builder(
-                            itemCount: _searchResults.length,
+              // Downloads Tab
+              _isLoadingDownloads
+                  ? const Center(child: CircularProgressIndicator())
+                  : _downloads.isEmpty
+                      ? Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(
+                                Icons.download_done,
+                                size: 64,
+                                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.3),
+                              ),
+                              const SizedBox(height: 16),
+                              Text(
+                                'No downloads yet',
+                                style: Theme.of(context).textTheme.titleLarge,
+                              ),
+                            ],
+                          ),
+                        )
+                      : RefreshIndicator(
+                          onRefresh: _loadDownloads,
+                          child: ListView.separated(
+                            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+                            itemCount: _downloads.length,
+                            separatorBuilder: (context, index) => const SizedBox(height: 8),
                             itemBuilder: (context, index) {
-                              final video = _searchResults[index];
-                              return Column(
-                                children: [
-                                  Material(
-                                    color: Colors.transparent,
-                                    child: InkWell(
-                                      onTap: () => _addVideoToPlaylist(video),
-                                      hoverColor: neonBlue.withOpacity(0.15),
+                              final file = _downloads[index];
+                              return Card(
+                                child: Material(
+                                  color: Colors.transparent,
+                                  child: InkWell(
+                                    onTap: () => _addDownloadToPlaylist(file),
+                                    borderRadius: BorderRadius.circular(12),
+                                    hoverColor: surfaceHover,
+                                    child: Padding(
+                                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                                       child: ListTile(
-                                        leading: Icon(
-                                          Icons.music_video,
-                                          color: neonBlue,
+                                        contentPadding: EdgeInsets.zero,
+                                        leading: Container(
+                                          width: 40,
+                                          height: 40,
+                                          decoration: BoxDecoration(
+                                            color: primaryColor.withOpacity(0.1),
+                                            borderRadius: BorderRadius.circular(8),
+                                          ),
+                                          child: Icon(
+                                            Icons.music_note,
+                                            color: primaryColor,
+                                          ),
                                         ),
                                         title: Text(
-                                          video.title,
+                                          getDisplayTitle(file.title, file.filename),
                                           style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                                            fontWeight: FontWeight.w500,
-                                          ),
+                                                fontWeight: FontWeight.w500,
+                                              ),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
                                         ),
-                                        subtitle: Text(
-                                          video.uploader,
-                                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                            color: Colors.grey[400],
-                                          ),
-                                        ),
+                                        subtitle: file.artist != null && file.artist!.isNotEmpty
+                                            ? Text(
+                                                file.artist!,
+                                                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                                      color: Theme.of(context)
+                                                          .colorScheme
+                                                          .onSurface
+                                                          .withOpacity(0.7),
+                                                    ),
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                              )
+                                            : Text(
+                                                file.formattedSize,
+                                                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                                      color: Theme.of(context)
+                                                          .colorScheme
+                                                          .onSurface
+                                                          .withOpacity(0.7),
+                                                    ),
+                                              ),
                                         trailing: Icon(
                                           Icons.add_circle_outline,
-                                          color: neonBlue,
+                                          color: primaryColor,
                                         ),
                                       ),
-                                    ),
-                                  ),
-                                  Divider(
-                                    height: 1,
-                                    thickness: 1,
-                                    color: Colors.grey[800],
-                                  ),
-                                ],
-                              );
-                            },
-                          ),
-              ),
-            ],
-          ),
-          // Downloads Tab
-          _isLoadingDownloads
-              ? const Center(child: CircularProgressIndicator())
-              : _downloads.isEmpty
-                  ? Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(
-                            Icons.download_done,
-                            size: 64,
-                            color: Colors.grey[400],
-                          ),
-                          const SizedBox(height: 16),
-                          Text(
-                            'No downloads yet',
-                            style: Theme.of(context).textTheme.titleLarge,
-                          ),
-                        ],
-                      ),
-                    )
-                  : RefreshIndicator(
-                      onRefresh: _loadDownloads,
-                      child: ListView.builder(
-                        itemCount: _downloads.length,
-                        itemBuilder: (context, index) {
-                          final file = _downloads[index];
-                          return Column(
-                            children: [
-                              Material(
-                                color: Colors.transparent,
-                                child: InkWell(
-                                  onTap: () => _addDownloadToPlaylist(file),
-                                  hoverColor: neonBlue.withOpacity(0.15),
-                                  child: ListTile(
-                                    leading: Icon(
-                                      Icons.music_note,
-                                      color: neonBlue,
-                                    ),
-                                    title: Text(
-                                      getDisplayTitle(file.title, file.filename),
-                                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                                        fontWeight: FontWeight.w500,
-                                      ),
-                                    ),
-                                    subtitle: file.artist != null && file.artist!.isNotEmpty
-                                        ? Text(
-                                            file.artist!,
-                                            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                              color: Colors.grey[400],
-                                            ),
-                                          )
-                                        : Text(
-                                            file.formattedSize,
-                                            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                              color: Colors.grey[400],
-                                            ),
-                                          ),
-                                    trailing: Icon(
-                                      Icons.add_circle_outline,
-                                      color: neonBlue,
                                     ),
                                   ),
                                 ),
-                              ),
-                              Divider(
-                                height: 1,
-                                thickness: 1,
-                                color: Colors.grey[800],
-                              ),
-                            ],
-                          );
-                        },
-                      ),
-                    ),
-          ],
+                              );
+                            },
+                          ),
+                        ),
+            ],
+          ),
         ),
-      ),
       ],
     );
   }

@@ -2,9 +2,16 @@ import 'package:flutter/material.dart';
 import '../models/queue_item.dart';
 import 'player_state_service.dart';
 
+enum LoopMode {
+  none,      // No loop - stops when queue ends
+  queue,     // Loop entire queue
+  single,    // Loop single song
+}
+
 class QueueService extends ChangeNotifier {
   final List<QueueItem> _queue = [];
   int _currentIndex = -1; // -1 means no current track
+  LoopMode _loopMode = LoopMode.none;
 
   List<QueueItem> get queue => List.unmodifiable(_queue);
   int get currentIndex => _currentIndex;
@@ -14,6 +21,7 @@ class QueueService extends ChangeNotifier {
   bool get hasNext => _currentIndex >= 0 && _currentIndex < _queue.length - 1;
   bool get hasPrevious => _currentIndex > 0;
   int get queueLength => _queue.length;
+  LoopMode get loopMode => _loopMode;
 
   // Add item to the end of queue
   void addToQueue(QueueItem item) {
@@ -75,21 +83,61 @@ class QueueService extends ChangeNotifier {
     return null;
   }
 
+  // Toggle loop mode: none -> queue -> single -> none
+  void toggleLoopMode() {
+    switch (_loopMode) {
+      case LoopMode.none:
+        _loopMode = LoopMode.queue;
+        break;
+      case LoopMode.queue:
+        _loopMode = LoopMode.single;
+        break;
+      case LoopMode.single:
+        _loopMode = LoopMode.none;
+        break;
+    }
+    notifyListeners();
+  }
+
   // Move to next track
   Future<void> playNext(PlayerStateService playerService) async {
+    // If loop single mode, replay current song
+    if (_loopMode == LoopMode.single && _currentIndex >= 0 && _currentIndex < _queue.length) {
+      final currentItem = _queue[_currentIndex];
+      await _playItem(currentItem, playerService);
+      return;
+    }
+    
     if (hasNext) {
       _currentIndex++;
       final nextItem = _queue[_currentIndex];
       await _playItem(nextItem, playerService);
+    } else if (_loopMode == LoopMode.queue && _queue.isNotEmpty) {
+      // Loop back to the beginning
+      _currentIndex = 0;
+      final firstItem = _queue[0];
+      await _playItem(firstItem, playerService);
     }
   }
 
   // Move to previous track
   Future<void> playPrevious(PlayerStateService playerService) async {
+    // If loop single mode, replay current song
+    if (_loopMode == LoopMode.single && _currentIndex >= 0 && _currentIndex < _queue.length) {
+      final currentItem = _queue[_currentIndex];
+      await _playItem(currentItem, playerService);
+      return;
+    }
+    
     if (hasPrevious) {
       _currentIndex--;
       final previousItem = _queue[_currentIndex];
       await _playItem(previousItem, playerService);
+    } else if (_loopMode == LoopMode.queue && _queue.isNotEmpty) {
+      // Loop to the end
+      _currentIndex = _queue.length - 1;
+      final lastItem = _queue[_currentIndex];
+      await _playItem(lastItem, playerService);
     }
   }
 
@@ -135,6 +183,23 @@ class QueueService extends ChangeNotifier {
       _queue.insert(_currentIndex, item);
       await _playItem(item, playerService);
     }
+  }
+
+  // Get next item considering loop mode (used for completion handler)
+  QueueItem? getNextForCompletion() {
+    if (_loopMode == LoopMode.single && _currentIndex >= 0 && _currentIndex < _queue.length) {
+      // Return current item for single loop
+      return _queue[_currentIndex];
+    }
+    
+    if (hasNext) {
+      return _queue[_currentIndex + 1];
+    } else if (_loopMode == LoopMode.queue && _queue.isNotEmpty) {
+      // Loop back to the beginning
+      return _queue[0];
+    }
+    
+    return null;
   }
 }
 

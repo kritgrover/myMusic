@@ -5,10 +5,15 @@ import '../services/api_service.dart';
 import '../services/playlist_service.dart';
 import '../config.dart';
 
-const Color neonBlue = Color(0xFF00D9FF);
-
 class CsvUploadScreen extends StatefulWidget {
-  const CsvUploadScreen({super.key});
+  final Function(String filename)? onConversionStart;
+  final Function(CsvConversionResult)? onConversionComplete;
+  
+  const CsvUploadScreen({
+    super.key,
+    this.onConversionStart,
+    this.onConversionComplete,
+  });
 
   @override
   State<CsvUploadScreen> createState() => _CsvUploadScreenState();
@@ -22,7 +27,6 @@ class _CsvUploadScreenState extends State<CsvUploadScreen> {
   bool _isConverting = false;
   bool _conversionComplete = false;
   CsvConversionResult? _conversionResult;
-  bool _deepSearch = true;
   bool _excludeInstrumentals = false;
   int _durationMin = 0;
   double _durationMax = 600.0;
@@ -46,6 +50,7 @@ class _CsvUploadScreenState extends State<CsvUploadScreen> {
   }
 
   void _updateDurationMin() {
+    if (!mounted) return;
     final value = int.tryParse(_durationMinController.text);
     if (value != null && value != _durationMin) {
       setState(() {
@@ -55,6 +60,7 @@ class _CsvUploadScreenState extends State<CsvUploadScreen> {
   }
 
   void _updateDurationMax() {
+    if (!mounted) return;
     final value = double.tryParse(_durationMaxController.text);
     if (value != null && value != _durationMax) {
       setState(() {
@@ -78,12 +84,14 @@ class _CsvUploadScreenState extends State<CsvUploadScreen> {
 
   Future<void> _uploadFile(html.File file) async {
     try {
-      setState(() {
-        _isConverting = true;
-        _conversionComplete = false;
-        _uploadedFilename = file.name;
-        _playlistName = file.name.replaceAll('.csv', '');
-      });
+      if (mounted) {
+        setState(() {
+          _isConverting = true;
+          _conversionComplete = false;
+          _uploadedFilename = file.name;
+          _playlistName = file.name.replaceAll('.csv', '');
+        });
+      }
 
       // Read file as bytes
       final reader = html.FileReader();
@@ -103,20 +111,28 @@ class _CsvUploadScreenState extends State<CsvUploadScreen> {
       // Upload file using API service
       final uploadResult = await _apiService.uploadCsvBytes(fileBytes, file.name);
       
-      // Convert CSV
+      // Notify parent that conversion started
+      widget.onConversionStart?.call(uploadResult.filename);
+      
+      // Convert CSV (this will run in background, progress is polled by home screen)
       final conversionResult = await _apiService.convertCsv(
         uploadResult.filename,
-        deepSearch: _deepSearch,
         durationMin: _durationMin,
         durationMax: _durationMax,
         excludeInstrumentals: _excludeInstrumentals,
       );
 
-      setState(() {
-        _conversionResult = conversionResult;
-        _isConverting = false;
-        _conversionComplete = true;
-      });
+      // Notify parent that conversion completed (pass result so dialog can be shown at home screen level)
+      // Call this before setState in case widget is disposed
+      widget.onConversionComplete?.call(conversionResult);
+      
+      if (mounted) {
+        setState(() {
+          _conversionResult = conversionResult;
+          _isConverting = false;
+          _conversionComplete = true;
+        });
+      }
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -126,43 +142,48 @@ class _CsvUploadScreenState extends State<CsvUploadScreen> {
                   ? 'Playlist created! ${conversionResult.successCount}/${conversionResult.total} songs found. You can download them from the playlist page.'
                   : 'Search complete! ${conversionResult.successCount}/${conversionResult.total} songs found.',
             ),
-            backgroundColor: neonBlue,
             behavior: SnackBarBehavior.floating,
             duration: const Duration(seconds: 5),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
           ),
         );
       }
     } catch (e) {
-      setState(() {
-        _isConverting = false;
-      });
       if (mounted) {
+        setState(() {
+          _isConverting = false;
+        });
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Error: $e'),
             backgroundColor: Colors.red,
             behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
           ),
         );
       }
     }
   }
 
-
   @override
   Widget build(BuildContext context) {
+    final primaryColor = Theme.of(context).colorScheme.primary;
+    
     return Column(
       children: [
         Padding(
-          padding: const EdgeInsets.all(16.0),
+          padding: const EdgeInsets.all(24.0),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
                 'CSV Playlist Converter',
                 style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                      color: neonBlue,
-                      fontWeight: FontWeight.bold,
+                      fontWeight: FontWeight.w700,
                     ),
               ),
               const SizedBox(height: 8),
@@ -176,31 +197,25 @@ class _CsvUploadScreenState extends State<CsvUploadScreen> {
                 onPressed: _isConverting ? null : _pickFile,
                 icon: const Icon(Icons.upload_file),
                 label: const Text('Select CSV File'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: neonBlue,
-                  foregroundColor: Colors.black,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 24,
-                    vertical: 12,
-                  ),
-                ),
               ),
               if (_uploadedFilename != null) ...[
                 const SizedBox(height: 16),
                 Container(
-                  padding: const EdgeInsets.all(12),
+                  padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
-                    color: Colors.grey[900],
-                    borderRadius: BorderRadius.circular(8),
+                    color: Theme.of(context).colorScheme.surface,
+                    borderRadius: BorderRadius.circular(10),
                   ),
                   child: Row(
                     children: [
-                      Icon(Icons.description, color: neonBlue),
+                      Icon(Icons.description, color: primaryColor),
                       const SizedBox(width: 12),
                       Expanded(
                         child: Text(
                           'Selected: $_uploadedFilename',
-                          style: const TextStyle(fontWeight: FontWeight.w500),
+                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                            fontWeight: FontWeight.w500,
+                          ),
                         ),
                       ),
                     ],
@@ -211,24 +226,7 @@ class _CsvUploadScreenState extends State<CsvUploadScreen> {
               // Options
               ExpansionTile(
                 title: const Text('Conversion Options'),
-                iconColor: neonBlue,
-                collapsedIconColor: Colors.grey,
                 children: [
-                  SwitchListTile(
-                    title: const Text('Deep Search'),
-                    subtitle: const Text(
-                      'Slower but more accurate search (recommended)',
-                    ),
-                    value: _deepSearch,
-                    onChanged: _isConverting
-                        ? null
-                        : (value) {
-                            setState(() {
-                              _deepSearch = value;
-                            });
-                          },
-                    activeColor: neonBlue,
-                  ),
                   SwitchListTile(
                     title: const Text('Exclude Instrumentals'),
                     subtitle: const Text('Skip instrumental versions'),
@@ -236,11 +234,12 @@ class _CsvUploadScreenState extends State<CsvUploadScreen> {
                     onChanged: _isConverting
                         ? null
                         : (value) {
-                            setState(() {
-                              _excludeInstrumentals = value;
-                            });
+                            if (mounted) {
+                              setState(() {
+                                _excludeInstrumentals = value;
+                              });
+                            }
                           },
-                    activeColor: neonBlue,
                   ),
                   ListTile(
                     title: const Text('Min Duration (seconds)'),
@@ -290,9 +289,7 @@ class _CsvUploadScreenState extends State<CsvUploadScreen> {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  const CircularProgressIndicator(
-                    valueColor: AlwaysStoppedAnimation<Color>(neonBlue),
-                  ),
+                  const CircularProgressIndicator(),
                   const SizedBox(height: 16),
                   Text(
                     'Converting CSV to M4A files...',
@@ -314,7 +311,7 @@ class _CsvUploadScreenState extends State<CsvUploadScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Padding(
-                  padding: const EdgeInsets.all(16.0),
+                  padding: const EdgeInsets.all(24.0),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -324,30 +321,30 @@ class _CsvUploadScreenState extends State<CsvUploadScreen> {
                             _conversionResult!.playlistCreated
                                 ? Icons.check_circle
                                 : Icons.info_outline,
-                            color: neonBlue,
+                            color: primaryColor,
+                            size: 28,
                           ),
-                          const SizedBox(width: 8),
+                          const SizedBox(width: 12),
                           Expanded(
                             child: Text(
                               _conversionResult!.playlistCreated
                                   ? 'Playlist Created Successfully!'
                                   : 'Search Complete',
                               style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                                    color: neonBlue,
-                                    fontWeight: FontWeight.bold,
+                                    fontWeight: FontWeight.w600,
                                   ),
                             ),
                           ),
                         ],
                       ),
-                      const SizedBox(height: 16),
+                      const SizedBox(height: 20),
                       Container(
-                        padding: const EdgeInsets.all(16),
+                        padding: const EdgeInsets.all(20),
                         decoration: BoxDecoration(
-                          color: Colors.grey[900],
-                          borderRadius: BorderRadius.circular(8),
+                          color: Theme.of(context).colorScheme.surface,
+                          borderRadius: BorderRadius.circular(12),
                           border: Border.all(
-                            color: neonBlue.withOpacity(0.3),
+                            color: Theme.of(context).dividerColor,
                             width: 1,
                           ),
                         ),
@@ -357,12 +354,12 @@ class _CsvUploadScreenState extends State<CsvUploadScreen> {
                             if (_conversionResult!.playlistName != null) ...[
                               Row(
                                 children: [
-                                  Icon(Icons.playlist_play, color: neonBlue, size: 20),
+                                  Icon(Icons.playlist_play, color: primaryColor, size: 20),
                                   const SizedBox(width: 8),
                                   Text(
                                     'Playlist: ${_conversionResult!.playlistName}',
                                     style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                                          fontWeight: FontWeight.bold,
+                                          fontWeight: FontWeight.w600,
                                         ),
                                   ),
                                 ],
@@ -371,7 +368,7 @@ class _CsvUploadScreenState extends State<CsvUploadScreen> {
                             ],
                             Row(
                               children: [
-                                Icon(Icons.music_note, color: neonBlue, size: 20),
+                                Icon(Icons.music_note, color: primaryColor, size: 20),
                                 const SizedBox(width: 8),
                                 Text(
                                   '${_conversionResult!.successCount}/${_conversionResult!.total} songs found',
@@ -443,19 +440,21 @@ class _CsvUploadScreenState extends State<CsvUploadScreen> {
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   Icon(
-                    Icons.upload_file,
+                    Icons.upload_file_outlined,
                     size: 64,
-                    color: Colors.grey[400],
+                    color: Theme.of(context).colorScheme.onSurface.withOpacity(0.3),
                   ),
                   const SizedBox(height: 16),
                   Text(
                     'Select a CSV file to begin',
-                    style: Theme.of(context).textTheme.titleLarge,
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+                    ),
                   ),
                   const SizedBox(height: 8),
                   Text(
                     'The CSV should contain columns: Track Name, Artist Name(s), Album Name',
-                    style: Theme.of(context).textTheme.bodyMedium,
+                    style: Theme.of(context).textTheme.bodySmall,
                     textAlign: TextAlign.center,
                   ),
                 ],

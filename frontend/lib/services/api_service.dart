@@ -8,14 +8,13 @@ class ApiService {
   
   ApiService({String? baseUrl}) : baseUrl = baseUrl ?? AppConfig.apiBaseUrl;
   
-  Future<List<VideoInfo>> searchYoutube(String query, {bool deepSearch = true}) async {
+  Future<List<VideoInfo>> searchYoutube(String query) async {
     try {
       final response = await http.post(
         Uri.parse('$baseUrl/search'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'query': query,
-          'deep_search': deepSearch,
           'duration_min': 0,
           'duration_max': 600,
         }),
@@ -116,6 +115,42 @@ class ApiService {
     }
   }
 
+  Future<Map<String, dynamic>> startBatchDownload(List<Map<String, dynamic>> downloads) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/downloads/batch'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'downloads': downloads,
+        }),
+      );
+      
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body);
+      } else {
+        final error = jsonDecode(response.body);
+        throw Exception(error['detail'] ?? 'Batch download failed');
+      }
+    } catch (e) {
+      throw Exception('Batch download error: $e');
+    }
+  }
+
+  Future<DownloadProgress> getDownloadProgress(String downloadId) async {
+    try {
+      final response = await http.get(Uri.parse('$baseUrl/downloads/progress/$downloadId'));
+      
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        return DownloadProgress.fromJson(data);
+      } else {
+        throw Exception('Failed to get progress: ${response.statusCode}');
+      }
+    } catch (e) {
+      throw Exception('Get download progress error: $e');
+    }
+  }
+
   // CSV Upload and Conversion
   Future<CsvUploadResult> uploadCsv(String filePath) async {
     try {
@@ -163,8 +198,22 @@ class ApiService {
     }
   }
 
+  Future<CsvProgress> getCsvProgress(String filename) async {
+    try {
+      final response = await http.get(Uri.parse('$baseUrl/csv/progress/$filename'));
+      
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        return CsvProgress.fromJson(data);
+      } else {
+        throw Exception('Failed to get progress: ${response.statusCode}');
+      }
+    } catch (e) {
+      throw Exception('Get progress error: $e');
+    }
+  }
+
   Future<CsvConversionResult> convertCsv(String filename, {
-    bool deepSearch = true,
     int durationMin = 0,
     double durationMax = 600,
     bool excludeInstrumentals = false,
@@ -175,7 +224,6 @@ class ApiService {
         Uri.parse('$baseUrl/csv/convert/$filename'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
-          'deep_search': deepSearch,
           'duration_min': durationMin,
           'duration_max': durationMax,
           'exclude_instrumentals': excludeInstrumentals,
@@ -192,6 +240,23 @@ class ApiService {
       }
     } catch (e) {
       throw Exception('CSV conversion error: $e');
+    }
+  }
+
+  Future<void> addSongToPlaylist(String playlistId, Map<String, dynamic> songData) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/playlists/$playlistId/songs'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode(songData),
+      );
+      
+      if (response.statusCode != 200) {
+        final error = jsonDecode(response.body);
+        throw Exception(error['detail'] ?? 'Failed to add song');
+      }
+    } catch (e) {
+      throw Exception('Add song error: $e');
     }
   }
 
@@ -415,5 +480,80 @@ class CsvConvertedFile {
     if (size < 1024 * 1024) return '${(size / 1024).toStringAsFixed(1)} KB';
     return '${(size / (1024 * 1024)).toStringAsFixed(1)} MB';
   }
+}
+
+class CsvProgress {
+  final int current;
+  final int total;
+  final String status;
+  final int processed;
+  final int notFound;
+  
+  CsvProgress({
+    required this.current,
+    required this.total,
+    required this.status,
+    required this.processed,
+    required this.notFound,
+  });
+  
+  factory CsvProgress.fromJson(Map<String, dynamic> json) {
+    return CsvProgress(
+      current: json['current'] ?? 0,
+      total: json['total'] ?? 0,
+      status: json['status'] ?? '',
+      processed: json['processed'] ?? 0,
+      notFound: json['not_found'] ?? 0,
+    );
+  }
+  
+  bool get isCompleted => status == 'completed';
+  bool get hasError => status.startsWith('error');
+  double get progress => total > 0 ? current / total : 0.0;
+}
+
+class BatchDownloadRequest {
+  final List<Map<String, dynamic>> downloads;
+  
+  BatchDownloadRequest({required this.downloads});
+  
+  Map<String, dynamic> toJson() {
+    return {
+      'downloads': downloads,
+    };
+  }
+}
+
+class DownloadProgress {
+  final int current;
+  final int total;
+  final String status;
+  final int processed;
+  final int failed;
+  final List<Map<String, dynamic>> downloads;
+  
+  DownloadProgress({
+    required this.current,
+    required this.total,
+    required this.status,
+    required this.processed,
+    required this.failed,
+    required this.downloads,
+  });
+  
+  factory DownloadProgress.fromJson(Map<String, dynamic> json) {
+    return DownloadProgress(
+      current: json['current'] ?? 0,
+      total: json['total'] ?? 0,
+      status: json['status'] ?? '',
+      processed: json['processed'] ?? 0,
+      failed: json['failed'] ?? 0,
+      downloads: List<Map<String, dynamic>>.from(json['downloads'] ?? []),
+    );
+  }
+  
+  bool get isCompleted => status == 'completed';
+  bool get hasError => status.startsWith('error');
+  double get progress => total > 0 ? current / total : 0.0;
 }
 
