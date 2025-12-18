@@ -285,8 +285,12 @@ class _BottomPlayerState extends State<BottomPlayer> {
                         icon: const Icon(Icons.skip_previous, size: 24),
                         onPressed: hasTrack && widget.queueService != null && widget.playerStateService != null
                             ? () async {
-                                if (widget.queueService!.hasPrevious) {
-                                  await widget.queueService!.playPrevious(widget.playerStateService!);
+                                final qs = widget.queueService!;
+                                // Allow previous when there's a previous item,
+                                if (qs.hasPrevious ||
+                                    qs.loopMode == LoopMode.queue ||
+                                    qs.loopMode == LoopMode.single) {
+                                  await qs.playPrevious(widget.playerStateService!);
                                 }
                               }
                             : hasTrack
@@ -324,8 +328,12 @@ class _BottomPlayerState extends State<BottomPlayer> {
                         icon: const Icon(Icons.skip_next, size: 24),
                         onPressed: hasTrack && widget.queueService != null && widget.playerStateService != null
                             ? () async {
-                                if (widget.queueService!.hasNext) {
-                                  await widget.queueService!.playNext(widget.playerStateService!);
+                                final qs = widget.queueService!;
+                                // Allow next when there's a next item,
+                                if (qs.hasNext ||
+                                    qs.loopMode == LoopMode.queue ||
+                                    qs.loopMode == LoopMode.single) {
+                                  await qs.playNext(widget.playerStateService!);
                                 }
                               }
                             : hasTrack
