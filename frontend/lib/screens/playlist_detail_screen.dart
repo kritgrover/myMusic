@@ -54,9 +54,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    // Sync downloaded files when screen becomes visible again
-    // This helps update tracks if user navigated away during download
-    // Debounce to prevent excessive syncing (max once per 2 seconds)
+
     if (mounted && !_isLoading) {
       final now = DateTime.now();
       if (_lastSyncTime == null || 
@@ -1003,130 +1001,154 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
+                          // Title row
                           Row(
                             children: [
                               Expanded(
                                 child: Text(
                                   _playlist.name,
                                   style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                                    fontWeight: FontWeight.bold,
-                                  ),
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
                                 ),
-                              ),
-                              IconButton(
-                                icon: const Icon(Icons.edit),
-                                onPressed: _renamePlaylist,
-                                tooltip: 'Rename playlist',
-                              ),
-                              IconButton(
-                                icon: const Icon(Icons.add),
-                                onPressed: _addSongs,
-                                tooltip: 'Add songs',
-                              ),
-                              PopupMenuButton<PlaylistSortOption>(
-                                icon: const Icon(Icons.sort),
-                                tooltip: 'Sort playlist',
-                                onSelected: _changeSortOption,
-                                itemBuilder: (context) => [
-                                  PopupMenuItem(
-                                    value: PlaylistSortOption.defaultOrder,
-                                    child: Row(
-                                      children: [
-                                        Icon(
-                                          _sortOption == PlaylistSortOption.defaultOrder
-                                              ? Icons.check
-                                              : null,
-                                          size: 20,
-                                          color: _sortOption == PlaylistSortOption.defaultOrder
-                                              ? primaryColor
-                                              : null,
-                                        ),
-                                        const SizedBox(width: 8),
-                                        const Text('Default'),
-                                      ],
-                                    ),
-                                  ),
-                                  PopupMenuItem(
-                                    value: PlaylistSortOption.artistName,
-                                    child: Row(
-                                      children: [
-                                        Icon(
-                                          _sortOption == PlaylistSortOption.artistName
-                                              ? Icons.check
-                                              : null,
-                                          size: 20,
-                                          color: _sortOption == PlaylistSortOption.artistName
-                                              ? primaryColor
-                                              : null,
-                                        ),
-                                        const SizedBox(width: 8),
-                                        const Text('Sort by Artist'),
-                                      ],
-                                    ),
-                                  ),
-                                  PopupMenuItem(
-                                    value: PlaylistSortOption.songName,
-                                    child: Row(
-                                      children: [
-                                        Icon(
-                                          _sortOption == PlaylistSortOption.songName
-                                              ? Icons.check
-                                              : null,
-                                          size: 20,
-                                          color: _sortOption == PlaylistSortOption.songName
-                                              ? primaryColor
-                                              : null,
-                                        ),
-                                        const SizedBox(width: 8),
-                                        const Text('Sort by Song'),
-                                      ],
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              if (widget.queueService != null && widget.playerStateService != null) ...[
-                                IconButton(
-                                  icon: const Icon(Icons.play_arrow),
-                                  onPressed: _playPlaylist,
-                                  tooltip: 'Play playlist',
-                                  iconSize: 32,
-                                ),
-                                IconButton(
-                                  icon: const Icon(Icons.shuffle),
-                                  onPressed: _shufflePlaylistToQueue,
-                                  tooltip: 'Shuffle and add playlist to queue',
-                                ),
-                                IconButton(
-                                  icon: const Icon(Icons.queue_music),
-                                  onPressed: _addPlaylistToQueue,
-                                  tooltip: 'Add playlist to queue',
-                                ),
-                              ],
-                              IconButton(
-                                icon: const Icon(Icons.download),
-                                onPressed: _downloadUndownloadedTracks,
-                                tooltip: 'Download undownloaded tracks',
                               ),
                             ],
                           ),
-                            const SizedBox(height: 8),
-                            Row(
-                              children: [
-                                Icon(
-                                  Icons.music_note,
-                                  size: 18,
-                                  color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+                          const SizedBox(height: 8),
+                          // Track count (left) + secondary actions (right)
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Row(
+                                children: [
+                                  Icon(
+                                    Icons.music_note,
+                                    size: 18,
+                                    color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    '${_playlist.tracks.length} ${_playlist.tracks.length == 1 ? 'track' : 'tracks'}',
+                                    style: Theme.of(context).textTheme.bodyMedium,
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(width: 12),
+                              Flexible(
+                                child: Align(
+                                  alignment: Alignment.centerRight,
+                                  child: Wrap(
+                                    spacing: 8,
+                                    runSpacing: 4,
+                                    crossAxisAlignment: WrapCrossAlignment.center,
+                                    children: [
+                                      TextButton.icon(
+                                        onPressed: _addSongs,
+                                        icon: const Icon(Icons.add, size: 18),
+                                        label: const Text('Add songs'),
+                                      ),
+                                      IconButton(
+                                        icon: const Icon(Icons.edit, size: 20),
+                                        onPressed: _renamePlaylist,
+                                        tooltip: 'Rename playlist',
+                                      ),
+                                      if (widget.queueService != null && widget.playerStateService != null)
+                                        IconButton(
+                                          icon: const Icon(Icons.queue_music, size: 20),
+                                          onPressed: _addPlaylistToQueue,
+                                          tooltip: 'Add playlist to queue',
+                                        ),
+                                      IconButton(
+                                        icon: const Icon(Icons.download, size: 20),
+                                        onPressed: _downloadUndownloadedTracks,
+                                        tooltip: 'Download undownloaded tracks',
+                                      ),
+                                    ],
+                                  ),
                                 ),
-                                const SizedBox(width: 6),
-                                Text(
-                                  '${_playlist.tracks.length} ${_playlist.tracks.length == 1 ? 'track' : 'tracks'}',
-                                  style: Theme.of(context).textTheme.bodyMedium,
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 10),
+                          // Play / Shuffle (left) + Sort by (right)
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              if (widget.queueService != null && widget.playerStateService != null)
+                                Row(
+                                  children: [
+                                    FilledButton.icon(
+                                      onPressed: _playPlaylist,
+                                      style: FilledButton.styleFrom(
+                                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(24),
+                                        ),
+                                      ),
+                                      icon: const Icon(Icons.play_arrow_rounded, size: 26),
+                                      label: const Text(
+                                        'Play',
+                                        style: TextStyle(fontWeight: FontWeight.w600),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    OutlinedButton.icon(
+                                      onPressed: _shufflePlaylistToQueue,
+                                      style: OutlinedButton.styleFrom(
+                                        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 11),
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(24),
+                                        ),
+                                      ),
+                                      icon: const Icon(Icons.shuffle, size: 22),
+                                      label: const Text(
+                                        'Shuffle',
+                                        style: TextStyle(fontWeight: FontWeight.w500),
+                                      ),
+                                    ),
+                                  ],
+                                )
+                              else
+                                const SizedBox.shrink(),
+                              Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    'Sort by:',
+                                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                          fontWeight: FontWeight.w500,
+                                        ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  DropdownButton<PlaylistSortOption>(
+                                    value: _sortOption,
+                                    underline: const SizedBox.shrink(),
+                                    borderRadius: BorderRadius.circular(12),
+                                    onChanged: _changeSortOption,
+                                    items: const [
+                                      DropdownMenuItem(
+                                        value: PlaylistSortOption.defaultOrder,
+                                        child: Text('Default'),
+                                      ),
+                                      DropdownMenuItem(
+                                        value: PlaylistSortOption.artistName,
+                                        child: Text('Artist'),
+                                      ),
+                                      DropdownMenuItem(
+                                        value: PlaylistSortOption.songName,
+                                        child: Text('Song'),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ],
                       ),
+                    ),
                     ],
                   ),
                 ),
