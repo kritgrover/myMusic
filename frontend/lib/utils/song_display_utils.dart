@@ -1,14 +1,8 @@
 import 'package:flutter/material.dart';
 
-/// Shared utility functions for displaying song information consistently across the app
-
-/// Formats a filename to a display name by:
-/// - Extracting just the filename if it includes a subdirectory path
-/// - Removing file extensions
-/// - Removing number prefixes (e.g., "001 - Song Name" -> "Song Name")
-/// - Extracting song name from "Song Name - Artist" format
+// Shared utility functions for displaying song information consistently across the app
 String formatDisplayName(String filename) {
-  // Extract just the filename if it includes a subdirectory path
+  // Extract just the filename
   String displayName = filename.contains('/') 
       ? filename.split('/').last 
       : filename.contains('\\') 
@@ -19,11 +13,9 @@ String formatDisplayName(String filename) {
   final extensionPattern = RegExp(r'\.(m4a|mp3)$', caseSensitive: false);
   displayName = displayName.replaceAll(extensionPattern, '');
 
-  // Check if filename starts with a number pattern (e.g., "001 - " or "1 - ")
-  // This indicates a CSV-converted file
   final numberPrefixPattern = RegExp(r'^\d+\s*-\s*');
   if (numberPrefixPattern.hasMatch(displayName)) {
-    // For CSV files: "001 - Song Name" -> remove number prefix, return "Song Name"
+    // For CSV files: remove number prefix
     displayName = displayName.replaceFirst(numberPrefixPattern, '');
     return displayName.trim();
   } else {
@@ -36,7 +28,7 @@ String formatDisplayName(String filename) {
   }
 }
 
-/// Gets the display title for a track, formatting it if it appears to be a filename
+// Gets the display title for a track
 String getDisplayTitle(String? title, String? filename) {
   if (title == null || title.isEmpty) {
     return filename != null && filename.isNotEmpty 
@@ -53,7 +45,7 @@ String getDisplayTitle(String? title, String? filename) {
   return title;
 }
 
-/// Gets the display artist, returning null if empty
+// Gets the display artist, returning null if empty
 String? getDisplayArtist(String? artist) {
   if (artist == null || artist.trim().isEmpty) {
     return null;
@@ -61,8 +53,6 @@ String? getDisplayArtist(String? artist) {
   return artist.trim();
 }
 
-/// Widget for displaying song information consistently
-/// Shows title on top, artist below (if available)
 class SongInfoWidget extends StatelessWidget {
   final String? title;
   final String? artist;

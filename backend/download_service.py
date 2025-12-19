@@ -24,17 +24,16 @@ class DownloadService:
         import sys
         
         if platform.system() == "Darwin":
-            # macOS - assume installed via brew or in PATH
             self.ffmpeg_exe = shutil.which("ffmpeg") or "ffmpeg"
             self.yt_dlp_exe = shutil.which("yt-dlp") or "yt-dlp"
         elif platform.system() == "Linux":
             self.ffmpeg_exe = shutil.which("ffmpeg") or "ffmpeg"
             self.yt_dlp_exe = shutil.which("yt-dlp") or "yt-dlp"
-        else:  # Windows
+        else:
             base_dir = os.path.dirname(os.path.abspath(__file__))
             self.ffmpeg_exe = os.path.join(base_dir, "ffmpeg", "ffmpeg.exe")
             self.yt_dlp_exe = os.path.join(base_dir, "yt-dlp", "yt-dlp.exe")
-            # Fallback to PATH if not found
+
             if not os.path.isfile(self.ffmpeg_exe):
                 self.ffmpeg_exe = shutil.which("ffmpeg") or "ffmpeg"
             if not os.path.isfile(self.yt_dlp_exe):
@@ -42,7 +41,6 @@ class DownloadService:
         
         # If yt-dlp not found as executable, try python -m yt_dlp
         if not self.yt_dlp_exe or (not shutil.which(self.yt_dlp_exe) and not os.path.isfile(self.yt_dlp_exe)):
-            # Try to use python -m yt_dlp
             try:
                 result = subprocess.run(
                     [sys.executable, "-m", "yt_dlp", "--version"],
@@ -104,9 +102,9 @@ class DownloadService:
         # Title matching (40 points max)
         if safe_title_lower in vid_title_lower:
             if vid_title_lower.startswith(safe_title_lower):
-                score += 40  # Perfect title match at start
+                score += 40
             else:
-                score += 30  # Title found somewhere
+                score += 30
         else:
             # Partial title match
             title_words = safe_title_lower.split()
@@ -127,7 +125,7 @@ class DownloadService:
         
         # Duration matching (30 points max)
         if duration >= duration_min and duration <= duration_max:
-            score += 20  # Within range
+            score += 20
             if spotify_sec:
                 duration_diff = abs(duration - spotify_sec)
                 if duration_diff <= 5:
@@ -149,20 +147,20 @@ class DownloadService:
             raise Exception(f"yt-dlp not found. Please install it: pip install yt-dlp")
         
         def yt_cmd(extra_args, search_spec):
-            # Handle both string (executable path) and list (python -m yt_dlp) formats
+            # Handle both string and list formats
             if isinstance(self.yt_dlp_exe, list):
                 cmd = self.yt_dlp_exe.copy()
             else:
                 cmd = [self.yt_dlp_exe]
             cmd.append("--no-config")
-            # Only add ffmpeg-location if ffmpeg is in a specific directory (not in PATH)
+            # Only add ffmpeg-location if ffmpeg is in a specific directory
             ffmpeg_dir = os.path.dirname(self.ffmpeg_exe) if isinstance(self.ffmpeg_exe, str) and os.path.dirname(self.ffmpeg_exe) else ""
             if ffmpeg_dir and os.path.isdir(ffmpeg_dir):
                 cmd.append(f"--ffmpeg-location={ffmpeg_dir}")
             cmd += extra_args + [search_spec]
             return cmd
         
-        # Always use deep search - get top results
+        # Always use deep search
         proc_q = subprocess.run(
             yt_cmd(["--flat-playlist", "--dump-single-json", "--no-playlist"], f"ytsearch3:{query}"),
             capture_output=True, text=True, creationflags=creationflags, timeout=30
@@ -180,7 +178,8 @@ class DownloadService:
         entries = data_q.get('entries') if isinstance(data_q.get('entries'), list) else []
         results = []
         
-        for entry in entries[:10]:  # Get top 10 results
+        # Get top 10 results
+        for entry in entries[:10]:  
             if not isinstance(entry, dict):
                 continue
             vid_id = entry.get('id', '')
@@ -189,7 +188,7 @@ class DownloadService:
             duration = entry.get('duration', 0)
             url = f"https://www.youtube.com/watch?v={vid_id}"
             
-            # Filter by duration
+            # Filter out of duration range
             if duration < duration_min or duration > duration_max:
                 continue
             
@@ -223,13 +222,13 @@ class DownloadService:
         output_path = os.path.join(self.output_dir, filename)
         
         def yt_cmd(extra_args, search_spec):
-            # Handle both string (executable path) and list (python -m yt_dlp) formats
+            # Handle both string and list formats
             if isinstance(self.yt_dlp_exe, list):
                 cmd = self.yt_dlp_exe.copy()
             else:
                 cmd = [self.yt_dlp_exe]
             cmd.append("--no-config")
-            # Only add ffmpeg-location if ffmpeg is in a specific directory (not in PATH)
+            # Only add ffmpeg-location if ffmpeg is in a specific directory
             ffmpeg_dir = os.path.dirname(self.ffmpeg_exe) if isinstance(self.ffmpeg_exe, str) and os.path.dirname(self.ffmpeg_exe) else ""
             if ffmpeg_dir and os.path.isdir(ffmpeg_dir):
                 cmd.append(f"--ffmpeg-location={ffmpeg_dir}")
@@ -313,27 +312,23 @@ class DownloadService:
             raise Exception(f"yt-dlp not found. Please install it: pip install yt-dlp")
         
         def yt_cmd(extra_args, search_spec):
-            # Handle both string (executable path) and list (python -m yt_dlp) formats
+            # Handle both string and list formats
             if isinstance(self.yt_dlp_exe, list):
                 cmd = self.yt_dlp_exe.copy()
             else:
                 cmd = [self.yt_dlp_exe]
             cmd.append("--no-config")
-            # Only add ffmpeg-location if ffmpeg is in a specific directory (not in PATH)
+            # Only add ffmpeg-location if ffmpeg is in a specific directory
             ffmpeg_dir = os.path.dirname(self.ffmpeg_exe) if isinstance(self.ffmpeg_exe, str) and os.path.dirname(self.ffmpeg_exe) else ""
             if ffmpeg_dir and os.path.isdir(ffmpeg_dir):
                 cmd.append(f"--ffmpeg-location={ffmpeg_dir}")
             cmd += extra_args + [search_spec]
             return cmd
         
-        # Get the best audio stream URL using -g flag (get URL without downloading)
-        # Request formats that browsers can play directly
-        # itag 140 = AAC audio in MP4 container (most compatible)
-        # itag 251 = Opus audio in WebM container (also browser-compatible)
-        # Prefer AAC/MP4 as it has the best browser support
+        # Get the best audio stream URL using -g flag
         cmd_stream = yt_cmd([
             '-f', '140/251/bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio[acodec*=mp4a]/bestaudio/best',
-            '-g'  # Get URL only, don't download
+            '-g'
         ], url)
         
         ret = subprocess.run(cmd_stream, capture_output=True, text=True, creationflags=creationflags)
@@ -355,13 +350,13 @@ class DownloadService:
             raise Exception(f"yt-dlp not found. Please install it: pip install yt-dlp")
         
         def yt_cmd(extra_args, search_spec):
-            # Handle both string (executable path) and list (python -m yt_dlp) formats
+            # Handle both string and list formats
             if isinstance(self.yt_dlp_exe, list):
                 cmd = self.yt_dlp_exe.copy()
             else:
                 cmd = [self.yt_dlp_exe]
             cmd.append("--no-config")
-            # Only add ffmpeg-location if ffmpeg is in a specific directory (not in PATH)
+            # Only add ffmpeg-location if ffmpeg is in a specific directory
             ffmpeg_dir = os.path.dirname(self.ffmpeg_exe) if isinstance(self.ffmpeg_exe, str) and os.path.dirname(self.ffmpeg_exe) else ""
             if ffmpeg_dir and os.path.isdir(ffmpeg_dir):
                 cmd.append(f"--ffmpeg-location={ffmpeg_dir}")
@@ -372,12 +367,10 @@ class DownloadService:
         temp_output = output_path + ".tmp"
         
         # Download as M4A (AAC) which is browser-compatible
-        # Use --remux-video m4a to ensure proper container format
-        # Add --postprocessor-args to move moov atom to beginning for progressive streaming
         cmd_download = yt_cmd([
             '-f', 'bestaudio[ext=m4a]/bestaudio',
-            '--remux-video', 'm4a',  # Remux to M4A container (browser-compatible)
-            '--postprocessor-args', 'ffmpeg:-movflags +faststart',  # Move moov atom to beginning for progressive streaming
+            '--remux-video', 'm4a',
+            '--postprocessor-args', 'ffmpeg:-movflags +faststart',
             '--output', temp_output,
             '--no-playlist',
             '--no-warnings',
@@ -389,7 +382,7 @@ class DownloadService:
         
         # Move temp file to final location
         if os.path.exists(temp_output):
-            # On Windows, we need to handle file replacement
+            # On Windows, handle file replacement
             if os.path.exists(output_path):
                 os.remove(output_path)
             os.rename(temp_output, output_path)
@@ -454,9 +447,7 @@ class DownloadService:
         }
     
     def get_download_progress(self, url: str):
-        """Get download progress for a URL (for streaming progress)"""
-        # This is a simplified version - yt-dlp doesn't easily provide progress via API
-        # In a real implementation, you might want to parse yt-dlp output or use callbacks
+        """Get download progress for a URL"""
         return {"status": "downloading", "progress": 0}
     
     def convert_csv_to_m4a(self, csv_path: str, 
@@ -525,7 +516,7 @@ class DownloadService:
                 if progress_callback:
                     progress_callback(i, total, f"Searching: {q}")
                 
-                # Always use deep search - Phase 1: quick flat-playlist probe with scoring
+                # Always use deep search
                 proc_q = subprocess.run(
                     yt_cmd(["--flat-playlist", "--dump-single-json", "--no-playlist"], f"ytsearch1:{q}"),
                     capture_output=True, text=True, creationflags=creationflags, timeout=30
@@ -630,7 +621,6 @@ class DownloadService:
                                     if score >= 90:
                                         excellent_url = url
                                         found_excellent_match = True
-                                        # Cancel remaining futures
                                         for f in future_to_entry:
                                             f.cancel()
                                         break
@@ -917,11 +907,11 @@ class DownloadService:
                         if found_excellent_match and excellent_track:
                             # Use the excellent match immediately
                             best_track = excellent_track
-                            break  # Break variant loop
+                            break
                         elif scored:
                             # Use the best match from scored results
                             best_track = max(scored, key=lambda x: x[0])[1]
-                            break  # Break variant loop
+                            break
                 
                 if best_track:
                     break

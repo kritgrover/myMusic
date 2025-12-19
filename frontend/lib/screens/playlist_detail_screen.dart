@@ -181,7 +181,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
     
     switch (_sortOption) {
       case PlaylistSortOption.defaultOrder:
-        // Return tracks in original order (as stored)
+        // Return tracks in original order
         return tracks;
       case PlaylistSortOption.artistName:
         // Sort by artist name, then by song name
@@ -306,7 +306,6 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
         
         if (progress.isCompleted) {
           // Update tracks with downloaded filenames
-          // Match by index (downloads are processed in the same order as sent)
           final updatedTrackIds = <String>{};
           int updateCount = 0;
           
@@ -397,7 +396,6 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
         await Future.delayed(const Duration(milliseconds: 500));
       } catch (e) {
         // If progress is not available, the download might have finished
-        // Try to reload playlist anyway
         await _loadPlaylist();
         break;
       }
@@ -597,7 +595,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
       final result = await _apiService.startBatchDownload(downloads);
       final downloadId = result['download_id'] as String;
 
-      // Start progress tracking if callback is provided
+      // Start progress tracking
       if (widget.onDownloadStart != null) {
         widget.onDownloadStart!(downloadId);
       }
@@ -723,13 +721,10 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
       }
 
       if (mounted) {
-        Navigator.of(context).pop(); // Close loading dialog
+        Navigator.of(context).pop();
 
         if (queueItems.isNotEmpty) {
-          // Clear the queue first
           widget.queueService!.clearQueue();
-          
-          // Add all items to queue
           widget.queueService!.addAllToQueue(queueItems);
           
           // Start playing the first item
@@ -852,7 +847,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
           
           widget.queueService!.addAllToQueue(queueItems);
 
-          // If shuffle is enabled and player service is available, start playing the first song
+          // If shuffle is enabled, start playing the first song
           if (shuffle && widget.playerStateService != null) {
             await widget.queueService!.playItem(0, widget.playerStateService!);
           }

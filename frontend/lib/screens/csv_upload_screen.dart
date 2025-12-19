@@ -114,7 +114,7 @@ class _CsvUploadScreenState extends State<CsvUploadScreen> {
       // Notify parent that conversion started
       widget.onConversionStart?.call(uploadResult.filename);
       
-      // Convert CSV (this will run in background, progress is polled by home screen)
+      // Convert CSV
       final conversionResult = await _apiService.convertCsv(
         uploadResult.filename,
         durationMin: _durationMin,
@@ -122,8 +122,7 @@ class _CsvUploadScreenState extends State<CsvUploadScreen> {
         excludeInstrumentals: _excludeInstrumentals,
       );
 
-      // Notify parent that conversion completed (pass result so dialog can be shown at home screen level)
-      // Call this before setState in case widget is disposed
+      // Notify parent that conversion completed
       widget.onConversionComplete?.call(conversionResult);
       
       if (mounted) {

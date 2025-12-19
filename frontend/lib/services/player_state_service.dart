@@ -23,8 +23,7 @@ class PlayerStateService extends ChangeNotifier {
 
   Future<void> playTrack(String filename, {String? trackName, String? trackArtist}) async {
     try {
-      // Set track info BEFORE starting playback to avoid race condition
-      // where stateStream fires notifyListeners() before track name is set
+      // Set track info
       _currentTrackName = trackName ?? filename;
       _currentTrackArtist = trackArtist;
       notifyListeners();
@@ -36,8 +35,7 @@ class PlayerStateService extends ChangeNotifier {
 
   Future<void> streamTrack(String streamingUrl, {String? trackName, String? trackArtist}) async {
     try {
-      // Set track info BEFORE starting playback to avoid race condition
-      // where stateStream fires notifyListeners() before track name is set
+      // Set track info
       _currentTrackName = trackName ?? 'Streaming';
       _currentTrackArtist = trackArtist;
       notifyListeners();

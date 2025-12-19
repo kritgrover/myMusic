@@ -14,7 +14,6 @@ class PlaylistService {
 
       if (response.statusCode == 200) {
         final Map<String, dynamic> data = jsonDecode(response.body);
-        // Backend returns Dict[str, Playlist]. Values are the playlists.
         return data.values.map((json) => Playlist.fromJson(json)).toList();
       } else {
         return [];
@@ -50,10 +49,7 @@ class PlaylistService {
     }
   }
 
-  // Deprecated: Use createPlaylist for new playlists.
-  // This is kept for compatibility if called with a new playlist object.
   Future<void> savePlaylist(Playlist playlist) async {
-    // We assume this is only called for creation in the old flow
     await createPlaylist(playlist.name);
   }
 

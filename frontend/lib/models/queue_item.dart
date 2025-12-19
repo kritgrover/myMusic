@@ -4,7 +4,7 @@ class QueueItem {
   final String? artist;
   final String? url; // For streaming URLs
   final String? filename; // For local files
-  final String? thumbnail; // Optional thumbnail URL
+  final String? thumbnail;
 
   QueueItem({
     required this.id,
