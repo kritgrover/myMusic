@@ -4,6 +4,7 @@ import '../services/audio_player_service.dart';
 import '../services/queue_service.dart';
 import '../services/player_state_service.dart';
 import '../utils/song_display_utils.dart';
+import '../widgets/album_cover.dart';
 
 class BottomPlayer extends StatefulWidget {
   final AudioPlayerService playerService;
@@ -164,11 +165,47 @@ class _BottomPlayerState extends State<BottomPlayer> {
     }
   }
 
+  String? _extractFilenameFromUrl(String? url) {
+    if (url == null) return null;
+    // Extract filename from URL like "http://localhost:8000/downloads/song.m4a"
+    try {
+      final uri = Uri.parse(url);
+      final path = uri.path;
+      if (path.contains('/downloads/')) {
+        final parts = path.split('/downloads/');
+        if (parts.length > 1) {
+          return Uri.decodeComponent(parts[1]);
+        }
+      }
+    } catch (e) {
+      // If parsing fails, return null
+    }
+    return null;
+  }
+
   @override
   Widget build(BuildContext context) {
     final hasTrack = widget.playerService.currentUrl != null;
     final primaryColor = Theme.of(context).colorScheme.primary;
     final surfaceElevated = Theme.of(context).colorScheme.surface;
+    
+    // Get track metadata from queue or player state
+    String? filename;
+    String? title;
+    String? artist;
+    
+    if (widget.queueService != null && widget.queueService!.currentItem != null) {
+      final currentItem = widget.queueService!.currentItem!;
+      filename = currentItem.filename;
+      title = currentItem.title;
+      artist = currentItem.artist;
+    } else {
+      // Fallback to player state
+      title = widget.currentTrackName;
+      artist = widget.currentTrackArtist;
+      // Try to extract filename from URL
+      filename = _extractFilenameFromUrl(widget.playerService.currentUrl);
+    }
 
     return Container(
       decoration: BoxDecoration(
@@ -219,18 +256,13 @@ class _BottomPlayerState extends State<BottomPlayer> {
                   Expanded(
                     child: Row(
                       children: [
-                        Container(
-                          width: 56,
-                          height: 56,
-                          decoration: BoxDecoration(
-                            color: primaryColor.withOpacity(0.15),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Icon(
-                            Icons.music_note,
-                            color: primaryColor,
-                            size: 28,
-                          ),
+                        AlbumCover(
+                          filename: filename,
+                          title: title,
+                          artist: artist,
+                          size: 56,
+                          backgroundColor: primaryColor.withOpacity(0.15),
+                          iconColor: primaryColor,
                         ),
                         const SizedBox(width: 16),
                         Expanded(
