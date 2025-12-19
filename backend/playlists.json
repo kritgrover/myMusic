@@ -70,18 +70,29 @@
                 "duration": 194.0
             },
             {
-                "id": "Neurotica - Polyphia.m4a",
-                "title": "Neurotica",
-                "artist": "Polyphia",
+                "id": "cF1Na4AIecM",
+                "title": "Sabrina Carpenter - Please Please Please",
+                "artist": "Sabrina Carpenter",
                 "album": null,
                 "filename": "",
                 "file_path": "",
-                "url": null,
-                "thumbnail": null,
-                "duration": null
+                "url": "https://www.youtube.com/watch?v=cF1Na4AIecM",
+                "thumbnail": "https://img.youtube.com/vi/cF1Na4AIecM/maxresdefault.jpg",
+                "duration": 263.0
+            },
+            {
+                "id": "X8OeBZQn3_w",
+                "title": "Creeping Death (Remastered)",
+                "artist": "Metallica",
+                "album": null,
+                "filename": "",
+                "file_path": "",
+                "url": "https://www.youtube.com/watch?v=X8OeBZQn3_w",
+                "thumbnail": "https://img.youtube.com/vi/X8OeBZQn3_w/maxresdefault.jpg",
+                "duration": 396.0
             }
         ],
         "createdAt": "2025-12-11T23:34:09.465894",
-        "updatedAt": "2025-12-17T23:38:46.334864"
+        "updatedAt": "2025-12-19T16:47:49.928590"
     }
 }

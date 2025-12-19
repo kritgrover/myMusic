@@ -7,6 +7,7 @@ import '../models/playlist.dart';
 import '../models/queue_item.dart';
 import 'add_to_playlist_screen.dart';
 import '../utils/song_display_utils.dart';
+import '../widgets/album_cover.dart';
 
 enum PlaylistSortOption {
   defaultOrder,
@@ -1203,20 +1204,18 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                                       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                                       child: Row(
                                         children: [
-                                          Container(
-                                            width: 40,
-                                            height: 40,
-                                            decoration: BoxDecoration(
-                                              color: isCurrentlyPlaying 
-                                                  ? primaryColor.withOpacity(0.2)
-                                                  : surfaceHover,
-                                              borderRadius: BorderRadius.circular(8),
-                                            ),
-                                            child: Icon(
-                                              Icons.music_note,
-                                              color: isCurrentlyPlaying ? primaryColor : Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
-                                              size: 20,
-                                            ),
+                                          AlbumCover(
+                                            filename: track.filename.isNotEmpty ? track.filename : null,
+                                            title: track.title,
+                                            artist: track.artist,
+                                            album: track.album,
+                                            size: 40,
+                                            backgroundColor: isCurrentlyPlaying 
+                                                ? primaryColor.withOpacity(0.2)
+                                                : surfaceHover,
+                                            iconColor: isCurrentlyPlaying 
+                                                ? primaryColor 
+                                                : Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
                                           ),
                                           const SizedBox(width: 12),
                                           Expanded(

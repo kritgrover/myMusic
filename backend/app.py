@@ -13,6 +13,8 @@ import httpx
 from download_service import DownloadService
 from mutagen.mp4 import MP4
 from mutagen.easyid3 import EasyID3
+from mutagen.id3 import ID3, APIC
+from mutagen.mp4 import MP4Cover
 
 app = FastAPI(title="Music Download API")
 
@@ -444,6 +446,112 @@ def delete_download_file(filename: str):
         return {"success": True, "message": f"File {filename} deleted successfully"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/downloads/{filename:path}/artwork")
+async def get_file_artwork(filename: str):
+    """Extract album artwork from a downloaded audio file"""
+    try:
+        # Handle subdirectory paths and prevent directory traversal
+        filename = filename.replace('\\', os.sep).replace('/', os.sep)
+        if '..' in filename or filename.startswith('/'):
+            raise HTTPException(status_code=400, detail="Invalid file path")
+        
+        file_path = os.path.join(download_service.output_dir, filename)
+        if not os.path.isfile(file_path):
+            raise HTTPException(status_code=404, detail="File not found")
+        
+        artwork_data = None
+        content_type = "image/jpeg"
+        
+        try:
+            if filename.lower().endswith('.m4a'):
+                # Extract artwork from MP4/M4A file
+                audio = MP4(file_path)
+                if audio.tags and 'covr' in audio.tags:
+                    covers = audio.tags['covr']
+                    if covers:
+                        artwork_data = bytes(covers[0])
+                        # Determine content type
+                        if isinstance(covers[0], MP4Cover):
+                            if covers[0].imageformat == MP4Cover.FORMAT_JPEG:
+                                content_type = "image/jpeg"
+                            elif covers[0].imageformat == MP4Cover.FORMAT_PNG:
+                                content_type = "image/png"
+            elif filename.lower().endswith('.mp3'):
+                # Extract artwork from MP3 file
+                audio = ID3(file_path)
+                if audio:
+                    # Look for APIC (album art) frames
+                    for key in audio.keys():
+                        if key.startswith('APIC'):
+                            apic = audio[key]
+                            if isinstance(apic, APIC):
+                                artwork_data = apic.data
+                                # Determine content type from mime
+                                if apic.mime:
+                                    content_type = apic.mime
+                                break
+        except Exception as e:
+            print(f"Error extracting artwork: {e}")
+            artwork_data = None
+        
+        if artwork_data:
+            return Response(
+                content=artwork_data,
+                media_type=content_type,
+                headers={
+                    "Cache-Control": "public, max-age=31536000",  # Cache for 1 year
+                }
+            )
+        else:
+            raise HTTPException(status_code=404, detail="No artwork found in file")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/album-cover")
+async def get_album_cover(title: str, artist: str = "", album: str = ""):
+    """Fetch album cover from iTunes API based on track metadata"""
+    try:
+        # Build search query - prefer album if available, otherwise use title + artist
+        if album and artist:
+            search_term = f"{album} {artist}"
+        elif artist:
+            search_term = f"{title} {artist}"
+        else:
+            search_term = title
+        
+        # Search iTunes API
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(
+                "https://itunes.apple.com/search",
+                params={
+                    "term": search_term,
+                    "media": "music",
+                    "limit": 1,
+                }
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                results = data.get("results", [])
+                
+                if results:
+                    # Get the artwork URL (replace 100x100 with larger size)
+                    artwork_url = results[0].get("artworkUrl100", "")
+                    if artwork_url:
+                        # Replace with higher resolution (600x600 is max)
+                        artwork_url = artwork_url.replace("100x100", "600x600")
+                        return {"artwork_url": artwork_url}
+            
+            # If no results, return None
+            return {"artwork_url": None}
+    except Exception as e:
+        print(f"Error fetching album cover: {e}")
+        return {"artwork_url": None}
 
 
 # CSV Conversion Endpoints
