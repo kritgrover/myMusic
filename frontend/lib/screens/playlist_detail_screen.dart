@@ -828,6 +828,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
               filename: track.filename,
               title: track.title,
               artist: track.artist,
+              album: track.album,
             );
             queueItems.add(queueItem);
             successCount++;
@@ -845,6 +846,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                 title: result.title,
                 artist: result.artist,
                 streamingUrl: result.streamingUrl,
+                album: track.album,
               );
               queueItems.add(queueItem);
               successCount++;
@@ -944,6 +946,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
               filename: track.filename,
               title: track.title,
               artist: track.artist,
+              album: track.album,
             );
             queueItems.add(queueItem);
             successCount++;
@@ -961,6 +964,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                 title: result.title,
                 artist: result.artist,
                 streamingUrl: result.streamingUrl,
+                album: track.album,
               );
               queueItems.add(queueItem);
               successCount++;
@@ -1023,6 +1027,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
           filename: track.filename,
           title: track.title,
           artist: track.artist,
+          album: track.album,
         );
       } else if (track.url != null && track.url!.isNotEmpty) {
         // Need to get streaming URL
@@ -1038,6 +1043,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
             title: result.title,
             artist: result.artist,
             streamingUrl: result.streamingUrl,
+            album: track.album,
           );
         } catch (e) {
           if (mounted) {
