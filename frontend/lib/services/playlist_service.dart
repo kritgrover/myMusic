@@ -93,4 +93,60 @@ class PlaylistService {
       throw Exception('Failed to remove track: ${response.statusCode}');
     }
   }
+
+  Future<void> updatePlaylistCover(String playlistId, String? coverImageUrl) async {
+    final response = await http.put(
+      Uri.parse('$baseUrl/playlists/$playlistId/cover'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'coverImage': coverImageUrl}),
+    );
+    
+    if (response.statusCode != 200) {
+      throw Exception('Failed to update cover: ${response.statusCode}');
+    }
+  }
+
+  Future<void> uploadPlaylistCover(String playlistId, List<int> imageBytes, String filename) async {
+    final request = http.MultipartRequest(
+      'POST',
+      Uri.parse('$baseUrl/playlists/$playlistId/cover/upload'),
+    );
+    
+    // Determine content type from filename extension
+    String contentType = 'image/jpeg'; // default
+    if (filename.contains('.')) {
+      final ext = filename.toLowerCase().split('.').last;
+      switch (ext) {
+        case 'jpg':
+        case 'jpeg':
+          contentType = 'image/jpeg';
+          break;
+        case 'png':
+          contentType = 'image/png';
+          break;
+        case 'gif':
+          contentType = 'image/gif';
+          break;
+        case 'webp':
+          contentType = 'image/webp';
+          break;
+      }
+    }
+    
+    final file = http.MultipartFile.fromBytes(
+      'file',
+      imageBytes,
+      filename: filename,
+      contentType: http.MediaType.parse(contentType),
+    );
+    request.files.add(file);
+    
+    final streamedResponse = await request.send();
+    final response = await http.Response.fromStream(streamedResponse);
+    
+    if (response.statusCode != 200) {
+      final errorBody = response.body;
+      throw Exception('Failed to upload cover: ${response.statusCode} - $errorBody');
+    }
+  }
 }

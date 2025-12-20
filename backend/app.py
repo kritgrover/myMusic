@@ -82,6 +82,7 @@ class Playlist(BaseModel):
     songs: List[Song] = []
     createdAt: str
     updatedAt: str
+    coverImage: Optional[str] = None
 
 class CreatePlaylistRequest(BaseModel):
     name: str
@@ -641,7 +642,8 @@ def convert_csv_file(filename: str, request: CsvConversionRequest):
                 "name": playlist_name,
                 "songs": [],
                 "createdAt": now,
-                "updatedAt": now
+                "updatedAt": now,
+                "coverImage": None
             }
             playlists[playlist_id] = new_playlist
             save_playlists(playlists)
@@ -771,7 +773,8 @@ def create_playlist(request: CreatePlaylistRequest):
         "name": request.name,
         "songs": [],
         "createdAt": now,
-        "updatedAt": now
+        "updatedAt": now,
+        "coverImage": None
     }
     playlists[playlist_id] = new_playlist
     save_playlists(playlists)
@@ -852,6 +855,105 @@ def remove_song_from_playlist(playlist_id: str, song_id: str):
 
     save_playlists(playlists)
     return playlists[playlist_id]
+
+
+class UpdatePlaylistCoverRequest(BaseModel):
+    coverImage: Optional[str] = None  # URL or base64 data URI
+
+@app.put("/playlists/{playlist_id}/cover")
+def update_playlist_cover(playlist_id: str, request: UpdatePlaylistCoverRequest):
+    """Update playlist cover image (URL or base64 data URI)"""
+    playlists = load_playlists()
+    if playlist_id not in playlists:
+        raise HTTPException(status_code=404, detail="Playlist not found")
+    
+    playlists[playlist_id]["coverImage"] = request.coverImage
+    playlists[playlist_id]["updatedAt"] = datetime.now().isoformat()
+    save_playlists(playlists)
+    return {"success": True, "coverImage": request.coverImage}
+
+
+@app.post("/playlists/{playlist_id}/cover/upload")
+async def upload_playlist_cover(playlist_id: str, file: UploadFile = File(...)):
+    """Upload a cover image file for a playlist"""
+    playlists = load_playlists()
+    if playlist_id not in playlists:
+        raise HTTPException(status_code=404, detail="Playlist not found")
+    
+    # Validate file type
+    if not file.content_type or not file.content_type.startswith('image/'):
+        raise HTTPException(status_code=400, detail="File must be an image")
+    
+    # Create covers directory
+    covers_dir = os.path.join(BASE_DIR, "covers")
+    os.makedirs(covers_dir, exist_ok=True)
+    
+    # Generate filename
+    file_ext = os.path.splitext(file.filename or '')[1] or '.jpg'
+    cover_filename = f"{playlist_id}{file_ext}"
+    cover_path = os.path.join(covers_dir, cover_filename)
+    
+    # Save file
+    with open(cover_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+    
+    # Store relative path or URL
+    cover_url = f"/playlists/{playlist_id}/cover"
+    
+    playlists[playlist_id]["coverImage"] = cover_url
+    playlists[playlist_id]["updatedAt"] = datetime.now().isoformat()
+    save_playlists(playlists)
+    
+    return {"success": True, "coverImage": cover_url}
+
+
+@app.get("/playlists/{playlist_id}/cover")
+def get_playlist_cover(playlist_id: str):
+    """Get playlist cover image"""
+    playlists = load_playlists()
+    if playlist_id not in playlists:
+        raise HTTPException(status_code=404, detail="Playlist not found")
+    
+    cover_image = playlists[playlist_id].get("coverImage")
+    if not cover_image:
+        raise HTTPException(status_code=404, detail="Cover image not found")
+    
+    # If it's a local file path
+    if cover_image.startswith("/playlists/") and cover_image.endswith("/cover"):
+        covers_dir = os.path.join(BASE_DIR, "covers")
+        cover_filename = f"{playlist_id}.jpg"
+        cover_path = os.path.join(covers_dir, cover_filename)
+        
+        # Try different extensions
+        for ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp']:
+            test_path = os.path.join(covers_dir, f"{playlist_id}{ext}")
+            if os.path.exists(test_path):
+                cover_path = test_path
+                break
+        
+        if os.path.exists(cover_path):
+            # Determine content type from extension
+            ext = os.path.splitext(cover_path)[1].lower()
+            content_type = {
+                '.jpg': 'image/jpeg',
+                '.jpeg': 'image/jpeg',
+                '.png': 'image/png',
+                '.gif': 'image/gif',
+                '.webp': 'image/webp'
+            }.get(ext, 'image/jpeg')
+            
+            return FileResponse(
+                cover_path,
+                media_type=content_type,
+                headers={
+                    "Cache-Control": "public, max-age=31536000",
+                }
+            )
+        else:
+            raise HTTPException(status_code=404, detail="Cover image file not found")
+    
+    # If it's a URL, redirect or return it
+    raise HTTPException(status_code=400, detail="External URL covers not supported via this endpoint")
 
 
 if __name__ == "__main__":

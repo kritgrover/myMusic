@@ -1,10 +1,12 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import '../services/playlist_service.dart';
 import '../services/api_service.dart';
 import '../services/queue_service.dart';
 import '../models/playlist.dart';
 import '../models/queue_item.dart';
+import '../config.dart';
 import 'add_to_playlist_screen.dart';
 import '../utils/song_display_utils.dart';
 import '../widgets/album_cover.dart';
@@ -537,6 +539,144 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
     }
   }
 
+  String? _getCoverImageUrl() {
+    if (_playlist.coverImage == null) return null;
+    if (_playlist.coverImage!.startsWith('http://') || _playlist.coverImage!.startsWith('https://')) {
+      return _playlist.coverImage;
+    }
+    // Local cover image
+    return '${AppConfig.apiBaseUrl}${_playlist.coverImage}';
+  }
+
+  Future<void> _editPlaylistCover() async {
+    final result = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Edit Playlist Cover'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.photo_library),
+              title: const Text('Choose from Gallery'),
+              onTap: () => Navigator.of(context).pop('gallery'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.camera_alt),
+              title: const Text('Take Photo'),
+              onTap: () => Navigator.of(context).pop('camera'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.link),
+              title: const Text('Enter URL'),
+              onTap: () => Navigator.of(context).pop('url'),
+            ),
+            if (_playlist.coverImage != null)
+              ListTile(
+                leading: const Icon(Icons.delete, color: Colors.red),
+                title: const Text('Remove Cover', style: TextStyle(color: Colors.red)),
+                onTap: () => Navigator.of(context).pop('remove'),
+              ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+        ],
+      ),
+    );
+
+    if (result == null) return;
+
+    try {
+      if (result == 'remove') {
+        await widget.playlistService.updatePlaylistCover(_playlist.id, null);
+        await _loadPlaylist();
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Cover removed')),
+          );
+        }
+        return;
+      }
+
+      if (result == 'url') {
+        final urlController = TextEditingController(text: _playlist.coverImage ?? '');
+        final urlResult = await showDialog<String>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Enter Image URL'),
+            content: TextField(
+              controller: urlController,
+              decoration: const InputDecoration(
+                hintText: 'https://example.com/image.jpg',
+                border: OutlineInputBorder(),
+              ),
+              autofocus: true,
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('Cancel'),
+              ),
+              TextButton(
+                onPressed: () {
+                  if (urlController.text.trim().isNotEmpty) {
+                    Navigator.of(context).pop(urlController.text.trim());
+                  }
+                },
+                child: const Text('Save'),
+              ),
+            ],
+          ),
+        );
+
+        if (urlResult != null && urlResult.isNotEmpty) {
+          await widget.playlistService.updatePlaylistCover(_playlist.id, urlResult);
+          await _loadPlaylist();
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Cover updated')),
+            );
+          }
+        }
+        return;
+      }
+
+      // Handle image picker
+      final ImagePicker picker = ImagePicker();
+      XFile? image;
+      
+      if (result == 'gallery') {
+        image = await picker.pickImage(source: ImageSource.gallery);
+      } else if (result == 'camera') {
+        image = await picker.pickImage(source: ImageSource.camera);
+      }
+
+      if (image != null) {
+        final imageBytes = await image.readAsBytes();
+        await widget.playlistService.uploadPlaylistCover(_playlist.id, imageBytes, image.name);
+        await _loadPlaylist();
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Cover uploaded')),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to update cover: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
   Future<void> _downloadUndownloadedTracks() async {
     // Find all tracks that need to be downloaded
     final tracksToDownload = _playlist.tracks.where((track) => 
@@ -971,6 +1111,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                   ),
                 ),
                 child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     // Back button
                     if (widget.onBack != null)
@@ -979,23 +1120,64 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                         onPressed: widget.onBack,
                         tooltip: 'Back to playlists',
                       ),
-                    Container(
-                      width: 80,
-                      height: 80,
-                      decoration: BoxDecoration(
-                        color: primaryColor.withOpacity(0.15),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Icon(
-                        Icons.playlist_play,
-                        size: 40,
-                        color: primaryColor,
+                    GestureDetector(
+                      onTap: _editPlaylistCover,
+                      child: Container(
+                        width: 160,
+                        height: 160,
+                        decoration: BoxDecoration(
+                          color: primaryColor.withOpacity(0.15),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: _getCoverImageUrl() != null
+                            ? ClipRRect(
+                                borderRadius: BorderRadius.circular(12),
+                                child: Stack(
+                                  children: [
+                                    Image.network(
+                                      _getCoverImageUrl()!,
+                                      width: 160,
+                                      height: 160,
+                                      fit: BoxFit.cover,
+                                      errorBuilder: (context, error, stackTrace) {
+                                        return Icon(
+                                          Icons.playlist_play,
+                                          size: 80,
+                                          color: primaryColor,
+                                        );
+                                      },
+                                    ),
+                                    Positioned(
+                                      bottom: 8,
+                                      right: 8,
+                                      child: Container(
+                                        padding: const EdgeInsets.all(6),
+                                        decoration: BoxDecoration(
+                                          color: Colors.black.withOpacity(0.6),
+                                          borderRadius: BorderRadius.circular(6),
+                                        ),
+                                        child: const Icon(
+                                          Icons.edit,
+                                          size: 20,
+                                          color: Colors.white,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              )
+                            : Icon(
+                                Icons.playlist_play,
+                                size: 80,
+                                color: primaryColor,
+                              ),
                       ),
                     ),
                     const SizedBox(width: 20),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
                         children: [
                           // Title row
                           Row(
