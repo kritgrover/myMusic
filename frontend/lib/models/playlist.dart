@@ -4,6 +4,7 @@ class Playlist {
   final List<PlaylistTrack> tracks;
   final DateTime createdAt;
   final DateTime updatedAt;
+  final String? coverImage;
 
   Playlist({
     required this.id,
@@ -11,6 +12,7 @@ class Playlist {
     required this.tracks,
     required this.createdAt,
     required this.updatedAt,
+    this.coverImage,
   });
 
   Map<String, dynamic> toJson() {
@@ -20,6 +22,7 @@ class Playlist {
       'songs': tracks.map((track) => track.toJson()).toList(),
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt.toIso8601String(),
+      'coverImage': coverImage,
     };
   }
 
@@ -33,6 +36,7 @@ class Playlist {
           [],
       createdAt: DateTime.parse(json['createdAt'] ?? DateTime.now().toIso8601String()),
       updatedAt: DateTime.parse(json['updatedAt'] ?? DateTime.now().toIso8601String()),
+      coverImage: json['coverImage'],
     );
   }
 
@@ -42,6 +46,7 @@ class Playlist {
     List<PlaylistTrack>? tracks,
     DateTime? createdAt,
     DateTime? updatedAt,
+    String? coverImage,
   }) {
     return Playlist(
       id: id ?? this.id,
@@ -49,6 +54,7 @@ class Playlist {
       tracks: tracks ?? this.tracks,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
+      coverImage: coverImage ?? this.coverImage,
     );
   }
 }
@@ -115,7 +121,6 @@ class PlaylistTrack {
 
   // Create from DownloadedFile
   factory PlaylistTrack.fromDownloadedFile(dynamic downloadedFile) {
-    // Use title if available, otherwise use filename
     String displayTitle = downloadedFile.title ?? downloadedFile.filename;
     
     return PlaylistTrack(

@@ -3,14 +3,14 @@ import '../models/queue_item.dart';
 import 'player_state_service.dart';
 
 enum LoopMode {
-  none,      // No loop - stops when queue ends
-  queue,     // Loop entire queue
-  single,    // Loop single song
+  none,
+  queue,
+  single,
 }
 
 class QueueService extends ChangeNotifier {
   final List<QueueItem> _queue = [];
-  int _currentIndex = -1; // -1 means no current track
+  int _currentIndex = -1;
   LoopMode _loopMode = LoopMode.none;
 
   List<QueueItem> get queue => List.unmodifiable(_queue);
@@ -39,9 +39,7 @@ class QueueService extends ChangeNotifier {
   void removeFromQueue(int index) {
     if (index >= 0 && index < _queue.length) {
       _queue.removeAt(index);
-      // Adjust current index if needed
       if (_currentIndex == index) {
-        // If we removed the current track, try to keep playing the same position
         if (_currentIndex >= _queue.length) {
           _currentIndex = _queue.length - 1;
         }
@@ -59,7 +57,7 @@ class QueueService extends ChangeNotifier {
     notifyListeners();
   }
 
-  // Set current index (when a track starts playing)
+  // Set current index
   void setCurrentIndex(int index) {
     if (index >= 0 && index < _queue.length) {
       _currentIndex = index;
@@ -170,7 +168,7 @@ class QueueService extends ChangeNotifier {
     notifyListeners();
   }
 
-  // Add item and play it immediately (replaces current track)
+  // Add item and play it immediately
   Future<void> addAndPlay(QueueItem item, PlayerStateService playerService) async {
     // If queue is empty or we're at the end, just add and play
     if (_queue.isEmpty || _currentIndex == _queue.length - 1) {
@@ -185,7 +183,7 @@ class QueueService extends ChangeNotifier {
     }
   }
 
-  // Get next item considering loop mode (used for completion handler)
+  // Get next item considering loop mode
   QueueItem? getNextForCompletion() {
     if (_loopMode == LoopMode.single && _currentIndex >= 0 && _currentIndex < _queue.length) {
       // Return current item for single loop

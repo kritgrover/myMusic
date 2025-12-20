@@ -1,87 +1,10 @@
 {
-    "eff355be-5907-4da3-9a58-085a7cd98000": {
-        "id": "eff355be-5907-4da3-9a58-085a7cd98000",
-        "name": "Brainstorm",
-        "songs": [
-            {
-                "id": "u7jrNCB0DPY",
-                "title": "NxWorries (Anderson .Paak & Knxwledge) - FromHere feat. Snoop Dogg & October London",
-                "artist": "NxWorries",
-                "album": "FromHere (feat. Snoop Dogg & October London)",
-                "filename": "",
-                "file_path": "",
-                "url": "https://www.youtube.com/watch?v=u7jrNCB0DPY",
-                "thumbnail": "https://img.youtube.com/vi/u7jrNCB0DPY/maxresdefault.jpg",
-                "duration": 265.0
-            },
-            {
-                "id": "5754b3bc-e833-47a9-bca1-22910325552b",
-                "title": "Yours",
-                "artist": "Post Malone",
-                "album": "F-1 Trillion",
-                "filename": "",
-                "file_path": "",
-                "url": "https://www.youtube.com/watch?v=hrAeuPqYnRQ",
-                "thumbnail": "https://img.youtube.com/vi/hrAeuPqYnRQ/maxresdefault.jpg",
-                "duration": 200.0
-            },
-            {
-                "id": "3c7aaa70-e12f-48d9-80b1-02bb467c69f0",
-                "title": "Wednesday",
-                "artist": "Good Morning",
-                "album": "Shawcross",
-                "filename": "",
-                "file_path": "",
-                "url": "https://www.youtube.com/watch?v=Kkk80x-dh84",
-                "thumbnail": "https://img.youtube.com/vi/Kkk80x-dh84/maxresdefault.jpg",
-                "duration": 144.0
-            },
-            {
-                "id": "3c6edbad-3101-4a38-afdc-b0a331258be6",
-                "title": "Maybe Tomorrow",
-                "artist": "Hayien",
-                "album": "Left in You",
-                "filename": "",
-                "file_path": "",
-                "url": "https://www.youtube.com/watch?v=k7kvwbd9LRE",
-                "thumbnail": "https://img.youtube.com/vi/k7kvwbd9LRE/maxresdefault.jpg",
-                "duration": 244.0
-            },
-            {
-                "id": "18085447-0105-440d-a76e-536e128a1768",
-                "title": "Wicked Games",
-                "artist": "The Weeknd",
-                "album": "Trilogy",
-                "filename": "",
-                "file_path": "",
-                "url": "https://www.youtube.com/watch?v=O1OTWCd40bc",
-                "thumbnail": "https://img.youtube.com/vi/O1OTWCd40bc/maxresdefault.jpg",
-                "duration": 282.0
-            },
-            {
-                "id": "b1aBzAE-IFY",
-                "title": "Post Malone ft. Luke Combs - Guy For That (Official Music Video) ft. Luke Combs",
-                "artist": "Post Malone",
-                "album": "Guy For That",
-                "filename": "",
-                "file_path": "",
-                "url": "https://www.youtube.com/watch?v=b1aBzAE-IFY",
-                "thumbnail": "https://img.youtube.com/vi/b1aBzAE-IFY/maxresdefault.jpg",
-                "duration": 194.0
-            },
-            {
-                "id": "Neurotica - Polyphia.m4a",
-                "title": "Neurotica",
-                "artist": "Polyphia",
-                "album": null,
-                "filename": "",
-                "file_path": "",
-                "url": null,
-                "thumbnail": null,
-                "duration": null
-            }
-        ],
-        "createdAt": "2025-12-11T23:34:09.465894",
-        "updatedAt": "2025-12-17T23:38:46.334864"
+    "f851575e-0a58-42d9-aae9-db7dbd56d80f": {
+        "id": "f851575e-0a58-42d9-aae9-db7dbd56d80f",
+        "name": "hi",
+        "songs": [],
+        "createdAt": "2025-12-19T21:50:38.049154",
+        "updatedAt": "2025-12-19T21:57:16.824958",
+        "coverImage": "/playlists/f851575e-0a58-42d9-aae9-db7dbd56d80f/cover"
     }
 }

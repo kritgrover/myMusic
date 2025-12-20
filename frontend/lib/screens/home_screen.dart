@@ -118,7 +118,6 @@ class _HomeScreenState extends State<HomeScreen> {
       if (_queueService.currentIndex >= 0) {
         final nextItem = _queueService.getNextForCompletion();
         if (nextItem != null) {
-          // playNext() already handles all loop modes (none, queue, single)
           _queueService.playNext(_playerStateService);
         }
       }
@@ -287,7 +286,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 Expanded(
                   child: _screens[_currentIndex],
                 ),
-                // CSV Progress bar (above bottom player)
+                // CSV Progress bar
                 if (_csvProgress != null && _csvFilename != null)
                   CsvProgressBar(
                     processed: _csvProgress!.processed,
@@ -296,7 +295,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     status: _csvProgress!.status,
                     progress: _csvProgress!.progress,
                   ),
-                // Download Progress bar (above bottom player)
+                // Download Progress bar
                 if (_downloadProgress != null && _downloadId != null)
                   DownloadProgressBar(
                     processed: _downloadProgress!.processed,

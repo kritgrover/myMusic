@@ -16,15 +16,14 @@ class AudioPlayerService {
   AudioPlayer get player => _audioPlayer;
   
   AudioPlayerService() {
-    // just_audio automatically handles position and duration updates
   }
   
   Future<void> playFromUrl(String url) async {
     try {
       _currentUrl = url;
-      // Set the URL source - just_audio will handle range requests automatically
+      // Set the URL source
       await _audioPlayer.setUrl(url);
-      // Start playing - just_audio supports progressive streaming
+      // Start playing
       await _audioPlayer.play();
     } catch (e) {
       throw Exception('Failed to play audio: $e');
@@ -73,7 +72,7 @@ class AudioPlayerService {
     try {
       await _audioPlayer.seek(position);
     } catch (e) {
-      // Ignore seek errors if position is invalid
+      // Ignore seek errors
     }
   }
   

@@ -3,6 +3,7 @@ import '../services/playlist_service.dart';
 import '../models/playlist.dart';
 import '../services/player_state_service.dart';
 import '../services/queue_service.dart';
+import '../config.dart';
 import 'playlist_detail_screen.dart';
 
 class PlaylistsScreen extends StatefulWidget {
@@ -209,6 +210,15 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
     }
   }
 
+  String? _getCoverImageUrl(Playlist playlist) {
+    if (playlist.coverImage == null) return null;
+    if (playlist.coverImage!.startsWith('http://') || playlist.coverImage!.startsWith('https://')) {
+      return playlist.coverImage;
+    }
+    // Local cover image
+    return '${AppConfig.apiBaseUrl}${playlist.coverImage}';
+  }
+
   void _showPlaylistDetail(Playlist playlist) {
     setState(() {
       _selectedPlaylist = playlist;
@@ -373,11 +383,28 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
                                               color: primaryColor.withOpacity(0.15),
                                               borderRadius: BorderRadius.circular(10),
                                             ),
-                                            child: Icon(
-                                              Icons.playlist_play,
-                                              size: 32,
-                                              color: primaryColor,
-                                            ),
+                                            child: _getCoverImageUrl(playlist) != null
+                                                ? ClipRRect(
+                                                    borderRadius: BorderRadius.circular(10),
+                                                    child: Image.network(
+                                                      _getCoverImageUrl(playlist)!,
+                                                      width: 64,
+                                                      height: 64,
+                                                      fit: BoxFit.cover,
+                                                      errorBuilder: (context, error, stackTrace) {
+                                                        return Icon(
+                                                          Icons.playlist_play,
+                                                          size: 32,
+                                                          color: primaryColor,
+                                                        );
+                                                      },
+                                                    ),
+                                                  )
+                                                : Icon(
+                                                    Icons.playlist_play,
+                                                    size: 32,
+                                                    color: primaryColor,
+                                                  ),
                                           ),
                                           const SizedBox(width: 16),
                                           Expanded(

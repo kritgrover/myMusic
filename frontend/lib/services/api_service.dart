@@ -276,6 +276,39 @@ class ApiService {
       throw Exception('List CSV files error: $e');
     }
   }
+
+  /// Get album artwork URL from a downloaded file
+  String getFileArtworkUrl(String filename) {
+    final encodedFilename = Uri.encodeComponent(filename);
+    return '$baseUrl/downloads/$encodedFilename/artwork';
+  }
+
+  /// Fetch album cover URL from iTunes API based on track metadata
+  Future<String?> fetchAlbumCover({
+    required String title,
+    String artist = '',
+    String album = '',
+  }) async {
+    try {
+      final uri = Uri.parse('$baseUrl/album-cover').replace(queryParameters: {
+        'title': title,
+        if (artist.isNotEmpty) 'artist': artist,
+        if (album.isNotEmpty) 'album': album,
+      });
+      
+      final response = await http.get(uri);
+      
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        return data['artwork_url'] as String?;
+      } else {
+        return null;
+      }
+    } catch (e) {
+      print('Error fetching album cover: $e');
+      return null;
+    }
+  }
 }
 
 class VideoInfo {

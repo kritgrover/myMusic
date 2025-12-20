@@ -1,12 +1,15 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import '../services/playlist_service.dart';
 import '../services/api_service.dart';
 import '../services/queue_service.dart';
 import '../models/playlist.dart';
 import '../models/queue_item.dart';
+import '../config.dart';
 import 'add_to_playlist_screen.dart';
 import '../utils/song_display_utils.dart';
+import '../widgets/album_cover.dart';
 
 enum PlaylistSortOption {
   defaultOrder,
@@ -181,7 +184,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
     
     switch (_sortOption) {
       case PlaylistSortOption.defaultOrder:
-        // Return tracks in original order (as stored)
+        // Return tracks in original order
         return tracks;
       case PlaylistSortOption.artistName:
         // Sort by artist name, then by song name
@@ -306,7 +309,6 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
         
         if (progress.isCompleted) {
           // Update tracks with downloaded filenames
-          // Match by index (downloads are processed in the same order as sent)
           final updatedTrackIds = <String>{};
           int updateCount = 0;
           
@@ -397,7 +399,6 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
         await Future.delayed(const Duration(milliseconds: 500));
       } catch (e) {
         // If progress is not available, the download might have finished
-        // Try to reload playlist anyway
         await _loadPlaylist();
         break;
       }
@@ -538,6 +539,144 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
     }
   }
 
+  String? _getCoverImageUrl() {
+    if (_playlist.coverImage == null) return null;
+    if (_playlist.coverImage!.startsWith('http://') || _playlist.coverImage!.startsWith('https://')) {
+      return _playlist.coverImage;
+    }
+    // Local cover image
+    return '${AppConfig.apiBaseUrl}${_playlist.coverImage}';
+  }
+
+  Future<void> _editPlaylistCover() async {
+    final result = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Edit Playlist Cover'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.photo_library),
+              title: const Text('Choose from Gallery'),
+              onTap: () => Navigator.of(context).pop('gallery'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.camera_alt),
+              title: const Text('Take Photo'),
+              onTap: () => Navigator.of(context).pop('camera'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.link),
+              title: const Text('Enter URL'),
+              onTap: () => Navigator.of(context).pop('url'),
+            ),
+            if (_playlist.coverImage != null)
+              ListTile(
+                leading: const Icon(Icons.delete, color: Colors.red),
+                title: const Text('Remove Cover', style: TextStyle(color: Colors.red)),
+                onTap: () => Navigator.of(context).pop('remove'),
+              ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+        ],
+      ),
+    );
+
+    if (result == null) return;
+
+    try {
+      if (result == 'remove') {
+        await widget.playlistService.updatePlaylistCover(_playlist.id, null);
+        await _loadPlaylist();
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Cover removed')),
+          );
+        }
+        return;
+      }
+
+      if (result == 'url') {
+        final urlController = TextEditingController(text: _playlist.coverImage ?? '');
+        final urlResult = await showDialog<String>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Enter Image URL'),
+            content: TextField(
+              controller: urlController,
+              decoration: const InputDecoration(
+                hintText: 'https://example.com/image.jpg',
+                border: OutlineInputBorder(),
+              ),
+              autofocus: true,
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('Cancel'),
+              ),
+              TextButton(
+                onPressed: () {
+                  if (urlController.text.trim().isNotEmpty) {
+                    Navigator.of(context).pop(urlController.text.trim());
+                  }
+                },
+                child: const Text('Save'),
+              ),
+            ],
+          ),
+        );
+
+        if (urlResult != null && urlResult.isNotEmpty) {
+          await widget.playlistService.updatePlaylistCover(_playlist.id, urlResult);
+          await _loadPlaylist();
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Cover updated')),
+            );
+          }
+        }
+        return;
+      }
+
+      // Handle image picker
+      final ImagePicker picker = ImagePicker();
+      XFile? image;
+      
+      if (result == 'gallery') {
+        image = await picker.pickImage(source: ImageSource.gallery);
+      } else if (result == 'camera') {
+        image = await picker.pickImage(source: ImageSource.camera);
+      }
+
+      if (image != null) {
+        final imageBytes = await image.readAsBytes();
+        await widget.playlistService.uploadPlaylistCover(_playlist.id, imageBytes, image.name);
+        await _loadPlaylist();
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Cover uploaded')),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to update cover: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
   Future<void> _downloadUndownloadedTracks() async {
     // Find all tracks that need to be downloaded
     final tracksToDownload = _playlist.tracks.where((track) => 
@@ -597,7 +736,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
       final result = await _apiService.startBatchDownload(downloads);
       final downloadId = result['download_id'] as String;
 
-      // Start progress tracking if callback is provided
+      // Start progress tracking
       if (widget.onDownloadStart != null) {
         widget.onDownloadStart!(downloadId);
       }
@@ -689,6 +828,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
               filename: track.filename,
               title: track.title,
               artist: track.artist,
+              album: track.album,
             );
             queueItems.add(queueItem);
             successCount++;
@@ -706,6 +846,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                 title: result.title,
                 artist: result.artist,
                 streamingUrl: result.streamingUrl,
+                album: track.album,
               );
               queueItems.add(queueItem);
               successCount++;
@@ -723,13 +864,10 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
       }
 
       if (mounted) {
-        Navigator.of(context).pop(); // Close loading dialog
+        Navigator.of(context).pop();
 
         if (queueItems.isNotEmpty) {
-          // Clear the queue first
           widget.queueService!.clearQueue();
-          
-          // Add all items to queue
           widget.queueService!.addAllToQueue(queueItems);
           
           // Start playing the first item
@@ -808,6 +946,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
               filename: track.filename,
               title: track.title,
               artist: track.artist,
+              album: track.album,
             );
             queueItems.add(queueItem);
             successCount++;
@@ -825,6 +964,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                 title: result.title,
                 artist: result.artist,
                 streamingUrl: result.streamingUrl,
+                album: track.album,
               );
               queueItems.add(queueItem);
               successCount++;
@@ -852,7 +992,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
           
           widget.queueService!.addAllToQueue(queueItems);
 
-          // If shuffle is enabled and player service is available, start playing the first song
+          // If shuffle is enabled, start playing the first song
           if (shuffle && widget.playerStateService != null) {
             await widget.queueService!.playItem(0, widget.playerStateService!);
           }
@@ -887,6 +1027,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
           filename: track.filename,
           title: track.title,
           artist: track.artist,
+          album: track.album,
         );
       } else if (track.url != null && track.url!.isNotEmpty) {
         // Need to get streaming URL
@@ -902,6 +1043,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
             title: result.title,
             artist: result.artist,
             streamingUrl: result.streamingUrl,
+            album: track.album,
           );
         } catch (e) {
           if (mounted) {
@@ -975,6 +1117,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                   ),
                 ),
                 child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     // Back button
                     if (widget.onBack != null)
@@ -983,23 +1126,16 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                         onPressed: widget.onBack,
                         tooltip: 'Back to playlists',
                       ),
-                    Container(
-                      width: 80,
-                      height: 80,
-                      decoration: BoxDecoration(
-                        color: primaryColor.withOpacity(0.15),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Icon(
-                        Icons.playlist_play,
-                        size: 40,
-                        color: primaryColor,
-                      ),
+                    _PlaylistCoverWidget(
+                      coverImageUrl: _getCoverImageUrl(),
+                      primaryColor: primaryColor,
+                      onTap: _editPlaylistCover,
                     ),
                     const SizedBox(width: 20),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
                         children: [
                           // Title row
                           Row(
@@ -1208,20 +1344,18 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                                       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                                       child: Row(
                                         children: [
-                                          Container(
-                                            width: 40,
-                                            height: 40,
-                                            decoration: BoxDecoration(
-                                              color: isCurrentlyPlaying 
-                                                  ? primaryColor.withOpacity(0.2)
-                                                  : surfaceHover,
-                                              borderRadius: BorderRadius.circular(8),
-                                            ),
-                                            child: Icon(
-                                              Icons.music_note,
-                                              color: isCurrentlyPlaying ? primaryColor : Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
-                                              size: 20,
-                                            ),
+                                          AlbumCover(
+                                            filename: track.filename.isNotEmpty ? track.filename : null,
+                                            title: track.title,
+                                            artist: track.artist,
+                                            album: track.album,
+                                            size: 40,
+                                            backgroundColor: isCurrentlyPlaying 
+                                                ? primaryColor.withOpacity(0.2)
+                                                : surfaceHover,
+                                            iconColor: isCurrentlyPlaying 
+                                                ? primaryColor 
+                                                : Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
                                           ),
                                           const SizedBox(width: 12),
                                           Expanded(
@@ -1296,5 +1430,84 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                 ),
               ],
         );
+  }
+}
+
+class _PlaylistCoverWidget extends StatefulWidget {
+  final String? coverImageUrl;
+  final Color primaryColor;
+  final VoidCallback onTap;
+
+  const _PlaylistCoverWidget({
+    required this.coverImageUrl,
+    required this.primaryColor,
+    required this.onTap,
+  });
+
+  @override
+  State<_PlaylistCoverWidget> createState() => _PlaylistCoverWidgetState();
+}
+
+class _PlaylistCoverWidgetState extends State<_PlaylistCoverWidget> {
+  bool _isHovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _isHovered = true),
+      onExit: (_) => setState(() => _isHovered = false),
+      child: GestureDetector(
+        onTap: widget.onTap,
+        child: Container(
+          width: 160,
+          height: 160,
+          decoration: BoxDecoration(
+            color: widget.primaryColor.withOpacity(0.15),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: widget.coverImageUrl != null
+              ? ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: Stack(
+                    children: [
+                      Image.network(
+                        widget.coverImageUrl!,
+                        width: 160,
+                        height: 160,
+                        fit: BoxFit.cover,
+                        errorBuilder: (context, error, stackTrace) {
+                          return Icon(
+                            Icons.playlist_play,
+                            size: 80,
+                            color: widget.primaryColor,
+                          );
+                        },
+                      ),
+                      // Dark overlay on hover
+                      if (_isHovered)
+                        Container(
+                          width: 160,
+                          height: 160,
+                          color: Colors.black.withOpacity(0.4),
+                          child: const Center(
+                            child: Icon(
+                              Icons.edit,
+                              size: 32,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                )
+              : Icon(
+                  Icons.playlist_play,
+                  size: 80,
+                  color: widget.primaryColor,
+                ),
+        ),
+      ),
+    );
   }
 }

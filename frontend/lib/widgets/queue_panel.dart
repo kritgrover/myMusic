@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../services/queue_service.dart';
 import '../models/queue_item.dart';
 import '../utils/song_display_utils.dart';
+import 'album_cover.dart';
 
 class QueuePanel extends StatelessWidget {
   final QueueService queueService;
@@ -141,20 +142,16 @@ class QueuePanel extends StatelessWidget {
                           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                           child: Row(
                             children: [
-                              Container(
-                                width: 40,
-                                height: 40,
-                                decoration: BoxDecoration(
-                                  color: isCurrent 
-                                      ? primaryColor.withOpacity(0.2)
-                                      : surfaceHover,
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: Icon(
-                                  Icons.music_note,
-                                  color: isCurrent ? primaryColor : Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
-                                  size: 20,
-                                ),
+                              AlbumCover(
+                                filename: item.filename,
+                                title: item.title,
+                                artist: item.artist,
+                                album: item.album,
+                                size: 40,
+                                backgroundColor: isCurrent 
+                                    ? primaryColor.withOpacity(0.2)
+                                    : surfaceHover,
+                                iconColor: isCurrent ? primaryColor : Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
                               ),
                               const SizedBox(width: 12),
                               Expanded(

@@ -134,15 +134,15 @@ class _NotFoundSongsDialogState extends State<NotFoundSongsDialog> {
               artist: selectedVideo.uploader,
             );
 
-            // Create playlist track - backend expects specific format
+            // Create playlist track
             final trackJson = {
               'id': selectedVideo.id,
               'title': result.title,
               'artist': result.artist,
               'album': widget.notFoundSongs[i]['Album Name'] ?? '',
-              'filename': '', // Not downloaded yet
-              'file_path': '', // Not downloaded yet
-              'url': selectedVideo.url, // Use original YouTube URL
+              'filename': '',
+              'file_path': '',
+              'url': selectedVideo.url,
               'thumbnail': selectedVideo.thumbnail,
               'duration': selectedVideo.duration,
             };
