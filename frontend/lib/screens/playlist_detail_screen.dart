@@ -1126,58 +1126,10 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                         onPressed: widget.onBack,
                         tooltip: 'Back to playlists',
                       ),
-                    GestureDetector(
+                    _PlaylistCoverWidget(
+                      coverImageUrl: _getCoverImageUrl(),
+                      primaryColor: primaryColor,
                       onTap: _editPlaylistCover,
-                      child: Container(
-                        width: 160,
-                        height: 160,
-                        decoration: BoxDecoration(
-                          color: primaryColor.withOpacity(0.15),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: _getCoverImageUrl() != null
-                            ? ClipRRect(
-                                borderRadius: BorderRadius.circular(12),
-                                child: Stack(
-                                  children: [
-                                    Image.network(
-                                      _getCoverImageUrl()!,
-                                      width: 160,
-                                      height: 160,
-                                      fit: BoxFit.cover,
-                                      errorBuilder: (context, error, stackTrace) {
-                                        return Icon(
-                                          Icons.playlist_play,
-                                          size: 80,
-                                          color: primaryColor,
-                                        );
-                                      },
-                                    ),
-                                    Positioned(
-                                      bottom: 8,
-                                      right: 8,
-                                      child: Container(
-                                        padding: const EdgeInsets.all(6),
-                                        decoration: BoxDecoration(
-                                          color: Colors.black.withOpacity(0.6),
-                                          borderRadius: BorderRadius.circular(6),
-                                        ),
-                                        child: const Icon(
-                                          Icons.edit,
-                                          size: 20,
-                                          color: Colors.white,
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              )
-                            : Icon(
-                                Icons.playlist_play,
-                                size: 80,
-                                color: primaryColor,
-                              ),
-                      ),
                     ),
                     const SizedBox(width: 20),
                     Expanded(
@@ -1478,5 +1430,84 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                 ),
               ],
         );
+  }
+}
+
+class _PlaylistCoverWidget extends StatefulWidget {
+  final String? coverImageUrl;
+  final Color primaryColor;
+  final VoidCallback onTap;
+
+  const _PlaylistCoverWidget({
+    required this.coverImageUrl,
+    required this.primaryColor,
+    required this.onTap,
+  });
+
+  @override
+  State<_PlaylistCoverWidget> createState() => _PlaylistCoverWidgetState();
+}
+
+class _PlaylistCoverWidgetState extends State<_PlaylistCoverWidget> {
+  bool _isHovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _isHovered = true),
+      onExit: (_) => setState(() => _isHovered = false),
+      child: GestureDetector(
+        onTap: widget.onTap,
+        child: Container(
+          width: 160,
+          height: 160,
+          decoration: BoxDecoration(
+            color: widget.primaryColor.withOpacity(0.15),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: widget.coverImageUrl != null
+              ? ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: Stack(
+                    children: [
+                      Image.network(
+                        widget.coverImageUrl!,
+                        width: 160,
+                        height: 160,
+                        fit: BoxFit.cover,
+                        errorBuilder: (context, error, stackTrace) {
+                          return Icon(
+                            Icons.playlist_play,
+                            size: 80,
+                            color: widget.primaryColor,
+                          );
+                        },
+                      ),
+                      // Dark overlay on hover
+                      if (_isHovered)
+                        Container(
+                          width: 160,
+                          height: 160,
+                          color: Colors.black.withOpacity(0.4),
+                          child: const Center(
+                            child: Icon(
+                              Icons.edit,
+                              size: 32,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                )
+              : Icon(
+                  Icons.playlist_play,
+                  size: 80,
+                  color: widget.primaryColor,
+                ),
+        ),
+      ),
+    );
   }
 }
