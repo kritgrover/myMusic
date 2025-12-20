@@ -27,6 +27,7 @@ build/
 backend/downloads/
 backend/temp/
 backend/playlists.json
+backend/covers/
 *.mp3
 *.m4a
 *.m3u
