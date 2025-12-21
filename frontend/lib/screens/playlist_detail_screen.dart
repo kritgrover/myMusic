@@ -867,7 +867,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
         Navigator.of(context).pop();
 
         if (queueItems.isNotEmpty) {
-          widget.queueService!.clearQueue();
+          widget.queueService!.clearQueue(widget.playerStateService);
           widget.queueService!.addAllToQueue(queueItems);
           
           // Start playing the first item
@@ -987,7 +987,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
         if (queueItems.isNotEmpty) {
           // If shuffle is enabled, clear the existing queue first
           if (shuffle) {
-            widget.queueService!.clearQueue();
+            widget.queueService!.clearQueue(widget.playerStateService);
           }
           
           widget.queueService!.addAllToQueue(queueItems);

@@ -11,17 +11,35 @@ enum PlayerState {
 
 class AudioPlayerService {
   final AudioPlayer _audioPlayer = AudioPlayer();
+  final AudioPlayer _preloadPlayer = AudioPlayer();
   String? _currentUrl;
+  String? _preloadedUrl;
+  bool _isPreloadedReady = false;
   
   AudioPlayer get player => _audioPlayer;
   
   AudioPlayerService() {
+    // Listen to preload player state to know when it's ready
+    _preloadPlayer.playerStateStream.listen((state) {
+      if (state.processingState == ProcessingState.ready && _preloadedUrl != null) {
+        _isPreloadedReady = true;
+      }
+    });
   }
   
   Future<void> playFromUrl(String url) async {
     try {
       _currentUrl = url;
-      // Set the URL source
+      
+      // If this URL was preloaded, the OS/network cache should make it load faster
+      // Clear preload state since we're now playing it
+      if (_preloadedUrl == url) {
+        _preloadedUrl = null;
+        _isPreloadedReady = false;
+        _preloadPlayer.stop();
+      }
+      
+      // Set the URL source (should be faster if it was preloaded due to cache)
       await _audioPlayer.setUrl(url);
       // Start playing
       await _audioPlayer.play();
@@ -29,6 +47,36 @@ class AudioPlayerService {
       throw Exception('Failed to play audio: $e');
     }
   }
+  
+  // Preload a URL in the background without playing it
+  Future<void> preloadUrl(String url) async {
+    try {
+      // Don't preload if it's already the current URL or already preloaded
+      if (url == _currentUrl || url == _preloadedUrl) {
+        return;
+      }
+      
+      _preloadedUrl = url;
+      _isPreloadedReady = false;
+      // Preload the URL (this will start downloading/buffering)
+      await _preloadPlayer.setUrl(url);
+      // Don't call play() - just let it buffer in the background
+    } catch (e) {
+      // Silently fail preloading - it's not critical
+      _preloadedUrl = null;
+      _isPreloadedReady = false;
+    }
+  }
+  
+  // Clear preloaded song
+  void clearPreload() {
+    _preloadedUrl = null;
+    _isPreloadedReady = false;
+    _preloadPlayer.stop();
+  }
+  
+  String? get preloadedUrl => _preloadedUrl;
+  bool get isPreloadedReady => _isPreloadedReady;
   
   Future<void> playFromFile(String filePath) async {
     try {
@@ -114,5 +162,6 @@ class AudioPlayerService {
   
   void dispose() {
     _audioPlayer.dispose();
+    _preloadPlayer.dispose();
   }
 }

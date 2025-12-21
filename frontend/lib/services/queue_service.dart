@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../models/queue_item.dart';
+import '../config.dart';
 import 'player_state_service.dart';
 
 enum LoopMode {
@@ -51,9 +52,13 @@ class QueueService extends ChangeNotifier {
   }
 
   // Clear the entire queue
-  void clearQueue() {
+  void clearQueue([PlayerStateService? playerService]) {
     _queue.clear();
     _currentIndex = -1;
+    // Clear any preloaded song if playerService is provided
+    if (playerService != null) {
+      playerService.audioPlayer.clearPreload();
+    }
     notifyListeners();
   }
 
@@ -145,6 +150,7 @@ class QueueService extends ChangeNotifier {
       _currentIndex = index;
       final item = _queue[index];
       await _playItem(item, playerService);
+      // Preload will be handled by _playItem
     }
   }
 
@@ -165,7 +171,33 @@ class QueueService extends ChangeNotifier {
         trackArtist: item.artist,
       );
     }
+    
+    // Preload the next song in the queue
+    _preloadNext(playerService);
+    
     notifyListeners();
+  }
+  
+  // Preload the next song in the queue
+  void _preloadNext(PlayerStateService playerService) {
+    final nextItem = getNextForCompletion();
+    if (nextItem != null) {
+      String? urlToPreload;
+      if (nextItem.url != null) {
+        urlToPreload = nextItem.url;
+      } else if (nextItem.filename != null) {
+        // Convert filename to backend URL for preloading
+        final encodedFilename = Uri.encodeComponent(nextItem.filename!);
+        urlToPreload = '${AppConfig.apiBaseUrl}/downloads/$encodedFilename';
+      }
+      
+      if (urlToPreload != null) {
+        // Preload in the background (don't await - fire and forget)
+        playerService.audioPlayer.preloadUrl(urlToPreload).catchError((e) {
+          // Silently handle preload errors
+        });
+      }
+    }
   }
 
   // Add item and play it immediately
