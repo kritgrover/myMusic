@@ -4,6 +4,7 @@ import 'package:image_picker/image_picker.dart';
 import '../services/playlist_service.dart';
 import '../services/api_service.dart';
 import '../services/queue_service.dart';
+import '../services/recently_played_service.dart';
 import '../models/playlist.dart';
 import '../models/queue_item.dart';
 import '../config.dart';
@@ -22,6 +23,7 @@ class PlaylistDetailScreen extends StatefulWidget {
   final PlaylistService playlistService;
   final dynamic playerStateService; // Optional, for playing tracks
   final QueueService? queueService;
+  final RecentlyPlayedService? recentlyPlayedService; // Optional, for tracking play history
   final VoidCallback? onBack; // Callback to return to playlists list
   final Function(String)? onDownloadStart; // Callback to start download progress tracking
 
@@ -31,6 +33,7 @@ class PlaylistDetailScreen extends StatefulWidget {
     required this.playlistService,
     this.playerStateService,
     this.queueService,
+    this.recentlyPlayedService,
     this.onBack,
     this.onDownloadStart,
   });
@@ -415,6 +418,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
           trackName: displayTitle,
           trackArtist: track.artist,
         );
+        // Tracking is now done in PlayerStateService when song starts
       } else if (track.filename.isNotEmpty) {
         // PlayerStateService not available
         if (mounted) {
@@ -440,6 +444,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
               trackName: result.title,
               trackArtist: result.artist,
             );
+            // Tracking is now done in PlayerStateService when song starts
           } catch (e) {
             if (mounted) {
               ScaffoldMessenger.of(context).showSnackBar(
@@ -870,6 +875,15 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
           widget.queueService!.clearQueue();
           widget.queueService!.addAllToQueue(queueItems);
           
+          // Record playlist in recently played
+          if (widget.recentlyPlayedService != null) {
+            await widget.recentlyPlayedService!.addPlaylist(
+              playlistId: _playlist.id,
+              title: _playlist.name,
+              thumbnail: _getCoverImageUrl(),
+            );
+          }
+          
           // Start playing the first item
           await widget.queueService!.playItem(0, widget.playerStateService!);
         }
@@ -994,6 +1008,14 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
 
           // If shuffle is enabled, start playing the first song
           if (shuffle && widget.playerStateService != null) {
+            // Record playlist in recently played when shuffle starts playing
+            if (widget.recentlyPlayedService != null) {
+              await widget.recentlyPlayedService!.addPlaylist(
+                playlistId: _playlist.id,
+                title: _playlist.name,
+                thumbnail: _getCoverImageUrl(),
+              );
+            }
             await widget.queueService!.playItem(0, widget.playerStateService!);
           }
         }

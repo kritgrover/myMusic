@@ -1,18 +1,25 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
-import 'search_screen.dart';
 import 'downloads_screen.dart';
 import 'playlists_screen.dart';
 import 'csv_upload_screen.dart';
+import 'playlist_detail_screen.dart';
 import '../widgets/bottom_player.dart';
 import '../widgets/queue_panel.dart';
 import '../widgets/csv_progress_bar.dart';
 import '../widgets/download_progress_bar.dart';
 import '../widgets/not_found_songs_dialog.dart';
+import '../widgets/video_card.dart';
+import '../widgets/album_cover.dart';
+import '../widgets/playlist_selection_dialog.dart';
 import '../services/player_state_service.dart';
 import '../services/queue_service.dart';
 import '../services/api_service.dart';
 import '../services/playlist_service.dart';
+import '../services/recently_played_service.dart';
+import '../models/queue_item.dart';
+import '../models/playlist.dart';
+import '../utils/song_display_utils.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -23,7 +30,8 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   int _currentIndex = 0;
-  final PlayerStateService _playerStateService = PlayerStateService();
+  late final RecentlyPlayedService _recentlyPlayedService;
+  late final PlayerStateService _playerStateService;
   final QueueService _queueService = QueueService();
   bool _showQueuePanel = false;
   StreamSubscription? _completionSubscription;
@@ -46,71 +54,16 @@ class _HomeScreenState extends State<HomeScreen> {
   final ApiService _apiService = ApiService();
   final PlaylistService _playlistService = PlaylistService();
 
-  final List<Widget> _screens = [];
+  // Search state
+  final TextEditingController _searchController = TextEditingController();
+  List<VideoInfo> _searchResults = [];
+  bool _isSearching = false;
 
   @override
   void initState() {
     super.initState();
-    _screens.addAll([
-      SearchScreen(
-        playerStateService: _playerStateService,
-        queueService: _queueService,
-      ),
-      DownloadsScreen(
-        playerStateService: _playerStateService,
-        queueService: _queueService,
-      ),
-      PlaylistsScreen(
-        playerStateService: _playerStateService,
-        queueService: _queueService,
-        onDownloadStart: (downloadId) {
-          setState(() {
-            _downloadId = downloadId;
-            _downloadProgress = null;
-          });
-          _startDownloadProgressPolling(downloadId);
-        },
-      ),
-      CsvUploadScreen(
-        onConversionStart: (filename) {
-          setState(() {
-            _csvFilename = filename;
-            _csvProgress = null;
-          });
-          _startProgressPolling(filename);
-        },
-        onConversionComplete: (conversionResult) {
-          _stopProgressPolling();
-          setState(() {
-            _csvFilename = null;
-            _csvProgress = null;
-            
-            // Store pending dialog data
-            if (conversionResult.notFound.isNotEmpty) {
-              _pendingNotFoundSongs = conversionResult.notFound;
-              _pendingPlaylistId = conversionResult.playlistId;
-            }
-          });
-          
-          // Show dialog after state update
-          if (conversionResult.notFound.isNotEmpty) {
-            print('CSV Conversion: ${conversionResult.notFound.length} songs not found, showing dialog...');
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (mounted && _pendingNotFoundSongs != null) {
-                final notFound = _pendingNotFoundSongs!;
-                final playlistId = _pendingPlaylistId;
-                _pendingNotFoundSongs = null;
-                _pendingPlaylistId = null;
-                print('Showing dialog with ${notFound.length} not found songs');
-                _showNotFoundSongsDialog(notFound, playlistId);
-              }
-            });
-          } else {
-            print('CSV Conversion: All songs found, no dialog needed');
-          }
-        },
-      ),
-    ]);
+    _recentlyPlayedService = RecentlyPlayedService();
+    _playerStateService = PlayerStateService(recentlyPlayedService: _recentlyPlayedService);
 
     // Listen for song completion and auto-play next song in queue
     _completionSubscription = _playerStateService.audioPlayer.completionStream.listen((_) {
@@ -122,6 +75,556 @@ class _HomeScreenState extends State<HomeScreen> {
         }
       }
     });
+
+    // Listen to recently played service changes
+    _recentlyPlayedService.addListener(_onRecentlyPlayedChanged);
+    
+    // Load items if they haven't been loaded yet
+    if (_recentlyPlayedService.items.isEmpty) {
+      // Wait a bit for async load to complete, then check again
+      Future.delayed(const Duration(milliseconds: 100), () {
+        if (mounted && _recentlyPlayedService.items.isNotEmpty) {
+          setState(() {});
+        }
+      });
+    }
+  }
+
+  void _onRecentlyPlayedChanged() {
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  Widget _buildCurrentScreen() {
+    switch (_currentIndex) {
+      case 0:
+        return _buildHomeContent();
+      case 1:
+        return DownloadsScreen(
+          playerStateService: _playerStateService,
+          queueService: _queueService,
+          recentlyPlayedService: _recentlyPlayedService,
+        );
+      case 2:
+        return PlaylistsScreen(
+          playerStateService: _playerStateService,
+          queueService: _queueService,
+          recentlyPlayedService: _recentlyPlayedService,
+          onDownloadStart: (downloadId) {
+            setState(() {
+              _downloadId = downloadId;
+              _downloadProgress = null;
+            });
+            _startDownloadProgressPolling(downloadId);
+          },
+        );
+      case 3:
+        return CsvUploadScreen(
+          onConversionStart: (filename) {
+            setState(() {
+              _csvFilename = filename;
+              _csvProgress = null;
+            });
+            _startProgressPolling(filename);
+          },
+          onConversionComplete: (conversionResult) {
+            _stopProgressPolling();
+            setState(() {
+              _csvFilename = null;
+              _csvProgress = null;
+              
+              // Store pending dialog data
+              if (conversionResult.notFound.isNotEmpty) {
+                _pendingNotFoundSongs = conversionResult.notFound;
+                _pendingPlaylistId = conversionResult.playlistId;
+              }
+            });
+            
+            // Show dialog after state update
+            if (conversionResult.notFound.isNotEmpty) {
+              print('CSV Conversion: ${conversionResult.notFound.length} songs not found, showing dialog...');
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (mounted && _pendingNotFoundSongs != null) {
+                  final notFound = _pendingNotFoundSongs!;
+                  final playlistId = _pendingPlaylistId;
+                  _pendingNotFoundSongs = null;
+                  _pendingPlaylistId = null;
+                  print('Showing dialog with ${notFound.length} not found songs');
+                  _showNotFoundSongsDialog(notFound, playlistId);
+                }
+              });
+            } else {
+              print('CSV Conversion: All songs found, no dialog needed');
+            }
+          },
+        );
+      default:
+        return _buildHomeContent();
+    }
+  }
+
+  Widget _buildHomeContent() {
+    return Column(
+      children: [
+        // Search section
+        Padding(
+          padding: const EdgeInsets.all(24.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Discover Music',
+                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 20),
+              TextField(
+                controller: _searchController,
+                decoration: InputDecoration(
+                  hintText: 'Search for songs, artists, albums...',
+                  prefixIcon: const Icon(Icons.search, size: 24),
+                  suffixIcon: _searchController.text.isNotEmpty
+                      ? IconButton(
+                          icon: const Icon(Icons.clear, size: 20),
+                          onPressed: () {
+                            _searchController.clear();
+                            setState(() {
+                              _searchResults = [];
+                            });
+                          },
+                        )
+                      : null,
+                ),
+                onSubmitted: (_) => _performSearch(),
+                onChanged: (_) => setState(() {}),
+                textInputAction: TextInputAction.search,
+              ),
+            ],
+          ),
+        ),
+        // Search results or recently played section
+        Expanded(
+          child: _isSearching
+              ? const Center(child: CircularProgressIndicator())
+              : _searchResults.isNotEmpty
+                  ? ListView.separated(
+                      padding: const EdgeInsets.symmetric(horizontal: 24),
+                      itemCount: _searchResults.length,
+                      separatorBuilder: (context, index) => const SizedBox(height: 12),
+                      itemBuilder: (context, index) {
+                        return VideoCard(
+                          video: _searchResults[index],
+                          onStream: () async {
+                            await _streamVideo(_searchResults[index]);
+                          },
+                          onDownload: () async {
+                            await _downloadVideo(_searchResults[index]);
+                          },
+                          onAddToPlaylist: () async {
+                            await _showAddToPlaylistDialog(_searchResults[index]);
+                          },
+                          onAddToQueue: () async {
+                            await _addToQueue(_searchResults[index]);
+                          },
+                        );
+                      },
+                    )
+                  : _searchController.text.isNotEmpty
+                      ? Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(
+                                Icons.search_off,
+                                size: 64,
+                                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.3),
+                              ),
+                              const SizedBox(height: 16),
+                              Text(
+                                'No results found',
+                                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                                  color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                'Try a different search term',
+                                style: Theme.of(context).textTheme.bodySmall,
+                              ),
+                            ],
+                          ),
+                        )
+                      : ListenableBuilder(
+                          listenable: _recentlyPlayedService,
+                          builder: (context, _) {
+                            if (_recentlyPlayedService.items.isEmpty) {
+                              return Center(
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(
+                                      Icons.search,
+                                      size: 64,
+                                      color: Theme.of(context).colorScheme.onSurface.withOpacity(0.3),
+                                    ),
+                                    const SizedBox(height: 16),
+                                    Text(
+                                      'Search for your favorite music',
+                                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                                        color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              );
+                            }
+                            
+                            return Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Padding(
+                                  padding: const EdgeInsets.symmetric(horizontal: 24.0),
+                                  child: Text(
+                                    'Recently Played',
+                                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(height: 16),
+                                Expanded(
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(horizontal: 24.0),
+                                    child: LayoutBuilder(
+                                      builder: (context, constraints) {
+                                        // Calculate aspect ratio based on card height (112px) and available width
+                                        final cardWidth = (constraints.maxWidth - 16) / 2; // Account for spacing
+                                        final cardHeight = 112.0; // Match VideoCard height
+                                        final aspectRatio = cardWidth / cardHeight;
+                                        
+                                        return GridView.builder(
+                                          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                                            crossAxisCount: 2,
+                                            crossAxisSpacing: 16,
+                                            mainAxisSpacing: 16,
+                                            childAspectRatio: aspectRatio,
+                                          ),
+                                          itemCount: _recentlyPlayedService.items.length,
+                                          itemBuilder: (context, index) {
+                                            final item = _recentlyPlayedService.items[index];
+                                            return _buildRecentlyPlayedCard(item);
+                                          },
+                                        );
+                                      },
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            );
+                          },
+                        ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildRecentlyPlayedCard(RecentlyPlayedItem item) {
+    final primaryColor = Theme.of(context).colorScheme.primary;
+    final surfaceHover = Theme.of(context).colorScheme.surfaceVariant;
+    
+    return Card(
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: () => _handleRecentlyPlayedTap(item),
+          borderRadius: BorderRadius.circular(12),
+          hoverColor: surfaceHover,
+          child: SizedBox(
+            height: 112, // Match VideoCard height: 80 (image) + 32 (padding)
+            child: Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Row(
+                children: [
+                  // Thumbnail/Icon on the left
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(10),
+                    child: item.type == RecentlyPlayedType.playlist
+                        ? Container(
+                            width: 80,
+                            height: 80,
+                            color: surfaceHover,
+                            child: Icon(
+                              Icons.playlist_play,
+                              size: 32,
+                              color: primaryColor,
+                            ),
+                          )
+                        : item.thumbnail != null
+                            ? Image.network(
+                                item.thumbnail!,
+                                width: 80,
+                                height: 80,
+                                fit: BoxFit.cover,
+                                errorBuilder: (context, error, stackTrace) {
+                                  return Container(
+                                    width: 80,
+                                    height: 80,
+                                    color: surfaceHover,
+                                    child: Icon(
+                                      Icons.music_note,
+                                      size: 32,
+                                      color: primaryColor,
+                                    ),
+                                  );
+                                },
+                              )
+                            : item.filename != null
+                                ? AlbumCover(
+                                    filename: item.filename!,
+                                    title: item.title,
+                                    artist: item.artist,
+                                    size: 80,
+                                  )
+                                : Container(
+                                    width: 80,
+                                    height: 80,
+                                    color: surfaceHover,
+                                    child: Icon(
+                                      Icons.music_note,
+                                      size: 32,
+                                      color: primaryColor,
+                                    ),
+                                  ),
+                  ),
+                  const SizedBox(width: 16),
+                  // Title and artist on the right
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Row(
+                          children: [
+                            if (item.type == RecentlyPlayedType.playlist)
+                              Padding(
+                                padding: const EdgeInsets.only(right: 6),
+                                child: Icon(
+                                  Icons.playlist_play,
+                                  size: 16,
+                                  color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+                                ),
+                              ),
+                            Expanded(
+                              child: Text(
+                                item.title,
+                                style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                                  fontWeight: FontWeight.w500,
+                                ),
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ),
+                        if (item.artist != null && item.artist!.isNotEmpty) ...[
+                          const SizedBox(height: 6),
+                          Text(
+                            item.artist!,
+                            style: Theme.of(context).textTheme.bodySmall,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _handleRecentlyPlayedTap(RecentlyPlayedItem item) async {
+    if (item.type == RecentlyPlayedType.playlist) {
+      // Navigate to playlist detail
+      final playlist = await _playlistService.getPlaylist(item.playlistId ?? item.id);
+      if (playlist != null && mounted) {
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (context) => PlaylistDetailScreen(
+              playlist: playlist,
+              playlistService: _playlistService,
+              playerStateService: _playerStateService,
+              queueService: _queueService,
+              recentlyPlayedService: _recentlyPlayedService,
+              onBack: () => Navigator.of(context).pop(),
+            ),
+          ),
+        );
+      }
+    } else {
+      // Play the song
+      if (item.filename != null && item.filename!.isNotEmpty) {
+        await _playerStateService.playTrack(
+          item.filename!,
+          trackName: item.title,
+          trackArtist: item.artist,
+        );
+        // Update recently played
+        await _recentlyPlayedService.addSong(
+          id: item.id,
+          title: item.title,
+          artist: item.artist,
+          thumbnail: item.thumbnail,
+          filename: item.filename,
+        );
+      }
+    }
+  }
+
+  Future<void> _performSearch() async {
+    final query = _searchController.text.trim();
+    if (query.isEmpty) return;
+
+    setState(() {
+      _isSearching = true;
+      _searchResults = [];
+    });
+
+    try {
+      final results = await _apiService.searchYoutube(query);
+      setState(() {
+        _searchResults = results;
+        _isSearching = false;
+      });
+    } catch (e) {
+      setState(() {
+        _isSearching = false;
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Search failed: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _streamVideo(VideoInfo video) async {
+    try {
+      final result = await _apiService.getStreamingUrl(
+        url: video.url,
+        title: video.title,
+        artist: video.uploader,
+      );
+
+      await _playerStateService.streamTrack(
+        result.streamingUrl,
+        trackName: result.title,
+        trackArtist: result.artist,
+      );
+      // Tracking is now done in PlayerStateService when song starts
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Stream failed: $e'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _downloadVideo(VideoInfo video) async {
+    try {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => const Center(
+          child: CircularProgressIndicator(),
+        ),
+      );
+
+      final result = await _apiService.downloadAudio(
+        url: video.url,
+        title: video.title,
+        artist: video.uploader,
+        outputFormat: 'm4a',
+        embedThumbnail: true,
+      );
+
+      if (mounted) {
+        Navigator.of(context).pop();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Downloaded: ${result.filename}'),
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        Navigator.of(context).pop();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Download failed: $e'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _showAddToPlaylistDialog(VideoInfo video) async {
+    final track = PlaylistTrack.fromVideoInfo(video);
+    
+    await showDialog(
+      context: context,
+      builder: (context) => PlaylistSelectionDialog(
+        playlistService: _playlistService,
+        track: track,
+      ),
+    );
+  }
+
+  Future<void> _addToQueue(VideoInfo video) async {
+    try {
+      final result = await _apiService.getStreamingUrl(
+        url: video.url,
+        title: video.title,
+        artist: video.uploader,
+      );
+
+      final queueItem = QueueItem.fromVideoInfo(
+        videoId: video.id,
+        title: result.title,
+        artist: result.artist,
+        streamingUrl: result.streamingUrl,
+        thumbnail: video.thumbnail,
+      );
+
+      _queueService.addToQueue(queueItem);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to add to queue: $e'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    }
   }
 
   void _startProgressPolling(String filename) {
@@ -257,9 +760,9 @@ class _HomeScreenState extends State<HomeScreen> {
               minExtendedWidth: 80,
               destinations: [
                 NavigationRailDestination(
-                  icon: const Icon(Icons.search_outlined),
-                  selectedIcon: const Icon(Icons.search),
-                  label: const Text('Search'),
+                  icon: const Icon(Icons.home_outlined),
+                  selectedIcon: const Icon(Icons.home),
+                  label: const Text('Home'),
                 ),
                 NavigationRailDestination(
                   icon: const Icon(Icons.download_outlined),
@@ -284,7 +787,7 @@ class _HomeScreenState extends State<HomeScreen> {
             child: Column(
               children: [
                 Expanded(
-                  child: _screens[_currentIndex],
+                  child: _buildCurrentScreen(),
                 ),
                 // CSV Progress bar
                 if (_csvProgress != null && _csvFilename != null)
@@ -351,6 +854,8 @@ class _HomeScreenState extends State<HomeScreen> {
     _completionSubscription?.cancel();
     _csvProgressTimer?.cancel();
     _downloadProgressTimer?.cancel();
+    _searchController.dispose();
+    _recentlyPlayedService.removeListener(_onRecentlyPlayedChanged);
     _playerStateService.dispose();
     _queueService.dispose();
     super.dispose();

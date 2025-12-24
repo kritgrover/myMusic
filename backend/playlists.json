@@ -1,10 +1,66 @@
 {
-    "f851575e-0a58-42d9-aae9-db7dbd56d80f": {
-        "id": "f851575e-0a58-42d9-aae9-db7dbd56d80f",
-        "name": "hi",
-        "songs": [],
-        "createdAt": "2025-12-19T21:50:38.049154",
-        "updatedAt": "2025-12-19T21:57:16.824958",
-        "coverImage": "/playlists/f851575e-0a58-42d9-aae9-db7dbd56d80f/cover"
+    "649c20fe-dae4-4815-a315-05ac0dc67d94": {
+        "id": "649c20fe-dae4-4815-a315-05ac0dc67d94",
+        "name": "Mathy",
+        "songs": [
+            {
+                "id": "4023e303-eb55-43f0-9877-3efb076a61b0",
+                "title": "Playing God",
+                "artist": "Polyphia",
+                "album": "Remember That You Will Die",
+                "filename": "Playing God - Polyphia.m4a",
+                "file_path": "",
+                "url": "https://www.youtube.com/watch?v=Z5NoQg8LdDk",
+                "thumbnail": "https://img.youtube.com/vi/Z5NoQg8LdDk/maxresdefault.jpg",
+                "duration": 204.0
+            },
+            {
+                "id": "960cc4e6-ccb6-4bdb-8d4a-937b6c32ba2c",
+                "title": "G.O.A.T.",
+                "artist": "Polyphia",
+                "album": "New Levels New Devils",
+                "filename": "GOAT - Polyphia.m4a",
+                "file_path": "",
+                "url": "https://www.youtube.com/watch?v=9_gkpYORQLU",
+                "thumbnail": "https://img.youtube.com/vi/9_gkpYORQLU/maxresdefault.jpg",
+                "duration": 216.0
+            },
+            {
+                "id": "82b69be5-f001-43b7-82e2-0ce368c5587d",
+                "title": "Reverie",
+                "artist": "Polyphia",
+                "album": "Remember That You Will Die",
+                "filename": "Reverie - Polyphia.m4a",
+                "file_path": "",
+                "url": "https://www.youtube.com/watch?v=0oCnt13S-1g",
+                "thumbnail": "https://img.youtube.com/vi/0oCnt13S-1g/maxresdefault.jpg",
+                "duration": 245.0
+            },
+            {
+                "id": "1JNmz17gnMw",
+                "title": "Polyphia - Ego Death feat. Steve Vai (Official Music Video)",
+                "artist": "Polyphia",
+                "album": "Remember That You Will Die",
+                "filename": "Polyphia  Ego Death feat Steve Vai Official Music Video - Polyphia.m4a",
+                "file_path": "",
+                "url": "https://www.youtube.com/watch?v=1JNmz17gnMw",
+                "thumbnail": "https://img.youtube.com/vi/1JNmz17gnMw/maxresdefault.jpg",
+                "duration": 351.0
+            },
+            {
+                "id": "6d4334b9-ad53-4982-b0b9-6f22c8765618",
+                "title": "Neurotica",
+                "artist": "Polyphia",
+                "album": "Remember That You Will Die",
+                "filename": "Neurotica - Polyphia.m4a",
+                "file_path": "",
+                "url": "https://www.youtube.com/watch?v=NkuOJNBICyQ",
+                "thumbnail": "https://img.youtube.com/vi/NkuOJNBICyQ/maxresdefault.jpg",
+                "duration": 196.0
+            }
+        ],
+        "createdAt": "2025-12-23T18:53:46.566433",
+        "updatedAt": "2025-12-23T18:59:05.816089",
+        "coverImage": null
     }
 }

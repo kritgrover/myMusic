@@ -2,14 +2,21 @@ import 'package:flutter/material.dart';
 import '../services/api_service.dart';
 import '../services/player_state_service.dart';
 import '../services/queue_service.dart';
+import '../services/recently_played_service.dart';
 import '../models/queue_item.dart';
 import '../utils/song_display_utils.dart';
 
 class DownloadsScreen extends StatefulWidget {
   final PlayerStateService playerStateService;
   final QueueService? queueService;
+  final RecentlyPlayedService? recentlyPlayedService;
   
-  const DownloadsScreen({super.key, required this.playerStateService, this.queueService});
+  const DownloadsScreen({
+    super.key, 
+    required this.playerStateService, 
+    this.queueService,
+    this.recentlyPlayedService,
+  });
 
   @override
   State<DownloadsScreen> createState() => _DownloadsScreenState();
@@ -108,6 +115,7 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
         trackName: trackName,
         trackArtist: file.artist,
       );
+      // Tracking is now done in PlayerStateService when song starts
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

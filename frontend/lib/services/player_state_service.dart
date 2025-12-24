@@ -1,14 +1,18 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
 import 'audio_player_service.dart';
+import 'recently_played_service.dart';
 
 class PlayerStateService extends ChangeNotifier {
   final AudioPlayerService _audioPlayerService = AudioPlayerService();
+  final RecentlyPlayedService? _recentlyPlayedService;
   String? _currentTrackName;
   String? _currentTrackArtist;
+  String? _currentTrackFilename;
   StreamSubscription? _stateSubscription;
 
-  PlayerStateService() {
+  PlayerStateService({RecentlyPlayedService? recentlyPlayedService})
+      : _recentlyPlayedService = recentlyPlayedService {
     // Listen to player state changes to update UI
     _stateSubscription = _audioPlayerService.stateStream.listen((_) {
       notifyListeners();
@@ -26,7 +30,19 @@ class PlayerStateService extends ChangeNotifier {
       // Set track info
       _currentTrackName = trackName ?? filename;
       _currentTrackArtist = trackArtist;
+      _currentTrackFilename = filename;
       notifyListeners();
+      
+      // Track in recently played immediately when song starts
+      if (_recentlyPlayedService != null && trackName != null) {
+        await _recentlyPlayedService!.addSong(
+          id: filename,
+          title: trackName,
+          artist: trackArtist,
+          filename: filename,
+        );
+      }
+      
       await _audioPlayerService.playFromBackend(filename);
     } catch (e) {
       rethrow;
@@ -38,7 +54,18 @@ class PlayerStateService extends ChangeNotifier {
       // Set track info
       _currentTrackName = trackName ?? 'Streaming';
       _currentTrackArtist = trackArtist;
+      _currentTrackFilename = null;
       notifyListeners();
+      
+      // Track in recently played immediately when song starts
+      if (_recentlyPlayedService != null && trackName != null) {
+        await _recentlyPlayedService!.addSong(
+          id: streamingUrl,
+          title: trackName,
+          artist: trackArtist,
+        );
+      }
+      
       await _audioPlayerService.playFromUrl(streamingUrl);
     } catch (e) {
       rethrow;
