@@ -12,6 +12,7 @@ class PlaylistsScreen extends StatefulWidget {
   final QueueService? queueService;
   final RecentlyPlayedService? recentlyPlayedService;
   final Function(String)? onDownloadStart;
+  final String? initialPlaylistId; // Playlist to show when screen loads
 
   const PlaylistsScreen({
     super.key, 
@@ -19,6 +20,7 @@ class PlaylistsScreen extends StatefulWidget {
     this.queueService, 
     this.recentlyPlayedService,
     this.onDownloadStart,
+    this.initialPlaylistId,
   });
 
   @override
@@ -38,6 +40,27 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
     super.initState();
     _loadPlaylists();
     _searchController.addListener(_onSearchChanged);
+    // If an initial playlist ID is provided, load it after playlists are loaded
+    if (widget.initialPlaylistId != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _loadInitialPlaylist();
+      });
+    }
+  }
+
+  Future<void> _loadInitialPlaylist() async {
+    if (widget.initialPlaylistId != null) {
+      try {
+        final playlist = await _playlistService.getPlaylist(widget.initialPlaylistId!);
+        if (playlist != null && mounted) {
+          setState(() {
+            _selectedPlaylist = playlist;
+          });
+        }
+      } catch (e) {
+        // Ignore errors
+      }
+    }
   }
 
   void _onSearchChanged() {

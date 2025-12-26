@@ -1284,25 +1284,27 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                                         ),
                                   ),
                                   const SizedBox(width: 8),
-                                  DropdownButton<PlaylistSortOption>(
-                                    value: _sortOption,
-                                    underline: const SizedBox.shrink(),
-                                    borderRadius: BorderRadius.circular(12),
-                                    onChanged: _changeSortOption,
-                                    items: const [
-                                      DropdownMenuItem(
-                                        value: PlaylistSortOption.defaultOrder,
-                                        child: Text('Default'),
-                                      ),
-                                      DropdownMenuItem(
-                                        value: PlaylistSortOption.artistName,
-                                        child: Text('Artist'),
-                                      ),
-                                      DropdownMenuItem(
-                                        value: PlaylistSortOption.songName,
-                                        child: Text('Song'),
-                                      ),
-                                    ],
+                                  Material(
+                                    child: DropdownButton<PlaylistSortOption>(
+                                      value: _sortOption,
+                                      underline: const SizedBox.shrink(),
+                                      borderRadius: BorderRadius.circular(12),
+                                      onChanged: _changeSortOption,
+                                      items: const [
+                                        DropdownMenuItem(
+                                          value: PlaylistSortOption.defaultOrder,
+                                          child: Text('Default'),
+                                        ),
+                                        DropdownMenuItem(
+                                          value: PlaylistSortOption.artistName,
+                                          child: Text('Artist'),
+                                        ),
+                                        DropdownMenuItem(
+                                          value: PlaylistSortOption.songName,
+                                          child: Text('Song'),
+                                        ),
+                                      ],
+                                    ),
                                   ),
                                 ],
                               ),

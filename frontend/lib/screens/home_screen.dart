@@ -49,6 +49,8 @@ class _HomeScreenState extends State<HomeScreen> {
   // Pending dialog data
   List<Map<String, dynamic>>? _pendingNotFoundSongs;
   String? _pendingPlaylistId;
+  // Pending playlist ID for navigation from recently played
+  String? _navigateToPlaylistId;
   
   // Services for dialog
   final ApiService _apiService = ApiService();
@@ -107,10 +109,22 @@ class _HomeScreenState extends State<HomeScreen> {
           recentlyPlayedService: _recentlyPlayedService,
         );
       case 2:
+        final playlistId = _navigateToPlaylistId;
+        // Clear the navigation ID after using it
+        if (_navigateToPlaylistId != null) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) {
+              setState(() {
+                _navigateToPlaylistId = null;
+              });
+            }
+          });
+        }
         return PlaylistsScreen(
           playerStateService: _playerStateService,
           queueService: _queueService,
           recentlyPlayedService: _recentlyPlayedService,
+          initialPlaylistId: playlistId,
           onDownloadStart: (downloadId) {
             setState(() {
               _downloadId = downloadId;
@@ -451,22 +465,13 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _handleRecentlyPlayedTap(RecentlyPlayedItem item) async {
     if (item.type == RecentlyPlayedType.playlist) {
-      // Navigate to playlist detail
-      final playlist = await _playlistService.getPlaylist(item.playlistId ?? item.id);
-      if (playlist != null && mounted) {
-        Navigator.of(context).push(
-          MaterialPageRoute(
-            builder: (context) => PlaylistDetailScreen(
-              playlist: playlist,
-              playlistService: _playlistService,
-              playerStateService: _playerStateService,
-              queueService: _queueService,
-              recentlyPlayedService: _recentlyPlayedService,
-              onBack: () => Navigator.of(context).pop(),
-            ),
-          ),
-        );
-      }
+      // Switch to playlists tab and show the playlist directly
+      setState(() {
+        _navigateToPlaylistId = item.playlistId ?? item.id;
+        _currentIndex = 2; // Switch to Playlists tab
+      });
+      // The PlaylistsScreen will automatically load and show the playlist
+      // via the initialPlaylistId parameter
     } else {
       // Play the song
       // First, try to stream if URL is available (even if filename exists, URL takes priority for non-downloaded songs)
