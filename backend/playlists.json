@@ -79,17 +79,6 @@
                 "duration": 207.0
             },
             {
-                "id": "8abf5ada-c858-45f8-a744-746fc34a3b15",
-                "title": "Circle The Drain",
-                "artist": "Wage War",
-                "album": "Manic",
-                "filename": "",
-                "file_path": "",
-                "url": "https://www.youtube.com/watch?v=3XQOT4ADw0c",
-                "thumbnail": "https://img.youtube.com/vi/3XQOT4ADw0c/maxresdefault.jpg",
-                "duration": 233
-            },
-            {
                 "id": "74db9ba0-3d98-44e9-94a3-1a28bb5cd3b5",
                 "title": "Nowhere To Go",
                 "artist": "Bad Omens",
@@ -3773,10 +3762,21 @@
                 "url": "https://www.youtube.com/watch?v=1BDTyDiXr0k",
                 "thumbnail": "https://img.youtube.com/vi/1BDTyDiXr0k/maxresdefault.jpg",
                 "duration": 302.0
+            },
+            {
+                "id": "NXn-dI9fFko",
+                "title": "Wage War - Circle The Drain",
+                "artist": "Fearless Records",
+                "album": null,
+                "filename": "",
+                "file_path": "",
+                "url": "https://www.youtube.com/watch?v=NXn-dI9fFko",
+                "thumbnail": "https://img.youtube.com/vi/NXn-dI9fFko/maxresdefault.jpg",
+                "duration": 214.0
             }
         ],
         "createdAt": "2025-12-26T13:01:34.252812",
-        "updatedAt": "2025-12-26T13:33:08.950662",
+        "updatedAt": "2025-12-26T16:30:29.766986",
         "coverImage": null
     }
 }

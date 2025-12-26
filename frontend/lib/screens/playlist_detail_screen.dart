@@ -877,7 +877,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
 
         if (queueItems.isNotEmpty) {
           widget.queueService!.clearQueue();
-          widget.queueService!.addAllToQueue(queueItems);
+          widget.queueService!.addAllToQueue(queueItems, isPlaylistQueue: true);
           
           // Record playlist in recently played
           if (widget.recentlyPlayedService != null) {
@@ -1008,7 +1008,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
             widget.queueService!.clearQueue();
           }
           
-          widget.queueService!.addAllToQueue(queueItems);
+          widget.queueService!.addAllToQueue(queueItems, isPlaylistQueue: true);
 
           // If shuffle is enabled, start playing the first song
           if (shuffle && widget.playerStateService != null) {

@@ -25,7 +25,7 @@ class PlayerStateService extends ChangeNotifier {
   String? get currentTrackArtist => _currentTrackArtist;
   String? get currentTrackUrl => _audioPlayerService.currentUrl;
 
-  Future<void> playTrack(String filename, {String? trackName, String? trackArtist, String? url}) async {
+  Future<void> playTrack(String filename, {String? trackName, String? trackArtist, String? url, bool skipRecentlyPlayed = false}) async {
     try {
       // Set track info
       _currentTrackName = trackName ?? filename;
@@ -33,8 +33,8 @@ class PlayerStateService extends ChangeNotifier {
       _currentTrackFilename = filename;
       notifyListeners();
       
-      // Track in recently played immediately when song starts
-      if (_recentlyPlayedService != null && trackName != null) {
+      // Track in recently played immediately when song starts (unless skipped)
+      if (!skipRecentlyPlayed && _recentlyPlayedService != null && trackName != null) {
         await _recentlyPlayedService!.addSong(
           id: filename,
           title: trackName,
@@ -50,7 +50,7 @@ class PlayerStateService extends ChangeNotifier {
     }
   }
 
-  Future<void> streamTrack(String streamingUrl, {String? trackName, String? trackArtist, String? url}) async {
+  Future<void> streamTrack(String streamingUrl, {String? trackName, String? trackArtist, String? url, bool skipRecentlyPlayed = false}) async {
     try {
       // Set track info
       _currentTrackName = trackName ?? 'Streaming';
@@ -58,8 +58,8 @@ class PlayerStateService extends ChangeNotifier {
       _currentTrackFilename = null;
       notifyListeners();
       
-      // Track in recently played immediately when song starts
-      if (_recentlyPlayedService != null && trackName != null) {
+      // Track in recently played immediately when song starts (unless skipped)
+      if (!skipRecentlyPlayed && _recentlyPlayedService != null && trackName != null) {
         await _recentlyPlayedService!.addSong(
           id: streamingUrl,
           title: trackName,
