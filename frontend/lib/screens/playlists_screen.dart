@@ -3,15 +3,25 @@ import '../services/playlist_service.dart';
 import '../models/playlist.dart';
 import '../services/player_state_service.dart';
 import '../services/queue_service.dart';
+import '../services/recently_played_service.dart';
 import '../config.dart';
 import 'playlist_detail_screen.dart';
 
 class PlaylistsScreen extends StatefulWidget {
   final PlayerStateService? playerStateService;
   final QueueService? queueService;
+  final RecentlyPlayedService? recentlyPlayedService;
   final Function(String)? onDownloadStart;
+  final String? initialPlaylistId; // Playlist to show when screen loads
 
-  const PlaylistsScreen({super.key, this.playerStateService, this.queueService, this.onDownloadStart});
+  const PlaylistsScreen({
+    super.key, 
+    this.playerStateService, 
+    this.queueService, 
+    this.recentlyPlayedService,
+    this.onDownloadStart,
+    this.initialPlaylistId,
+  });
 
   @override
   State<PlaylistsScreen> createState() => _PlaylistsScreenState();
@@ -30,6 +40,27 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
     super.initState();
     _loadPlaylists();
     _searchController.addListener(_onSearchChanged);
+    // If an initial playlist ID is provided, load it after playlists are loaded
+    if (widget.initialPlaylistId != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _loadInitialPlaylist();
+      });
+    }
+  }
+
+  Future<void> _loadInitialPlaylist() async {
+    if (widget.initialPlaylistId != null) {
+      try {
+        final playlist = await _playlistService.getPlaylist(widget.initialPlaylistId!);
+        if (playlist != null && mounted) {
+          setState(() {
+            _selectedPlaylist = playlist;
+          });
+        }
+      } catch (e) {
+        // Ignore errors
+      }
+    }
   }
 
   void _onSearchChanged() {
@@ -242,6 +273,7 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
         playlistService: _playlistService,
         playerStateService: widget.playerStateService,
         queueService: widget.queueService,
+        recentlyPlayedService: widget.recentlyPlayedService,
         onBack: _hidePlaylistDetail,
         onDownloadStart: widget.onDownloadStart,
       );

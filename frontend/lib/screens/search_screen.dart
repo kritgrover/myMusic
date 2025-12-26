@@ -187,6 +187,7 @@ class _SearchScreenState extends State<SearchScreen> {
         result.streamingUrl,
         trackName: result.title,
         trackArtist: result.artist,
+        url: video.url,
       );
     } catch (e) {
       if (mounted) {

@@ -12,6 +12,7 @@ class QueueService extends ChangeNotifier {
   final List<QueueItem> _queue = [];
   int _currentIndex = -1;
   LoopMode _loopMode = LoopMode.none;
+  bool _isPlaylistQueue = false; // Track if queue is from a playlist
 
   List<QueueItem> get queue => List.unmodifiable(_queue);
   int get currentIndex => _currentIndex;
@@ -30,8 +31,9 @@ class QueueService extends ChangeNotifier {
   }
 
   // Add multiple items to queue
-  void addAllToQueue(List<QueueItem> items) {
+  void addAllToQueue(List<QueueItem> items, {bool isPlaylistQueue = false}) {
     _queue.addAll(items);
+    _isPlaylistQueue = isPlaylistQueue;
     notifyListeners();
   }
 
@@ -54,6 +56,7 @@ class QueueService extends ChangeNotifier {
   void clearQueue() {
     _queue.clear();
     _currentIndex = -1;
+    _isPlaylistQueue = false;
     notifyListeners();
   }
 
@@ -150,12 +153,16 @@ class QueueService extends ChangeNotifier {
 
   // Internal method to play an item
   Future<void> _playItem(QueueItem item, PlayerStateService playerService) async {
+    // Skip recently played if this is a playlist queue
+    final skipRecentlyPlayed = _isPlaylistQueue;
+    
     if (item.url != null) {
       // Stream from URL
       await playerService.streamTrack(
         item.url!,
         trackName: item.title,
         trackArtist: item.artist,
+        skipRecentlyPlayed: skipRecentlyPlayed,
       );
     } else if (item.filename != null) {
       // Play local file
@@ -163,6 +170,7 @@ class QueueService extends ChangeNotifier {
         item.filename!,
         trackName: item.title,
         trackArtist: item.artist,
+        skipRecentlyPlayed: skipRecentlyPlayed,
       );
     }
     notifyListeners();
