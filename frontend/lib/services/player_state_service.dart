@@ -25,7 +25,7 @@ class PlayerStateService extends ChangeNotifier {
   String? get currentTrackArtist => _currentTrackArtist;
   String? get currentTrackUrl => _audioPlayerService.currentUrl;
 
-  Future<void> playTrack(String filename, {String? trackName, String? trackArtist}) async {
+  Future<void> playTrack(String filename, {String? trackName, String? trackArtist, String? url}) async {
     try {
       // Set track info
       _currentTrackName = trackName ?? filename;
@@ -40,6 +40,7 @@ class PlayerStateService extends ChangeNotifier {
           title: trackName,
           artist: trackArtist,
           filename: filename,
+          url: url,
         );
       }
       
@@ -49,7 +50,7 @@ class PlayerStateService extends ChangeNotifier {
     }
   }
 
-  Future<void> streamTrack(String streamingUrl, {String? trackName, String? trackArtist}) async {
+  Future<void> streamTrack(String streamingUrl, {String? trackName, String? trackArtist, String? url}) async {
     try {
       // Set track info
       _currentTrackName = trackName ?? 'Streaming';
@@ -63,6 +64,7 @@ class PlayerStateService extends ChangeNotifier {
           id: streamingUrl,
           title: trackName,
           artist: trackArtist,
+          url: url,
         );
       }
       

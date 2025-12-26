@@ -15,6 +15,7 @@ class RecentlyPlayedItem {
   final String? artist;
   final String? thumbnail;
   final String? filename; // For songs
+  final String? url; // Original YouTube URL for streaming
   final String? playlistId; // For playlists
   final DateTime playedAt;
 
@@ -25,6 +26,7 @@ class RecentlyPlayedItem {
     this.artist,
     this.thumbnail,
     this.filename,
+    this.url,
     this.playlistId,
     required this.playedAt,
   });
@@ -37,6 +39,7 @@ class RecentlyPlayedItem {
       'artist': artist,
       'thumbnail': thumbnail,
       'filename': filename,
+      'url': url,
       'playlistId': playlistId,
       'playedAt': playedAt.toIso8601String(),
     };
@@ -53,6 +56,7 @@ class RecentlyPlayedItem {
       artist: json['artist'],
       thumbnail: json['thumbnail'],
       filename: json['filename'],
+      url: json['url'],
       playlistId: json['playlistId'],
       playedAt: DateTime.parse(json['playedAt'] ?? DateTime.now().toIso8601String()),
     );
@@ -109,6 +113,7 @@ class RecentlyPlayedService extends ChangeNotifier {
     String? artist,
     String? thumbnail,
     String? filename,
+    String? url,
   }) async {
     // Remove existing item with same id if it exists
     _items.removeWhere((item) => item.id == id && item.type == RecentlyPlayedType.song);
@@ -121,6 +126,7 @@ class RecentlyPlayedService extends ChangeNotifier {
       artist: artist,
       thumbnail: thumbnail,
       filename: filename,
+      url: url,
       playedAt: DateTime.now(),
     ));
 

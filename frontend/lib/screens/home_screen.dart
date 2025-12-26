@@ -469,22 +469,249 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     } else {
       // Play the song
-      if (item.filename != null && item.filename!.isNotEmpty) {
-        await _playerStateService.playTrack(
-          item.filename!,
-          trackName: item.title,
-          trackArtist: item.artist,
-        );
-        // Update recently played
-        await _recentlyPlayedService.addSong(
-          id: item.id,
-          title: item.title,
-          artist: item.artist,
-          thumbnail: item.thumbnail,
-          filename: item.filename,
-        );
+      // First, try to stream if URL is available (even if filename exists, URL takes priority for non-downloaded songs)
+      if (item.url != null && item.url!.isNotEmpty) {
+        try {
+          final result = await _apiService.getStreamingUrl(
+            url: item.url!,
+            title: item.title,
+            artist: item.artist ?? '',
+          );
+
+          await _playerStateService.streamTrack(
+            result.streamingUrl,
+            trackName: result.title,
+            trackArtist: result.artist,
+            url: item.url,
+          );
+          // Update recently played
+          await _recentlyPlayedService.addSong(
+            id: item.id,
+            title: item.title,
+            artist: item.artist,
+            thumbnail: item.thumbnail,
+            filename: item.filename,
+            url: item.url,
+          );
+        } catch (e) {
+          // Streaming failed, try playing from file if filename exists
+          if (item.filename != null && item.filename!.isNotEmpty) {
+            try {
+              await _playerStateService.playTrack(
+                item.filename!,
+                trackName: item.title,
+                trackArtist: item.artist,
+                url: item.url,
+              );
+              // Update recently played
+              await _recentlyPlayedService.addSong(
+                id: item.id,
+                title: item.title,
+                artist: item.artist,
+                thumbnail: item.thumbnail,
+                filename: item.filename,
+                url: item.url,
+              );
+            } catch (fileError) {
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Failed to stream and play file: $fileError'),
+                    backgroundColor: Colors.red,
+                    behavior: SnackBarBehavior.floating,
+                  ),
+                );
+              }
+            }
+          } else {
+            // No filename, streaming failed
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('Failed to stream: $e'),
+                  backgroundColor: Colors.red,
+                  behavior: SnackBarBehavior.floating,
+                ),
+              );
+            }
+          }
+        }
+      } else if (item.filename != null && item.filename!.isNotEmpty) {
+        // No URL, but filename exists - try to play from file
+        try {
+          await _playerStateService.playTrack(
+            item.filename!,
+            trackName: item.title,
+            trackArtist: item.artist,
+            url: item.url,
+          );
+          // Update recently played
+          await _recentlyPlayedService.addSong(
+            id: item.id,
+            title: item.title,
+            artist: item.artist,
+            thumbnail: item.thumbnail,
+            filename: item.filename,
+            url: item.url,
+          );
+        } catch (e) {
+          // File doesn't exist, try to find URL in playlists
+          String? foundUrl = await _findUrlInPlaylists(item.title, item.artist);
+          if (foundUrl != null && foundUrl.isNotEmpty) {
+            try {
+              final result = await _apiService.getStreamingUrl(
+                url: foundUrl,
+                title: item.title,
+                artist: item.artist ?? '',
+              );
+
+              await _playerStateService.streamTrack(
+                result.streamingUrl,
+                trackName: result.title,
+                trackArtist: result.artist,
+                url: foundUrl,
+              );
+              // Update recently played with found URL
+              await _recentlyPlayedService.addSong(
+                id: item.id,
+                title: item.title,
+                artist: item.artist,
+                thumbnail: item.thumbnail,
+                filename: item.filename,
+                url: foundUrl,
+              );
+            } catch (streamError) {
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Failed to play file and stream: $streamError'),
+                    backgroundColor: Colors.red,
+                    behavior: SnackBarBehavior.floating,
+                  ),
+                );
+              }
+            }
+          } else {
+            // No URL found, show error
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('Failed to play file: $e'),
+                  backgroundColor: Colors.red,
+                  behavior: SnackBarBehavior.floating,
+                ),
+              );
+            }
+          }
+        }
+      } else {
+        // No filename or URL available, try to find URL in playlists
+        String? foundUrl = await _findUrlInPlaylists(item.title, item.artist);
+        if (foundUrl != null && foundUrl.isNotEmpty) {
+          try {
+            final result = await _apiService.getStreamingUrl(
+              url: foundUrl,
+              title: item.title,
+              artist: item.artist ?? '',
+            );
+
+            await _playerStateService.streamTrack(
+              result.streamingUrl,
+              trackName: result.title,
+              trackArtist: result.artist,
+              url: foundUrl,
+            );
+            // Update recently played with found URL
+            await _recentlyPlayedService.addSong(
+              id: item.id,
+              title: item.title,
+              artist: item.artist,
+              thumbnail: item.thumbnail,
+              filename: item.filename,
+              url: foundUrl,
+            );
+          } catch (streamError) {
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('Failed to stream: $streamError'),
+                  backgroundColor: Colors.red,
+                  behavior: SnackBarBehavior.floating,
+                ),
+              );
+            }
+          }
+        } else {
+          // No filename or URL available
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Cannot play: ${item.title} (not downloaded and no URL available)'),
+                backgroundColor: Colors.red,
+                behavior: SnackBarBehavior.floating,
+              ),
+            );
+          }
+        }
       }
     }
+  }
+
+  Future<String?> _findUrlInPlaylists(String title, String? artist) async {
+    try {
+      final playlists = await _playlistService.getAllPlaylists();
+      final titleLower = title.toLowerCase().trim();
+      final artistLower = artist?.toLowerCase().trim() ?? '';
+      
+      for (final playlist in playlists) {
+        for (final track in playlist.tracks) {
+          final trackTitleLower = track.title.toLowerCase().trim();
+          final trackArtistLower = track.artist?.toLowerCase().trim() ?? '';
+          
+          // Match by title (case insensitive, allow partial matches)
+          bool titleMatches = trackTitleLower == titleLower || 
+                              trackTitleLower.contains(titleLower) ||
+                              titleLower.contains(trackTitleLower);
+          
+          if (titleMatches) {
+            // If artist is provided, try to match it too (but don't require exact match)
+            bool artistMatches = artistLower.isEmpty || 
+                                 trackArtistLower.isEmpty ||
+                                 trackArtistLower == artistLower ||
+                                 trackArtistLower.contains(artistLower) ||
+                                 artistLower.contains(trackArtistLower);
+            
+            // If we have a URL, return it (prefer exact matches but accept partial)
+            if (track.url != null && track.url!.isNotEmpty) {
+              // Prefer exact matches
+              if (trackTitleLower == titleLower && 
+                  (artistLower.isEmpty || trackArtistLower == artistLower)) {
+                return track.url;
+              }
+            }
+          }
+        }
+      }
+      
+      // Second pass: if no exact match, return first partial match
+      for (final playlist in playlists) {
+        for (final track in playlist.tracks) {
+          final trackTitleLower = track.title.toLowerCase().trim();
+          final trackArtistLower = track.artist?.toLowerCase().trim() ?? '';
+          
+          bool titleMatches = trackTitleLower == titleLower || 
+                              trackTitleLower.contains(titleLower) ||
+                              titleLower.contains(trackTitleLower);
+          
+          if (titleMatches && track.url != null && track.url!.isNotEmpty) {
+            return track.url;
+          }
+        }
+      }
+    } catch (e) {
+      print('Error searching playlists for URL: $e');
+    }
+    return null;
   }
 
   Future<void> _performSearch() async {
@@ -526,6 +753,7 @@ class _HomeScreenState extends State<HomeScreen> {
         result.streamingUrl,
         trackName: result.title,
         trackArtist: result.artist,
+        url: video.url,
       );
       // Tracking is now done in PlayerStateService when song starts
     } catch (e) {

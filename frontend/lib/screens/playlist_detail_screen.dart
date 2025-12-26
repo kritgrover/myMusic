@@ -413,10 +413,13 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
       if (track.filename.isNotEmpty && widget.playerStateService != null) {
         // Play from downloads - use formatted title and artist
         final displayTitle = getDisplayTitle(track.title, track.filename);
+        // Pass URL if it exists (even if file is downloaded, we want to store URL for streaming later)
+        final url = (track.url != null && track.url!.isNotEmpty) ? track.url : null;
         await widget.playerStateService.playTrack(
           track.filename, 
           trackName: displayTitle,
           trackArtist: track.artist,
+          url: url,
         );
         // Tracking is now done in PlayerStateService when song starts
       } else if (track.filename.isNotEmpty) {
@@ -428,7 +431,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
             ),
           );
         }
-      } else if (track.url != null) {
+      } else if (track.url != null && track.url!.isNotEmpty) {
         // This is a YouTube URL - stream it immediately
         if (widget.playerStateService != null) {
           try {
@@ -443,6 +446,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
               result.streamingUrl,
               trackName: result.title,
               trackArtist: result.artist,
+              url: track.url,
             );
             // Tracking is now done in PlayerStateService when song starts
           } catch (e) {
