@@ -1,11 +1,20 @@
+import 'dart:math';
 import 'package:flutter/material.dart';
 import '../services/recommendation_service.dart';
 import '../services/player_state_service.dart';
 import '../services/api_service.dart';
 import '../services/queue_service.dart';
+import '../services/recently_played_service.dart';
 import '../models/playlist.dart';
+import '../models/queue_item.dart';
 import '../utils/song_display_utils.dart';
-import '../widgets/video_card.dart';
+import '../widgets/album_cover.dart';
+
+enum PlaylistSortOption {
+  defaultOrder,
+  artistName,
+  songName,
+}
 
 class SpotifyPlaylistScreen extends StatefulWidget {
   final String playlistId;
@@ -13,6 +22,10 @@ class SpotifyPlaylistScreen extends StatefulWidget {
   final String? coverUrl;
   final PlayerStateService playerStateService;
   final QueueService queueService;
+  final RecentlyPlayedService? recentlyPlayedService;
+  final bool embedded; // If true, don't show Scaffold/AppBar
+  final VoidCallback? onBack; // Callback for back button when embedded
+  final Function(String)? onDownloadStart; // Callback to start download progress tracking
 
   const SpotifyPlaylistScreen({
     super.key,
@@ -21,6 +34,10 @@ class SpotifyPlaylistScreen extends StatefulWidget {
     this.coverUrl,
     required this.playerStateService,
     required this.queueService,
+    this.recentlyPlayedService,
+    this.embedded = false,
+    this.onBack,
+    this.onDownloadStart,
   });
 
   @override
@@ -32,6 +49,7 @@ class _SpotifyPlaylistScreenState extends State<SpotifyPlaylistScreen> {
   final ApiService _apiService = ApiService();
   List<PlaylistTrack> _tracks = [];
   bool _isLoading = true;
+  PlaylistSortOption _sortOption = PlaylistSortOption.defaultOrder;
 
   @override
   void initState() {
@@ -60,117 +78,992 @@ class _SpotifyPlaylistScreenState extends State<SpotifyPlaylistScreen> {
     }
   }
 
-  Future<void> _playTrack(PlaylistTrack track) async {
-    try {
-      // Show loading indicator or toast?
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Finding stream...'), duration: Duration(seconds: 1)),
-      );
+  // Get sorted tracks based on current sort option
+  List<PlaylistTrack> get _sortedTracks {
+    final tracks = List<PlaylistTrack>.from(_tracks);
+    
+    switch (_sortOption) {
+      case PlaylistSortOption.defaultOrder:
+        return tracks;
+      case PlaylistSortOption.artistName:
+        tracks.sort((a, b) {
+          final artistA = (a.artist ?? '').toLowerCase();
+          final artistB = (b.artist ?? '').toLowerCase();
+          if (artistA != artistB) {
+            return artistA.compareTo(artistB);
+          }
+          final titleA = (a.title ?? '').toLowerCase();
+          final titleB = (b.title ?? '').toLowerCase();
+          return titleA.compareTo(titleB);
+        });
+        return tracks;
+      case PlaylistSortOption.songName:
+        tracks.sort((a, b) {
+          final titleA = (a.title ?? '').toLowerCase();
+          final titleB = (b.title ?? '').toLowerCase();
+          return titleA.compareTo(titleB);
+        });
+        return tracks;
+    }
+  }
 
-      // Search YouTube for the track
-      final query = "${track.title} ${track.artist}";
-      final results = await _apiService.searchYoutube(query);
-      
-      if (results.isNotEmpty) {
-        final video = results.first;
-        
-        // Get streaming URL
-        final streamResult = await _apiService.getStreamingUrl(
-          url: video.url,
-          title: track.title,
-          artist: track.artist ?? '',
+  void _changeSortOption(PlaylistSortOption? newOption) {
+    if (newOption != null) {
+      setState(() {
+        _sortOption = newOption;
+      });
+    }
+  }
+
+  bool _isTrackDownloaded(PlaylistTrack track) {
+    return track.filename.isNotEmpty;
+  }
+
+  Future<void> _downloadTrack(PlaylistTrack track) async {
+    if (track.url == null || track.url!.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('No URL available for download'),
+            backgroundColor: Colors.red,
+          ),
         );
+      }
+      return;
+    }
 
-        if (streamResult.success) {
-          await widget.playerStateService.streamTrack(
-            streamResult.streamingUrl,
-            trackName: track.title,
-            trackArtist: track.artist,
-            url: video.url,
-          );
+    try {
+      // Use batch download API for progress tracking
+      final downloads = [
+        {
+          'url': track.url!,
+          'title': track.title,
+          'artist': track.artist ?? '',
+          'album': track.album ?? '',
+          'output_format': 'm4a',
+          'embed_thumbnail': true,
         }
-      } else {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Song not found on YouTube')),
-          );
-        }
+      ];
+
+      final result = await _apiService.startBatchDownload(downloads);
+      final downloadId = result['download_id'] as String;
+
+      // Start progress tracking if callback is provided
+      if (widget.onDownloadStart != null) {
+        widget.onDownloadStart!(downloadId);
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Download started'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error playing track: $e')),
+          SnackBar(
+            content: Text('Download failed: $e'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+          ),
         );
       }
     }
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      body: CustomScrollView(
-        slivers: [
-          SliverAppBar(
-            expandedHeight: 200.0,
-            floating: false,
-            pinned: true,
-            flexibleSpace: FlexibleSpaceBar(
-              title: Text(widget.playlistName),
-              background: widget.coverUrl != null
-                  ? Image.network(
-                      widget.coverUrl!,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => Container(color: Colors.grey[900]),
-                    )
-                  : Container(
-                      color: Colors.grey[900],
-                      child: const Center(child: Icon(Icons.music_note, size: 64)),
-                    ),
+  Future<void> _downloadUndownloadedTracks() async {
+    final tracksToDownload = _tracks.where((track) => 
+      !_isTrackDownloaded(track) && track.url != null && track.url!.isNotEmpty
+    ).toList();
+
+    if (tracksToDownload.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('All tracks are already downloaded'),
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
             ),
           ),
-          if (_isLoading)
-            const SliverFillRemaining(
-              child: Center(child: CircularProgressIndicator()),
-            )
-          else if (_tracks.isEmpty)
-            const SliverFillRemaining(
-              child: Center(child: Text('No tracks found')),
-            )
-          else
-            SliverList(
-              delegate: SliverChildBuilderDelegate(
-                (context, index) {
-                  final track = _tracks[index];
-                  // Use a simplified list tile or reuse VideoCard if we convert to VideoInfo
-                  // Let's use ListTile for simplicity and consistency with PlaylistDetail
-                  return ListTile(
-                    leading: ClipRRect(
-                      borderRadius: BorderRadius.circular(4),
-                      child: track.thumbnail != null
-                          ? Image.network(
-                              track.thumbnail!,
-                              width: 48,
-                              height: 48,
-                              fit: BoxFit.cover,
-                              errorBuilder: (_, __, ___) => const Icon(Icons.music_note),
-                            )
-                          : const Icon(Icons.music_note),
-                    ),
-                    title: Text(track.title, maxLines: 1, overflow: TextOverflow.ellipsis),
-                    subtitle: Text(track.artist ?? 'Unknown', maxLines: 1, overflow: TextOverflow.ellipsis),
-                    trailing: IconButton(
-                      icon: const Icon(Icons.play_arrow),
-                      onPressed: () => _playTrack(track),
-                    ),
-                    onTap: () => _playTrack(track),
-                  );
-                },
-                childCount: _tracks.length,
-              ),
-            ),
+        );
+      }
+      return;
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Download Tracks'),
+        content: Text(
+          'Download ${tracksToDownload.length} ${tracksToDownload.length == 1 ? 'track' : 'tracks'}?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Download'),
+          ),
         ],
       ),
+    );
+
+    if (confirmed != true) return;
+
+    try {
+      final downloads = tracksToDownload.map((track) => {
+        'url': track.url!,
+        'title': track.title,
+        'artist': track.artist ?? '',
+        'album': track.album ?? '',
+        'output_format': 'm4a',
+        'embed_thumbnail': true,
+      }).toList();
+
+      final result = await _apiService.startBatchDownload(downloads);
+      final downloadId = result['download_id'] as String;
+
+      if (widget.onDownloadStart != null) {
+        widget.onDownloadStart!(downloadId);
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Downloading ${tracksToDownload.length} tracks...'),
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Download error: $e'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _playTrack(PlaylistTrack track) async {
+    try {
+      if (track.filename.isNotEmpty && widget.playerStateService != null) {
+        final displayTitle = getDisplayTitle(track.title, track.filename);
+        final url = (track.url != null && track.url!.isNotEmpty) ? track.url : null;
+        await widget.playerStateService.playTrack(
+          track.filename, 
+          trackName: displayTitle,
+          trackArtist: track.artist,
+          url: url,
+        );
+      } else if (track.url != null && track.url!.isNotEmpty) {
+        if (widget.playerStateService != null) {
+          try {
+            // Search YouTube for the track if URL is not a YouTube URL
+            String? youtubeUrl = track.url;
+            if (!track.url!.contains('youtube.com') && !track.url!.contains('youtu.be')) {
+              final query = "${track.title} ${track.artist}";
+              final results = await _apiService.searchYoutube(query);
+              if (results.isNotEmpty) {
+                youtubeUrl = results.first.url;
+              }
+            }
+
+            if (youtubeUrl != null) {
+              final result = await _apiService.getStreamingUrl(
+                url: youtubeUrl,
+                title: track.title,
+                artist: track.artist ?? '',
+              );
+
+              await widget.playerStateService.streamTrack(
+                result.streamingUrl,
+                trackName: result.title,
+                trackArtist: result.artist,
+                url: youtubeUrl,
+              );
+            }
+          } catch (e) {
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('Stream failed: $e'),
+                  backgroundColor: Colors.red,
+                ),
+              );
+            }
+          }
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to play track: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _playPlaylist() async {
+    if (widget.queueService == null || widget.playerStateService == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Player or queue service not available'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+      return;
+    }
+
+    if (_tracks.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Playlist is empty'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+      return;
+    }
+
+    if (widget.recentlyPlayedService != null) {
+      widget.recentlyPlayedService!.addPlaylist(
+        playlistId: widget.playlistId,
+        title: widget.playlistName,
+        thumbnail: widget.coverUrl,
+      );
+    }
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CircularProgressIndicator(),
+            SizedBox(height: 16),
+            Text('Preparing playlist...'),
+          ],
+        ),
+      ),
+    );
+
+    try {
+      final tracks = _sortedTracks;
+      final queueItems = <QueueItem>[];
+      int successCount = 0;
+      int failCount = 0;
+
+      for (final track in tracks) {
+        try {
+          QueueItem? queueItem;
+
+          if (track.filename.isNotEmpty) {
+            queueItem = QueueItem.fromDownloadedFile(
+              filename: track.filename,
+              title: track.title,
+              artist: track.artist,
+              album: track.album,
+            );
+            queueItems.add(queueItem);
+            successCount++;
+          } else if (track.url != null && track.url!.isNotEmpty) {
+            try {
+              String? youtubeUrl = track.url;
+              if (!track.url!.contains('youtube.com') && !track.url!.contains('youtu.be')) {
+                final query = "${track.title} ${track.artist}";
+                final results = await _apiService.searchYoutube(query);
+                if (results.isNotEmpty) {
+                  youtubeUrl = results.first.url;
+                }
+              }
+
+              if (youtubeUrl != null) {
+                final result = await _apiService.getStreamingUrl(
+                  url: youtubeUrl,
+                  title: track.title,
+                  artist: track.artist ?? '',
+                );
+
+                queueItem = QueueItem.fromPlaylistTrack(
+                  trackId: track.id,
+                  title: result.title,
+                  artist: result.artist,
+                  streamingUrl: result.streamingUrl,
+                  album: track.album,
+                );
+                queueItems.add(queueItem);
+                successCount++;
+              } else {
+                failCount++;
+              }
+            } catch (e) {
+              failCount++;
+            }
+          } else {
+            failCount++;
+          }
+        } catch (e) {
+          failCount++;
+        }
+      }
+
+      if (mounted) {
+        Navigator.of(context).pop();
+
+        if (queueItems.isNotEmpty) {
+          widget.queueService!.clearQueue();
+          widget.queueService!.addAllToQueue(queueItems, isPlaylistQueue: true);
+          
+          if (widget.recentlyPlayedService != null) {
+            await widget.recentlyPlayedService!.addPlaylist(
+              playlistId: widget.playlistId,
+              title: widget.playlistName,
+              thumbnail: widget.coverUrl,
+            );
+          }
+          
+          await widget.queueService!.playItem(0, widget.playerStateService!);
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        Navigator.of(context).pop();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to play playlist: $e'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _addPlaylistToQueue() async {
+    await _addPlaylistToQueueInternal(shuffle: false);
+  }
+
+  Future<void> _shufflePlaylistToQueue() async {
+    await _addPlaylistToQueueInternal(shuffle: true);
+  }
+
+  Future<void> _addPlaylistToQueueInternal({required bool shuffle}) async {
+    if (widget.queueService == null) return;
+
+    if (_tracks.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Playlist is empty'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+      return;
+    }
+
+    if (widget.recentlyPlayedService != null) {
+      widget.recentlyPlayedService!.addPlaylist(
+        playlistId: widget.playlistId,
+        title: widget.playlistName,
+        thumbnail: widget.coverUrl,
+      );
+    }
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const CircularProgressIndicator(),
+            if (shuffle) ...[
+              const SizedBox(height: 16),
+              const Text('Shuffling playlist...'),
+            ],
+          ],
+        ),
+      ),
+    );
+
+    try {
+      final tracks = List<PlaylistTrack>.from(_sortedTracks);
+      if (shuffle) {
+        tracks.shuffle(Random());
+      }
+
+      final queueItems = <QueueItem>[];
+      int successCount = 0;
+      int failCount = 0;
+
+      for (final track in tracks) {
+        try {
+          QueueItem? queueItem;
+
+          if (track.filename.isNotEmpty) {
+            queueItem = QueueItem.fromDownloadedFile(
+              filename: track.filename,
+              title: track.title,
+              artist: track.artist,
+              album: track.album,
+            );
+            queueItems.add(queueItem);
+            successCount++;
+          } else if (track.url != null && track.url!.isNotEmpty) {
+            try {
+              String? youtubeUrl = track.url;
+              if (!track.url!.contains('youtube.com') && !track.url!.contains('youtu.be')) {
+                final query = "${track.title} ${track.artist}";
+                final results = await _apiService.searchYoutube(query);
+                if (results.isNotEmpty) {
+                  youtubeUrl = results.first.url;
+                }
+              }
+
+              if (youtubeUrl != null) {
+                final result = await _apiService.getStreamingUrl(
+                  url: youtubeUrl,
+                  title: track.title,
+                  artist: track.artist ?? '',
+                );
+
+                queueItem = QueueItem.fromPlaylistTrack(
+                  trackId: track.id,
+                  title: result.title,
+                  artist: result.artist,
+                  streamingUrl: result.streamingUrl,
+                  album: track.album,
+                );
+                queueItems.add(queueItem);
+                successCount++;
+              } else {
+                failCount++;
+              }
+            } catch (e) {
+              failCount++;
+            }
+          } else {
+            failCount++;
+          }
+        } catch (e) {
+          failCount++;
+        }
+      }
+
+      if (mounted) {
+        Navigator.of(context).pop();
+
+        if (queueItems.isNotEmpty) {
+          if (shuffle) {
+            widget.queueService!.clearQueue();
+          }
+          
+          widget.queueService!.addAllToQueue(queueItems, isPlaylistQueue: true);
+
+          if (shuffle && widget.playerStateService != null) {
+            if (widget.recentlyPlayedService != null) {
+              await widget.recentlyPlayedService!.addPlaylist(
+                playlistId: widget.playlistId,
+                title: widget.playlistName,
+                thumbnail: widget.coverUrl,
+              );
+            }
+            await widget.queueService!.playItem(0, widget.playerStateService!);
+          }
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        Navigator.of(context).pop();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to ${shuffle ? 'shuffle and ' : ''}add playlist to queue: $e'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _addToQueue(PlaylistTrack track) async {
+    if (widget.queueService == null) return;
+
+    try {
+      QueueItem? queueItem;
+
+      if (track.filename.isNotEmpty) {
+        queueItem = QueueItem.fromDownloadedFile(
+          filename: track.filename,
+          title: track.title,
+          artist: track.artist,
+          album: track.album,
+        );
+      } else if (track.url != null && track.url!.isNotEmpty) {
+        try {
+          String? youtubeUrl = track.url;
+          if (!track.url!.contains('youtube.com') && !track.url!.contains('youtu.be')) {
+            final query = "${track.title} ${track.artist}";
+            final results = await _apiService.searchYoutube(query);
+            if (results.isNotEmpty) {
+              youtubeUrl = results.first.url;
+            }
+          }
+
+          if (youtubeUrl != null) {
+            final result = await _apiService.getStreamingUrl(
+              url: youtubeUrl,
+              title: track.title,
+              artist: track.artist ?? '',
+            );
+
+            queueItem = QueueItem.fromPlaylistTrack(
+              trackId: track.id,
+              title: result.title,
+              artist: result.artist,
+              streamingUrl: result.streamingUrl,
+              album: track.album,
+            );
+          }
+        } catch (e) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Failed to get streaming URL: $e'),
+                backgroundColor: Colors.red,
+                behavior: SnackBarBehavior.floating,
+              ),
+            );
+          }
+          return;
+        }
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('No URL or filename available'),
+              backgroundColor: Colors.red,
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+        return;
+      }
+
+      if (queueItem != null) {
+        widget.queueService!.addToQueue(queueItem);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to add to queue: $e'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    }
+  }
+
+  Widget _buildContent() {
+    final primaryColor = Theme.of(context).colorScheme.primary;
+    final surfaceHover = Theme.of(context).colorScheme.surfaceVariant;
+
+    return _isLoading
+        ? const Center(child: CircularProgressIndicator())
+        : Column(
+            children: [
+              // Playlist header
+              Container(
+                padding: const EdgeInsets.all(24.0),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.surface,
+                  border: Border(
+                    bottom: BorderSide(
+                      color: Theme.of(context).dividerColor,
+                      width: 1,
+                    ),
+                  ),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Back button
+                    if (widget.onBack != null)
+                      IconButton(
+                        icon: const Icon(Icons.arrow_back),
+                        onPressed: widget.onBack,
+                        tooltip: 'Back',
+                      ),
+                    _PlaylistCoverWidget(
+                      coverImageUrl: widget.coverUrl,
+                      primaryColor: primaryColor,
+                    ),
+                    const SizedBox(width: 20),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          // Title row
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  widget.playlistName,
+                                  style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          // Track count (left) + secondary actions (right)
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Row(
+                                children: [
+                                  Icon(
+                                    Icons.music_note,
+                                    size: 18,
+                                    color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    '${_tracks.length} ${_tracks.length == 1 ? 'track' : 'tracks'}',
+                                    style: Theme.of(context).textTheme.bodyMedium,
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(width: 12),
+                              Flexible(
+                                child: Align(
+                                  alignment: Alignment.centerRight,
+                                  child: Wrap(
+                                    spacing: 8,
+                                    runSpacing: 4,
+                                    crossAxisAlignment: WrapCrossAlignment.center,
+                                    children: [
+                                      if (widget.queueService != null && widget.playerStateService != null)
+                                        IconButton(
+                                          icon: const Icon(Icons.queue_music, size: 20),
+                                          onPressed: _addPlaylistToQueue,
+                                          tooltip: 'Add playlist to queue',
+                                        ),
+                                      IconButton(
+                                        icon: const Icon(Icons.download, size: 20),
+                                        onPressed: _downloadUndownloadedTracks,
+                                        tooltip: 'Download undownloaded tracks',
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 10),
+                          // Play / Shuffle (left) + Sort by (right)
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              if (widget.queueService != null && widget.playerStateService != null)
+                                Row(
+                                  children: [
+                                    FilledButton.icon(
+                                      onPressed: _playPlaylist,
+                                      style: FilledButton.styleFrom(
+                                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(24),
+                                        ),
+                                      ),
+                                      icon: const Icon(Icons.play_arrow_rounded, size: 26),
+                                      label: const Text(
+                                        'Play',
+                                        style: TextStyle(fontWeight: FontWeight.w600),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    OutlinedButton.icon(
+                                      onPressed: _shufflePlaylistToQueue,
+                                      style: OutlinedButton.styleFrom(
+                                        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 11),
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(24),
+                                        ),
+                                      ),
+                                      icon: const Icon(Icons.shuffle, size: 22),
+                                      label: const Text(
+                                        'Shuffle',
+                                        style: TextStyle(fontWeight: FontWeight.w500),
+                                      ),
+                                    ),
+                                  ],
+                                )
+                              else
+                                const SizedBox.shrink(),
+                              Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    'Sort by:',
+                                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                          fontWeight: FontWeight.w500,
+                                        ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Material(
+                                    child: DropdownButton<PlaylistSortOption>(
+                                      value: _sortOption,
+                                      underline: const SizedBox.shrink(),
+                                      borderRadius: BorderRadius.circular(12),
+                                      onChanged: _changeSortOption,
+                                      items: const [
+                                        DropdownMenuItem(
+                                          value: PlaylistSortOption.defaultOrder,
+                                          child: Text('Default'),
+                                        ),
+                                        DropdownMenuItem(
+                                          value: PlaylistSortOption.artistName,
+                                          child: Text('Artist'),
+                                        ),
+                                        DropdownMenuItem(
+                                          value: PlaylistSortOption.songName,
+                                          child: Text('Song'),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              // Tracks list
+              Expanded(
+                child: _tracks.isEmpty
+                    ? Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.queue_music,
+                              size: 64,
+                              color: Colors.grey[400],
+                            ),
+                            const SizedBox(height: 16),
+                            Text(
+                              'No tracks in this playlist',
+                              style: Theme.of(context).textTheme.titleLarge,
+                            ),
+                          ],
+                        ),
+                      )
+                    : ListView.builder(
+                        padding: const EdgeInsets.symmetric(vertical: 8.0),
+                        itemCount: _sortedTracks.length,
+                        itemBuilder: (context, index) {
+                          final track = _sortedTracks[index];
+                          final isCurrentlyPlaying = widget.playerStateService != null &&
+                              widget.playerStateService.currentTrackUrl?.contains(track.url ?? '') == true;
+                          
+                          final displayTitle = getDisplayTitle(track.title, track.filename);
+                          
+                          return Column(
+                            children: [
+                              Material(
+                                color: isCurrentlyPlaying 
+                                    ? primaryColor.withOpacity(0.1) 
+                                    : Colors.transparent,
+                                borderRadius: BorderRadius.circular(8),
+                                child: InkWell(
+                                  onTap: () => _playTrack(track),
+                                  borderRadius: BorderRadius.circular(8),
+                                  hoverColor: surfaceHover,
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                    child: Row(
+                                      children: [
+                                        AlbumCover(
+                                          filename: track.filename.isNotEmpty ? track.filename : null,
+                                          title: track.title,
+                                          artist: track.artist,
+                                          album: track.album,
+                                          size: 40,
+                                          backgroundColor: isCurrentlyPlaying 
+                                              ? primaryColor.withOpacity(0.2)
+                                              : surfaceHover,
+                                          iconColor: isCurrentlyPlaying 
+                                              ? primaryColor 
+                                              : Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+                                        ),
+                                        const SizedBox(width: 12),
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            children: [
+                                              Text(
+                                                displayTitle,
+                                                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                                  fontWeight: isCurrentlyPlaying ? FontWeight.w600 : FontWeight.w400,
+                                                  color: isCurrentlyPlaying ? primaryColor : null,
+                                                ),
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                              ),
+                                              if (track.artist != null && track.artist!.isNotEmpty) ...[
+                                                const SizedBox(height: 2),
+                                                Text(
+                                                  track.artist!,
+                                                  style: Theme.of(context).textTheme.bodySmall,
+                                                  maxLines: 1,
+                                                  overflow: TextOverflow.ellipsis,
+                                                ),
+                                              ],
+                                            ],
+                                          ),
+                                        ),
+                                        Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            // Add to queue button
+                                            if (widget.queueService != null)
+                                              IconButton(
+                                                icon: const Icon(Icons.queue_music, size: 20),
+                                                onPressed: () => _addToQueue(track),
+                                                tooltip: 'Add to queue',
+                                              ),
+                                            // Download status icon
+                                            _isTrackDownloaded(track)
+                                                ? IconButton(
+                                                    icon: Icon(
+                                                      Icons.check_circle,
+                                                      color: primaryColor,
+                                                      size: 20,
+                                                    ),
+                                                    onPressed: null,
+                                                    tooltip: 'Downloaded',
+                                                  )
+                                                : IconButton(
+                                                    icon: const Icon(Icons.download_outlined, size: 20),
+                                                    onPressed: () => _downloadTrack(track),
+                                                    tooltip: 'Download',
+                                                  ),
+                                          ],
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              const Divider(height: 1),
+                            ],
+                          );
+                        },
+                      ),
+              ),
+            ],
+          );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (widget.embedded) {
+      return _buildContent();
+    }
+    
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(widget.playlistName),
+      ),
+      body: _buildContent(),
     );
   }
 }
 
+class _PlaylistCoverWidget extends StatelessWidget {
+  final String? coverImageUrl;
+  final Color primaryColor;
+
+  const _PlaylistCoverWidget({
+    required this.coverImageUrl,
+    required this.primaryColor,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 160,
+      height: 160,
+      decoration: BoxDecoration(
+        color: primaryColor.withOpacity(0.15),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: coverImageUrl != null
+          ? ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: Image.network(
+                coverImageUrl!,
+                width: 160,
+                height: 160,
+                fit: BoxFit.cover,
+                errorBuilder: (context, error, stackTrace) {
+                  return Icon(
+                    Icons.playlist_play,
+                    size: 80,
+                    color: primaryColor,
+                  );
+                },
+              ),
+            )
+          : Icon(
+              Icons.playlist_play,
+              size: 80,
+              color: primaryColor,
+            ),
+    );
+  }
+}

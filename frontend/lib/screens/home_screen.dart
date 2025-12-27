@@ -181,11 +181,19 @@ class _HomeScreenState extends State<HomeScreen> {
             genre: _selectedGenre!,
             playerStateService: _playerStateService,
             queueService: _queueService,
+            recentlyPlayedService: _recentlyPlayedService,
             embedded: true,
             onBack: () {
               setState(() {
                 _selectedGenre = null;
               });
+            },
+            onDownloadStart: (downloadId) {
+              setState(() {
+                _downloadId = downloadId;
+                _downloadProgress = null;
+              });
+              _startDownloadProgressPolling(downloadId);
             },
           );
         }
@@ -619,6 +627,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 coverUrl: item.thumbnail,
                 playerStateService: _playerStateService,
                 queueService: _queueService,
+                recentlyPlayedService: _recentlyPlayedService,
               ),
             ),
           );

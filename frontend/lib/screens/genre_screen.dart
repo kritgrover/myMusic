@@ -2,22 +2,27 @@ import 'package:flutter/material.dart';
 import '../services/recommendation_service.dart';
 import '../services/player_state_service.dart';
 import '../services/queue_service.dart';
+import '../services/recently_played_service.dart';
 import 'spotify_playlist_screen.dart';
 
 class GenreScreen extends StatefulWidget {
   final String genre;
   final PlayerStateService playerStateService;
   final QueueService queueService;
+  final RecentlyPlayedService? recentlyPlayedService;
   final bool embedded; // If true, don't show Scaffold/AppBar
   final VoidCallback? onBack; // Callback for back button when embedded
+  final Function(String)? onDownloadStart; // Callback to start download progress tracking
 
   const GenreScreen({
     super.key,
     required this.genre,
     required this.playerStateService,
     required this.queueService,
+    this.recentlyPlayedService,
     this.embedded = false,
     this.onBack,
+    this.onDownloadStart,
   });
 
   @override
@@ -28,6 +33,7 @@ class _GenreScreenState extends State<GenreScreen> {
   final RecommendationService _recommendationService = RecommendationService();
   List<dynamic> _playlists = [];
   bool _isLoading = true;
+  Map<String, dynamic>? _selectedPlaylist;
 
   @override
   void initState() {
@@ -56,7 +62,34 @@ class _GenreScreenState extends State<GenreScreen> {
     }
   }
 
+  void _showPlaylistDetail(Map<String, dynamic> playlist) {
+    setState(() {
+      _selectedPlaylist = playlist;
+    });
+  }
+
+  void _hidePlaylistDetail() {
+    setState(() {
+      _selectedPlaylist = null;
+    });
+  }
+
   Widget _buildContent() {
+    // If a playlist is selected, show the detail view
+    if (_selectedPlaylist != null) {
+      return SpotifyPlaylistScreen(
+        playlistId: _selectedPlaylist!['id'],
+        playlistName: _selectedPlaylist!['name'],
+        coverUrl: _selectedPlaylist!['thumbnail'],
+        playerStateService: widget.playerStateService,
+        queueService: widget.queueService,
+        recentlyPlayedService: widget.recentlyPlayedService,
+        embedded: true,
+        onBack: _hidePlaylistDetail,
+        onDownloadStart: widget.onDownloadStart,
+      );
+    }
+
     return _isLoading
         ? const Center(child: CircularProgressIndicator())
         : _playlists.isEmpty
@@ -100,18 +133,7 @@ class _GenreScreenState extends State<GenreScreen> {
                       color: Colors.transparent,
                       child: InkWell(
                         onTap: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) => SpotifyPlaylistScreen(
-                                playlistId: playlist['id'],
-                                playlistName: playlist['name'],
-                                coverUrl: playlist['thumbnail'],
-                                playerStateService: widget.playerStateService,
-                                queueService: widget.queueService,
-                              ),
-                            ),
-                          );
+                          _showPlaylistDetail(playlist);
                         },
                         borderRadius: BorderRadius.circular(12),
                         child: Padding(
