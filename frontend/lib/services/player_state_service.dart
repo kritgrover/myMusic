@@ -2,12 +2,15 @@ import 'package:flutter/material.dart';
 import 'dart:async';
 import 'audio_player_service.dart';
 import 'recently_played_service.dart';
+import 'recommendation_service.dart';
 import '../config.dart';
 
 class PlayerStateService extends ChangeNotifier {
   final AudioPlayerService _audioPlayerService = AudioPlayerService();
   final RecentlyPlayedService? _recentlyPlayedService;
+  final RecommendationService _recommendationService = RecommendationService();
   String? _currentTrackName;
+
   String? _currentTrackArtist;
   String? _currentTrackFilename;
   StreamSubscription? _stateSubscription;
@@ -43,6 +46,13 @@ class PlayerStateService extends ChangeNotifier {
           filename: filename,
           url: url,
         );
+
+        // Log to recommendation engine
+        _recommendationService.logHistory(
+          title: trackName,
+          artist: trackArtist ?? 'Unknown',
+          durationPlayed: 0.0,
+        );
       }
       
       await _audioPlayerService.playFromBackend(filename);
@@ -66,6 +76,13 @@ class PlayerStateService extends ChangeNotifier {
           title: trackName,
           artist: trackArtist,
           url: url,
+        );
+
+        // Log to recommendation engine
+        _recommendationService.logHistory(
+          title: trackName,
+          artist: trackArtist ?? 'Unknown',
+          durationPlayed: 0.0,
         );
       }
       

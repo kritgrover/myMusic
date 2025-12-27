@@ -11,6 +11,8 @@ import asyncio
 from datetime import datetime
 import httpx
 from download_service import DownloadService
+from database import db
+from spotify_service import spotify_service
 from mutagen.mp4 import MP4
 from mutagen.easyid3 import EasyID3
 from mutagen.id3 import ID3, APIC
@@ -954,6 +956,108 @@ def get_playlist_cover(playlist_id: str):
     
     # If it's a URL, redirect or return it
     raise HTTPException(status_code=400, detail="External URL covers not supported via this endpoint")
+
+
+# History & Recommendations Endpoints
+
+class HistoryEntry(BaseModel):
+    song_title: str
+    artist: str
+    duration_played: float
+    spotify_id: Optional[str] = None
+
+@app.post("/history")
+def add_history(entry: HistoryEntry):
+    """Log a song play to history"""
+    try:
+        # If no spotify_id provided, try to find it
+        if not entry.spotify_id:
+            track_info = spotify_service.search_track(entry.song_title, entry.artist)
+            if track_info:
+                entry.spotify_id = track_info['id']
+        
+        db.add_history(
+            entry.song_title, 
+            entry.artist, 
+            entry.duration_played, 
+            entry.spotify_id
+        )
+        return {"success": True, "spotify_id": entry.spotify_id}
+    except Exception as e:
+        print(f"Error adding history: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/recommendations/daily")
+def get_daily_mix():
+    """Get personalized song recommendations based on history"""
+    try:
+        # Get recent history for seeding
+        recent = db.get_recent_history(limit=5)
+        
+        seed_tracks = []
+        seed_artists = []
+        
+        for item in recent:
+            if item['spotify_id']:
+                seed_tracks.append(item['spotify_id'])
+            else:
+                # If no spotify_id in history, try to find one
+                track_info = spotify_service.search_track(item['song_title'], item['artist'])
+                if track_info:
+                    seed_tracks.append(track_info['id'])
+        
+        # Also get top artists
+        if len(seed_tracks) < 5:
+            top_artists = db.get_top_artists(limit=5)
+            for artist in top_artists:
+                # Search for artist ID
+                track_info = spotify_service.search_track("", artist['artist'])
+                if track_info:
+                    seed_artists.append(track_info['artist_id'])
+        
+        # Get recommendations
+        recommendations = spotify_service.get_recommendations(
+            seed_tracks=seed_tracks[:3] if seed_tracks else None,
+            seed_artists=seed_artists[:2] if seed_artists else None,
+            limit=20
+        )
+        
+        return recommendations
+    except Exception as e:
+        print(f"Error getting recommendations: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/recommendations/new-releases")
+def get_new_releases():
+    """Get new releases from top artists in history"""
+    try:
+        top_artists = db.get_top_artists(limit=5)
+        all_releases = []
+        
+        for artist in top_artists:
+            # Search for artist ID first
+            # We use a trick: search for a track by this artist to get artist ID
+            track_info = spotify_service.search_track("", artist['artist'])
+            if track_info:
+                releases = spotify_service.get_artist_new_releases(track_info['artist_id'], limit=3)
+                all_releases.extend(releases)
+        
+        # Sort by release date descending
+        all_releases.sort(key=lambda x: x['release_date'], reverse=True)
+        return all_releases[:20]
+    except Exception as e:
+        print(f"Error getting new releases: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/recommendations/genre/{genre}")
+def get_genre_content(genre: str):
+    """Get curated playlists for a genre"""
+    try:
+        playlists = spotify_service.get_genre_playlists(genre)
+        return playlists
+    except Exception as e:
+        print(f"Error getting genre content: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 if __name__ == "__main__":
