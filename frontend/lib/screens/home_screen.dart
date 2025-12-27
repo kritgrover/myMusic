@@ -69,6 +69,9 @@ class _HomeScreenState extends State<HomeScreen> {
   List<VideoInfo> _newReleases = [];
   bool _isLoadingRecommendations = false;
   final List<String> _genres = ['Pop', 'Rock', 'Hip Hop', 'Electronic', 'Jazz', 'Classical', 'Indie', 'Metal'];
+  
+  // Genre navigation
+  String? _selectedGenre;
 
   // Search state
   final TextEditingController _searchController = TextEditingController();
@@ -172,6 +175,20 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildCurrentScreen() {
     switch (_currentIndex) {
       case 0:
+        // If a genre is selected, show genre screen, otherwise show home content
+        if (_selectedGenre != null) {
+          return GenreScreen(
+            genre: _selectedGenre!,
+            playerStateService: _playerStateService,
+            queueService: _queueService,
+            embedded: true,
+            onBack: () {
+              setState(() {
+                _selectedGenre = null;
+              });
+            },
+          );
+        }
         return _buildHomeContent();
       case 1:
         return DownloadsScreen(
@@ -434,16 +451,9 @@ class _HomeScreenState extends State<HomeScreen> {
                                     children: _genres.map((genre) => GenreCard(
                                       genre: genre,
                                       onTap: () {
-                                        Navigator.push(
-                                          context,
-                                          MaterialPageRoute(
-                                            builder: (context) => GenreScreen(
-                                              genre: genre,
-                                              playerStateService: _playerStateService,
-                                              queueService: _queueService,
-                                            ),
-                                          ),
-                                        );
+                                        setState(() {
+                                          _selectedGenre = genre;
+                                        });
                                       },
                                     )).toList(),
                                   ),

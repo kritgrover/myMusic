@@ -8,12 +8,16 @@ class GenreScreen extends StatefulWidget {
   final String genre;
   final PlayerStateService playerStateService;
   final QueueService queueService;
+  final bool embedded; // If true, don't show Scaffold/AppBar
+  final VoidCallback? onBack; // Callback for back button when embedded
 
   const GenreScreen({
     super.key,
     required this.genre,
     required this.playerStateService,
     required this.queueService,
+    this.embedded = false,
+    this.onBack,
   });
 
   @override
@@ -52,82 +56,157 @@ class _GenreScreenState extends State<GenreScreen> {
     }
   }
 
+  Widget _buildContent() {
+    return _isLoading
+        ? const Center(child: CircularProgressIndicator())
+        : _playlists.isEmpty
+            ? Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      Icons.music_off,
+                      size: 64,
+                      color: Theme.of(context).colorScheme.onSurface.withOpacity(0.3),
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      'No playlists found',
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+                      ),
+                    ),
+                  ],
+                ),
+              )
+            : GridView.builder(
+                padding: const EdgeInsets.all(24),
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 2,
+                  crossAxisSpacing: 16,
+                  mainAxisSpacing: 16,
+                  childAspectRatio: 0.75,
+                ),
+                itemCount: _playlists.length,
+                itemBuilder: (context, index) {
+                  final playlist = _playlists[index];
+                  return Card(
+                    clipBehavior: Clip.antiAlias,
+                    child: Material(
+                      color: Colors.transparent,
+                      child: InkWell(
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => SpotifyPlaylistScreen(
+                                playlistId: playlist['id'],
+                                playlistName: playlist['name'],
+                                coverUrl: playlist['thumbnail'],
+                                playerStateService: widget.playerStateService,
+                                queueService: widget.queueService,
+                              ),
+                            ),
+                          );
+                        },
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(8),
+                                child: playlist['thumbnail'] != null
+                                    ? Image.network(
+                                        playlist['thumbnail'],
+                                        fit: BoxFit.cover,
+                                        width: double.infinity,
+                                        errorBuilder: (_, __, ___) => Container(
+                                          color: Theme.of(context).colorScheme.surfaceVariant,
+                                          child: Icon(
+                                            Icons.music_note,
+                                            size: 48,
+                                            color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                          ),
+                                        ),
+                                      )
+                                    : Container(
+                                        color: Theme.of(context).colorScheme.surfaceVariant,
+                                        child: Icon(
+                                          Icons.music_note,
+                                          size: 48,
+                                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                        ),
+                                      ),
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 8.0),
+                              child: Text(
+                                playlist['name'] ?? 'Unknown Playlist',
+                                style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                                  fontWeight: FontWeight.w600,
+                                ),
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
+                              child: Text(
+                                playlist['owner'] ?? '',
+                                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                  color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              );
+  }
+
   @override
   Widget build(BuildContext context) {
+    if (widget.embedded) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header with back button
+          Padding(
+            padding: const EdgeInsets.all(24.0),
+            child: Row(
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.arrow_back),
+                  onPressed: widget.onBack ?? () => Navigator.of(context).pop(),
+                  tooltip: 'Back',
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  '${widget.genre} Playlists',
+                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Expanded(child: _buildContent()),
+        ],
+      );
+    }
+    
     return Scaffold(
       appBar: AppBar(
         title: Text('${widget.genre} Playlists'),
       ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : _playlists.isEmpty
-              ? const Center(child: Text('No playlists found'))
-              : GridView.builder(
-                  padding: const EdgeInsets.all(16),
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 2,
-                    crossAxisSpacing: 16,
-                    mainAxisSpacing: 16,
-                    childAspectRatio: 0.75,
-                  ),
-                  itemCount: _playlists.length,
-                  itemBuilder: (context, index) {
-                    final playlist = _playlists[index];
-                    return GestureDetector(
-                      onTap: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => SpotifyPlaylistScreen(
-                              playlistId: playlist['id'],
-                              playlistName: playlist['name'],
-                              coverUrl: playlist['thumbnail'],
-                              playerStateService: widget.playerStateService,
-                              queueService: widget.queueService,
-                            ),
-                          ),
-                        );
-                      },
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Expanded(
-                            child: ClipRRect(
-                              borderRadius: BorderRadius.circular(8),
-                              child: playlist['thumbnail'] != null
-                                  ? Image.network(
-                                      playlist['thumbnail'],
-                                      fit: BoxFit.cover,
-                                      width: double.infinity,
-                                      errorBuilder: (_, __, ___) => Container(
-                                        color: Colors.grey[800],
-                                        child: const Icon(Icons.music_note, size: 48),
-                                      ),
-                                    )
-                                  : Container(
-                                      color: Colors.grey[800],
-                                      child: const Icon(Icons.music_note, size: 48),
-                                    ),
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            playlist['name'] ?? 'Unknown Playlist',
-                            style: const TextStyle(fontWeight: FontWeight.bold),
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          Text(
-                            playlist['owner'] ?? '',
-                            style: Theme.of(context).textTheme.bodySmall,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ],
-                      ),
-                    );
-                  },
-                ),
+      body: _buildContent(),
     );
   }
 }
