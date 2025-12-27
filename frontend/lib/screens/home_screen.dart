@@ -35,6 +35,8 @@ class _HomeScreenState extends State<HomeScreen> {
   final QueueService _queueService = QueueService();
   bool _showQueuePanel = false;
   StreamSubscription? _completionSubscription;
+  DateTime? _lastCompletionTime;
+  int? _lastCompletedIndex;
   
   // CSV progress tracking
   CsvProgress? _csvProgress;
@@ -71,6 +73,19 @@ class _HomeScreenState extends State<HomeScreen> {
     _completionSubscription = _playerStateService.audioPlayer.completionStream.listen((_) {
       // Only auto-play next if we're playing from queue
       if (_queueService.currentIndex >= 0) {
+        final currentIndex = _queueService.currentIndex;
+        
+        // Debounce: ignore if this is a duplicate completion for the same song
+        final now = DateTime.now();
+        if (_lastCompletedIndex == currentIndex && 
+            _lastCompletionTime != null &&
+            now.difference(_lastCompletionTime!) < const Duration(milliseconds: 1000)) {
+          return;
+        }
+        
+        _lastCompletedIndex = currentIndex;
+        _lastCompletionTime = now;
+        
         final nextItem = _queueService.getNextForCompletion();
         if (nextItem != null) {
           _queueService.playNext(_playerStateService);

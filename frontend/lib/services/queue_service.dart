@@ -13,6 +13,7 @@ class QueueService extends ChangeNotifier {
   int _currentIndex = -1;
   LoopMode _loopMode = LoopMode.none;
   bool _isPlaylistQueue = false; // Track if queue is from a playlist
+  bool _isTransitioning = false; // Prevent duplicate playNext calls
 
   List<QueueItem> get queue => List.unmodifiable(_queue);
   int get currentIndex => _currentIndex;
@@ -102,22 +103,37 @@ class QueueService extends ChangeNotifier {
 
   // Move to next track
   Future<void> playNext(PlayerStateService playerService) async {
-    // If loop single mode, replay current song
-    if (_loopMode == LoopMode.single && _currentIndex >= 0 && _currentIndex < _queue.length) {
-      final currentItem = _queue[_currentIndex];
-      await _playItem(currentItem, playerService);
+    // Prevent duplicate calls during transitions
+    if (_isTransitioning) {
       return;
     }
     
-    if (hasNext) {
-      _currentIndex++;
-      final nextItem = _queue[_currentIndex];
-      await _playItem(nextItem, playerService);
-    } else if (_loopMode == LoopMode.queue && _queue.isNotEmpty) {
-      // Loop back to the beginning
-      _currentIndex = 0;
-      final firstItem = _queue[0];
-      await _playItem(firstItem, playerService);
+    _isTransitioning = true;
+    try {
+      // If loop single mode, replay current song
+      if (_loopMode == LoopMode.single && _currentIndex >= 0 && _currentIndex < _queue.length) {
+        final currentItem = _queue[_currentIndex];
+        await _playItem(currentItem, playerService);
+        return;
+      }
+      
+      if (hasNext) {
+        _currentIndex++;
+        notifyListeners(); // Notify immediately so UI updates
+        final nextItem = _queue[_currentIndex];
+        await _playItem(nextItem, playerService);
+      } else if (_loopMode == LoopMode.queue && _queue.isNotEmpty) {
+        // Loop back to the beginning
+        _currentIndex = 0;
+        notifyListeners(); // Notify immediately so UI updates
+        final firstItem = _queue[0];
+        await _playItem(firstItem, playerService);
+      }
+    } finally {
+      // Reset flag after a short delay to allow the transition to complete
+      Future.delayed(const Duration(milliseconds: 500), () {
+        _isTransitioning = false;
+      });
     }
   }
 
@@ -173,7 +189,24 @@ class QueueService extends ChangeNotifier {
         skipRecentlyPlayed: skipRecentlyPlayed,
       );
     }
+    
+    // Preload the next song in the queue
+    _preloadNextSong(playerService);
+    
     notifyListeners();
+  }
+  
+  // Preload the next song in queue
+  void _preloadNextSong(PlayerStateService playerService) {
+    final nextItem = getNextForCompletion();
+    if (nextItem != null) {
+      // Preload asynchronously without blocking
+      if (nextItem.url != null) {
+        playerService.preloadTrackUrl(nextItem.url!);
+      } else if (nextItem.filename != null) {
+        playerService.preloadTrack(nextItem.filename!);
+      }
+    }
   }
 
   // Add item and play it immediately
