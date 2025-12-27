@@ -32,6 +32,9 @@ backend/covers/
 *.m4a
 *.m3u
 
+# Environment variables
+.env
+
 # IDE
 .vscode/
 .idea/
