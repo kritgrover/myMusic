@@ -376,7 +376,7 @@ class _HomeScreenState extends State<HomeScreen> {
               padding: const EdgeInsets.all(16.0),
               child: Row(
                 children: [
-                  // Thumbnail/Icon on the left
+                  // Thumbnail/Album Cover on the left
                   ClipRRect(
                     borderRadius: BorderRadius.circular(10),
                     child: item.type == RecentlyPlayedType.playlist
@@ -397,35 +397,21 @@ class _HomeScreenState extends State<HomeScreen> {
                                 height: 80,
                                 fit: BoxFit.cover,
                                 errorBuilder: (context, error, stackTrace) {
-                                  return Container(
-                                    width: 80,
-                                    height: 80,
-                                    color: surfaceHover,
-                                    child: Icon(
-                                      Icons.music_note,
-                                      size: 32,
-                                      color: primaryColor,
-                                    ),
-                                  );
-                                },
-                              )
-                            : item.filename != null
-                                ? AlbumCover(
-                                    filename: item.filename!,
+                                  // Fallback to AlbumCover if thumbnail fails
+                                  return AlbumCover(
+                                    filename: item.filename,
                                     title: item.title,
                                     artist: item.artist,
                                     size: 80,
-                                  )
-                                : Container(
-                                    width: 80,
-                                    height: 80,
-                                    color: surfaceHover,
-                                    child: Icon(
-                                      Icons.music_note,
-                                      size: 32,
-                                      color: primaryColor,
-                                    ),
-                                  ),
+                                  );
+                                },
+                              )
+                            : AlbumCover(
+                                filename: item.filename,
+                                title: item.title,
+                                artist: item.artist,
+                                size: 80,
+                              ),
                   ),
                   const SizedBox(width: 16),
                   // Title and artist on the right
