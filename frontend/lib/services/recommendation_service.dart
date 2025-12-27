@@ -81,5 +81,29 @@ class RecommendationService {
       return [];
     }
   }
+
+  Future<List<PlaylistTrack>> getSpotifyPlaylistTracks(String playlistId) async {
+    try {
+      final response = await http.get(Uri.parse('$baseUrl/recommendations/playlist/$playlistId'));
+      
+      if (response.statusCode == 200) {
+        final List<dynamic> data = jsonDecode(response.body);
+        return data.map((json) => PlaylistTrack(
+          id: json['id'] ?? '',
+          title: json['title'] ?? '',
+          artist: json['artist'],
+          album: json['album'],
+          filename: '',
+          url: json['url'],
+          thumbnail: json['thumbnail'],
+          duration: 0,
+        )).toList();
+      }
+      return [];
+    } catch (e) {
+      print('Error getting spotify playlist tracks: $e');
+      return [];
+    }
+  }
 }
 

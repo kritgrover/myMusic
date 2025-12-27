@@ -171,5 +171,34 @@ class SpotifyService:
             print(f"Spotify genre playlists error: {e}")
             return []
 
+    def get_playlist_tracks(self, playlist_id, limit=50):
+        if not self.sp: return []
+
+        cache_key = self._get_cache_key("playlist_tracks", playlist_id, limit)
+        cached = db.get_cache(cache_key)
+        if cached: return cached
+
+        try:
+            results = self.sp.playlist_tracks(playlist_id, limit=limit)
+            
+            tracks = []
+            for item in results.get('items', []):
+                track = item.get('track')
+                if not track: continue
+                tracks.append({
+                    'id': track['id'],
+                    'title': track['name'],
+                    'artist': track['artists'][0]['name'],
+                    'album': track['album']['name'],
+                    'thumbnail': track['album']['images'][0]['url'] if track['album']['images'] else None,
+                    'url': track['external_urls']['spotify']
+                })
+            
+            db.set_cache(cache_key, tracks, ttl_seconds=3600) # Cache for 1 hour
+            return tracks
+        except Exception as e:
+            print(f"Spotify playlist tracks error: {e}")
+            return []
+
 spotify_service = SpotifyService()
 

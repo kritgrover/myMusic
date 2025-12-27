@@ -1059,6 +1059,16 @@ def get_genre_content(genre: str):
         print(f"Error getting genre content: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/recommendations/playlist/{playlist_id}")
+def get_spotify_playlist_tracks(playlist_id: str):
+    """Get tracks from a Spotify playlist"""
+    try:
+        tracks = spotify_service.get_playlist_tracks(playlist_id)
+        return tracks
+    except Exception as e:
+        print(f"Error getting playlist tracks: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 if __name__ == "__main__":
     import uvicorn

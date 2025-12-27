@@ -23,6 +23,7 @@ import '../utils/song_display_utils.dart';
 import '../services/recommendation_service.dart';
 import '../widgets/horizontal_song_list.dart';
 import '../widgets/genre_card.dart';
+import 'genre_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -416,9 +417,15 @@ class _HomeScreenState extends State<HomeScreen> {
                                     children: _genres.map((genre) => GenreCard(
                                       genre: genre,
                                       onTap: () {
-                                        // TODO: Implement genre view
-                                        ScaffoldMessenger.of(context).showSnackBar(
-                                          SnackBar(content: Text('Genre: $genre selected')),
+                                        Navigator.push(
+                                          context,
+                                          MaterialPageRoute(
+                                            builder: (context) => GenreScreen(
+                                              genre: genre,
+                                              playerStateService: _playerStateService,
+                                              queueService: _queueService,
+                                            ),
+                                          ),
                                         );
                                       },
                                     )).toList(),
