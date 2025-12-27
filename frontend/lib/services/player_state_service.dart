@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'dart:async';
 import 'audio_player_service.dart';
 import 'recently_played_service.dart';
+import '../config.dart';
 
 class PlayerStateService extends ChangeNotifier {
   final AudioPlayerService _audioPlayerService = AudioPlayerService();
@@ -72,6 +73,18 @@ class PlayerStateService extends ChangeNotifier {
     } catch (e) {
       rethrow;
     }
+  }
+  
+  // Preload a track URL
+  Future<void> preloadTrackUrl(String url) async {
+    await _audioPlayerService.preloadUrl(url);
+  }
+  
+  // Preload a track from backend filename
+  Future<void> preloadTrack(String filename) async {
+    final encodedFilename = Uri.encodeComponent(filename);
+    final url = '${AppConfig.apiBaseUrl}/downloads/$encodedFilename';
+    await _audioPlayerService.preloadUrl(url);
   }
 
   Future<void> pause() async {

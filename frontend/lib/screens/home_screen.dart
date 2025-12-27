@@ -35,6 +35,8 @@ class _HomeScreenState extends State<HomeScreen> {
   final QueueService _queueService = QueueService();
   bool _showQueuePanel = false;
   StreamSubscription? _completionSubscription;
+  DateTime? _lastCompletionTime;
+  int? _lastCompletedIndex;
   
   // CSV progress tracking
   CsvProgress? _csvProgress;
@@ -71,6 +73,19 @@ class _HomeScreenState extends State<HomeScreen> {
     _completionSubscription = _playerStateService.audioPlayer.completionStream.listen((_) {
       // Only auto-play next if we're playing from queue
       if (_queueService.currentIndex >= 0) {
+        final currentIndex = _queueService.currentIndex;
+        
+        // Debounce: ignore if this is a duplicate completion for the same song
+        final now = DateTime.now();
+        if (_lastCompletedIndex == currentIndex && 
+            _lastCompletionTime != null &&
+            now.difference(_lastCompletionTime!) < const Duration(milliseconds: 1000)) {
+          return;
+        }
+        
+        _lastCompletedIndex = currentIndex;
+        _lastCompletionTime = now;
+        
         final nextItem = _queueService.getNextForCompletion();
         if (nextItem != null) {
           _queueService.playNext(_playerStateService);
@@ -361,7 +376,7 @@ class _HomeScreenState extends State<HomeScreen> {
               padding: const EdgeInsets.all(16.0),
               child: Row(
                 children: [
-                  // Thumbnail/Icon on the left
+                  // Thumbnail/Album Cover on the left
                   ClipRRect(
                     borderRadius: BorderRadius.circular(10),
                     child: item.type == RecentlyPlayedType.playlist
@@ -382,35 +397,21 @@ class _HomeScreenState extends State<HomeScreen> {
                                 height: 80,
                                 fit: BoxFit.cover,
                                 errorBuilder: (context, error, stackTrace) {
-                                  return Container(
-                                    width: 80,
-                                    height: 80,
-                                    color: surfaceHover,
-                                    child: Icon(
-                                      Icons.music_note,
-                                      size: 32,
-                                      color: primaryColor,
-                                    ),
-                                  );
-                                },
-                              )
-                            : item.filename != null
-                                ? AlbumCover(
-                                    filename: item.filename!,
+                                  // Fallback to AlbumCover if thumbnail fails
+                                  return AlbumCover(
+                                    filename: item.filename,
                                     title: item.title,
                                     artist: item.artist,
                                     size: 80,
-                                  )
-                                : Container(
-                                    width: 80,
-                                    height: 80,
-                                    color: surfaceHover,
-                                    child: Icon(
-                                      Icons.music_note,
-                                      size: 32,
-                                      color: primaryColor,
-                                    ),
-                                  ),
+                                  );
+                                },
+                              )
+                            : AlbumCover(
+                                filename: item.filename,
+                                title: item.title,
+                                artist: item.artist,
+                                size: 80,
+                              ),
                   ),
                   const SizedBox(width: 16),
                   // Title and artist on the right
