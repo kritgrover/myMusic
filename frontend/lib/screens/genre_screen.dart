@@ -82,16 +82,20 @@ class _GenreScreenState extends State<GenreScreen> {
             : GridView.builder(
                 padding: const EdgeInsets.all(24),
                 gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 2,
+                  crossAxisCount: 4,
                   crossAxisSpacing: 16,
                   mainAxisSpacing: 16,
-                  childAspectRatio: 0.75,
+                  childAspectRatio: 0.85,
                 ),
                 itemCount: _playlists.length,
                 itemBuilder: (context, index) {
                   final playlist = _playlists[index];
                   return Card(
                     clipBehavior: Clip.antiAlias,
+                    elevation: 2,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
                     child: Material(
                       color: Colors.transparent,
                       child: InkWell(
@@ -109,60 +113,67 @@ class _GenreScreenState extends State<GenreScreen> {
                             ),
                           );
                         },
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Expanded(
-                              child: ClipRRect(
-                                borderRadius: BorderRadius.circular(8),
-                                child: playlist['thumbnail'] != null
-                                    ? Image.network(
-                                        playlist['thumbnail'],
-                                        fit: BoxFit.cover,
-                                        width: double.infinity,
-                                        errorBuilder: (_, __, ___) => Container(
+                        borderRadius: BorderRadius.circular(12),
+                        child: Padding(
+                          padding: const EdgeInsets.all(10.0),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              // Smaller image
+                              AspectRatio(
+                                aspectRatio: 1.0,
+                                child: ClipRRect(
+                                  borderRadius: BorderRadius.circular(8),
+                                  child: playlist['thumbnail'] != null
+                                      ? Image.network(
+                                          playlist['thumbnail'],
+                                          fit: BoxFit.cover,
+                                          width: double.infinity,
+                                          errorBuilder: (_, __, ___) => Container(
+                                            color: Theme.of(context).colorScheme.surfaceVariant,
+                                            child: Icon(
+                                              Icons.music_note,
+                                              size: 28,
+                                              color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                            ),
+                                          ),
+                                        )
+                                      : Container(
                                           color: Theme.of(context).colorScheme.surfaceVariant,
                                           child: Icon(
                                             Icons.music_note,
-                                            size: 48,
+                                            size: 28,
                                             color: Theme.of(context).colorScheme.onSurfaceVariant,
                                           ),
                                         ),
-                                      )
-                                    : Container(
-                                        color: Theme.of(context).colorScheme.surfaceVariant,
-                                        child: Icon(
-                                          Icons.music_note,
-                                          size: 48,
-                                          color: Theme.of(context).colorScheme.onSurfaceVariant,
-                                        ),
-                                      ),
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            Padding(
-                              padding: const EdgeInsets.symmetric(horizontal: 8.0),
-                              child: Text(
-                                playlist['name'] ?? 'Unknown Playlist',
-                                style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                                  fontWeight: FontWeight.w600,
                                 ),
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
                               ),
-                            ),
-                            Padding(
-                              padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
-                              child: Text(
+                              const SizedBox(height: 10),
+                              // Title text
+                              Flexible(
+                                child: Text(
+                                  playlist['name'] ?? 'Unknown Playlist',
+                                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 14,
+                                  ),
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              // Owner text
+                              Text(
                                 playlist['owner'] ?? '',
-                                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                                   color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+                                  fontSize: 12,
                                 ),
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
                       ),
                     ),
