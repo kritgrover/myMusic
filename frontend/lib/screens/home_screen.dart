@@ -24,6 +24,7 @@ import '../services/recommendation_service.dart';
 import '../widgets/horizontal_song_list.dart';
 import '../widgets/genre_card.dart';
 import 'genre_screen.dart';
+import 'spotify_playlist_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -352,28 +353,44 @@ class _HomeScreenState extends State<HomeScreen> {
                                   builder: (context, _) {
                                     if (_recentlyPlayedService.items.isEmpty) return const SizedBox.shrink();
                                     
-                                    // Convert recent items to VideoInfo for display
-                                    final recentSongs = _recentlyPlayedService.items
-                                        .where((item) => item.type == RecentlyPlayedType.song)
-                                        .map((item) => VideoInfo(
-                                          id: item.id,
-                                          title: item.title,
-                                          uploader: item.artist ?? 'Unknown',
-                                          duration: 0,
-                                          url: item.url ?? '',
-                                          thumbnail: item.thumbnail ?? '',
-                                        ))
-                                        .toList();
-                                        
-                                    if (recentSongs.isEmpty) return const SizedBox.shrink();
-
-                                    return HorizontalSongList(
-                                      title: 'Recently Played',
-                                      songs: recentSongs,
-                                      onPlay: (video) async {
-                                        await _streamVideo(video);
-                                      },
-                                      onAddToQueue: _addToQueue,
+                                    return Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Padding(
+                                          padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 16.0),
+                                          child: Text(
+                                            'Recently Played',
+                                            style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                          ),
+                                        ),
+                                        Padding(
+                                          padding: const EdgeInsets.symmetric(horizontal: 24.0),
+                                          child: LayoutBuilder(
+                                            builder: (context, constraints) {
+                                              final cardWidth = (constraints.maxWidth - 16) / 2;
+                                              final cardHeight = 112.0;
+                                              final aspectRatio = cardWidth / cardHeight;
+                                              
+                                              return GridView.builder(
+                                                shrinkWrap: true,
+                                                physics: const NeverScrollableScrollPhysics(),
+                                                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                                                  crossAxisCount: 2,
+                                                  crossAxisSpacing: 16,
+                                                  mainAxisSpacing: 16,
+                                                  childAspectRatio: aspectRatio,
+                                                ),
+                                                itemCount: _recentlyPlayedService.items.length,
+                                                itemBuilder: (context, index) {
+                                                  return _buildRecentlyPlayedCard(_recentlyPlayedService.items[index]);
+                                                },
+                                              );
+                                            },
+                                          ),
+                                        ),
+                                      ],
                                     );
                                   },
                                 ),
@@ -462,16 +479,35 @@ class _HomeScreenState extends State<HomeScreen> {
                   ClipRRect(
                     borderRadius: BorderRadius.circular(10),
                     child: item.type == RecentlyPlayedType.playlist
-                        ? Container(
-                            width: 80,
-                            height: 80,
-                            color: surfaceHover,
-                            child: Icon(
-                              Icons.playlist_play,
-                              size: 32,
-                              color: primaryColor,
-                            ),
-                          )
+                        ? item.thumbnail != null && item.thumbnail!.isNotEmpty
+                            ? Image.network(
+                                item.thumbnail!,
+                                width: 80,
+                                height: 80,
+                                fit: BoxFit.cover,
+                                errorBuilder: (context, error, stackTrace) {
+                                  return Container(
+                                    width: 80,
+                                    height: 80,
+                                    color: surfaceHover,
+                                    child: Icon(
+                                      Icons.playlist_play,
+                                      size: 32,
+                                      color: primaryColor,
+                                    ),
+                                  );
+                                },
+                              )
+                            : Container(
+                                width: 80,
+                                height: 80,
+                                color: surfaceHover,
+                                child: Icon(
+                                  Icons.playlist_play,
+                                  size: 32,
+                                  color: primaryColor,
+                                ),
+                              )
                         : item.thumbnail != null
                             ? Image.network(
                                 item.thumbnail!,
@@ -548,13 +584,36 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _handleRecentlyPlayedTap(RecentlyPlayedItem item) async {
     if (item.type == RecentlyPlayedType.playlist) {
-      // Switch to playlists tab and show the playlist directly
-      setState(() {
-        _navigateToPlaylistId = item.playlistId ?? item.id;
-        _currentIndex = 2; // Switch to Playlists tab
-      });
-      // The PlaylistsScreen will automatically load and show the playlist
-      // via the initialPlaylistId parameter
+      if (item.playlistId != null) {
+        bool isLocal = false;
+        try {
+          // Check if it exists in local playlists
+          final localPlaylists = await _playlistService.getAllPlaylists();
+          isLocal = localPlaylists.any((p) => p.id == item.playlistId);
+        } catch (_) {}
+
+        if (isLocal) {
+          // Switch to playlists tab and show the playlist directly
+          setState(() {
+            _navigateToPlaylistId = item.playlistId;
+            _currentIndex = 2; // Switch to Playlists tab
+          });
+        } else {
+          // Navigate to SpotifyPlaylistScreen
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => SpotifyPlaylistScreen(
+                playlistId: item.playlistId!,
+                playlistName: item.title,
+                coverUrl: item.thumbnail,
+                playerStateService: _playerStateService,
+                queueService: _queueService,
+              ),
+            ),
+          );
+        }
+      }
     } else {
       // Play the song
       // First, try to stream if URL is available (even if filename exists, URL takes priority for non-downloaded songs)

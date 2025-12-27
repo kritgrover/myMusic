@@ -56,9 +56,24 @@ class PlayerStateService extends ChangeNotifier {
       }
       
       await _audioPlayerService.playFromBackend(filename);
+      notifyListeners(); // Notify listeners to update UI
+
     } catch (e) {
       rethrow;
     }
+  }
+
+  // Play a playlist (track usage in recently played)
+  Future<void> playPlaylist({required String playlistId, required String playlistName, String? coverUrl}) async {
+    if (_recentlyPlayedService != null) {
+      await _recentlyPlayedService!.addPlaylist(
+        playlistId: playlistId,
+        title: playlistName,
+        thumbnail: coverUrl,
+      );
+    }
+    // Note: Actual playlist playing (queueing) is handled by the UI calling QueueService
+    // This method is just for tracking history
   }
 
   Future<void> streamTrack(String streamingUrl, {String? trackName, String? trackArtist, String? url, bool skipRecentlyPlayed = false}) async {
@@ -87,6 +102,8 @@ class PlayerStateService extends ChangeNotifier {
       }
       
       await _audioPlayerService.playFromUrl(streamingUrl);
+      notifyListeners(); // Notify listeners to update UI
+
     } catch (e) {
       rethrow;
     }
