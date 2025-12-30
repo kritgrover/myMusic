@@ -2,12 +2,15 @@ import 'package:flutter/material.dart';
 import 'dart:async';
 import 'audio_player_service.dart';
 import 'recently_played_service.dart';
+import 'recommendation_service.dart';
 import '../config.dart';
 
 class PlayerStateService extends ChangeNotifier {
   final AudioPlayerService _audioPlayerService = AudioPlayerService();
   final RecentlyPlayedService? _recentlyPlayedService;
+  final RecommendationService _recommendationService = RecommendationService();
   String? _currentTrackName;
+
   String? _currentTrackArtist;
   String? _currentTrackFilename;
   StreamSubscription? _stateSubscription;
@@ -43,12 +46,34 @@ class PlayerStateService extends ChangeNotifier {
           filename: filename,
           url: url,
         );
+
+        // Log to recommendation engine
+        _recommendationService.logHistory(
+          title: trackName,
+          artist: trackArtist ?? 'Unknown',
+          durationPlayed: 0.0,
+        );
       }
       
       await _audioPlayerService.playFromBackend(filename);
+      notifyListeners(); // Notify listeners to update UI
+
     } catch (e) {
       rethrow;
     }
+  }
+
+  // Play a playlist (track usage in recently played)
+  Future<void> playPlaylist({required String playlistId, required String playlistName, String? coverUrl}) async {
+    if (_recentlyPlayedService != null) {
+      await _recentlyPlayedService!.addPlaylist(
+        playlistId: playlistId,
+        title: playlistName,
+        thumbnail: coverUrl,
+      );
+    }
+    // Note: Actual playlist playing (queueing) is handled by the UI calling QueueService
+    // This method is just for tracking history
   }
 
   Future<void> streamTrack(String streamingUrl, {String? trackName, String? trackArtist, String? url, bool skipRecentlyPlayed = false}) async {
@@ -67,9 +92,18 @@ class PlayerStateService extends ChangeNotifier {
           artist: trackArtist,
           url: url,
         );
+
+        // Log to recommendation engine
+        _recommendationService.logHistory(
+          title: trackName,
+          artist: trackArtist ?? 'Unknown',
+          durationPlayed: 0.0,
+        );
       }
       
       await _audioPlayerService.playFromUrl(streamingUrl);
+      notifyListeners(); // Notify listeners to update UI
+
     } catch (e) {
       rethrow;
     }
