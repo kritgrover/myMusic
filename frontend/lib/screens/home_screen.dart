@@ -66,7 +66,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
   // Recommendations
   List<VideoInfo> _dailyMix = [];
-  List<VideoInfo> _newReleases = [];
   bool _isLoadingRecommendations = false;
   final List<String> _genres = ['Pop', 'Rock', 'Hip Hop', 'Electronic', 'Jazz', 'Classical', 'Indie', 'Metal'];
   
@@ -131,7 +130,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
     try {
       final dailyMixTracks = await _recommendationService.getDailyMix();
-      final newReleaseItems = await _recommendationService.getNewReleases();
 
       if (mounted) {
         setState(() {
@@ -142,15 +140,6 @@ class _HomeScreenState extends State<HomeScreen> {
             duration: t.duration ?? 0,
             url: t.url ?? '',
             thumbnail: t.thumbnail ?? '',
-          )).toList();
-
-          _newReleases = newReleaseItems.map((item) => VideoInfo(
-            id: item['url'] ?? '',
-            title: item['name'] ?? '',
-            uploader: item['artist'] ?? '',
-            duration: 0,
-            url: item['url'] ?? '',
-            thumbnail: item['thumbnail'] ?? '',
           )).toList();
           
           _isLoadingRecommendations = false;
@@ -429,13 +418,6 @@ class _HomeScreenState extends State<HomeScreen> {
                                   HorizontalSongList(
                                     title: 'Made for You',
                                     songs: _dailyMix,
-                                    onPlay: _streamVideo,
-                                    onAddToQueue: _addToQueue,
-                                  ),
-                                  
-                                  HorizontalSongList(
-                                    title: 'New Releases',
-                                    songs: _newReleases,
                                     onPlay: _streamVideo,
                                     onAddToQueue: _addToQueue,
                                   ),
