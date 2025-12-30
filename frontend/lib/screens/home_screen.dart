@@ -435,17 +435,34 @@ class _HomeScreenState extends State<HomeScreen> {
                                 ),
                                 Padding(
                                   padding: const EdgeInsets.symmetric(horizontal: 24.0),
-                                  child: Wrap(
-                                    spacing: 16,
-                                    runSpacing: 16,
-                                    children: _genres.map((genre) => GenreCard(
-                                      genre: genre,
-                                      onTap: () {
-                                        setState(() {
-                                          _selectedGenre = genre;
-                                        });
-                                      },
-                                    )).toList(),
+                                  child: LayoutBuilder(
+                                    builder: (context, constraints) {
+                                      final cardWidth = (constraints.maxWidth - 48) / 4; // 4 columns with 3 gaps of 16px
+                                      final cardHeight = 112.0;
+                                      final aspectRatio = cardWidth / cardHeight;
+                                      
+                                      return GridView.builder(
+                                        shrinkWrap: true,
+                                        physics: const NeverScrollableScrollPhysics(),
+                                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                                          crossAxisCount: 4,
+                                          crossAxisSpacing: 16,
+                                          mainAxisSpacing: 16,
+                                          childAspectRatio: aspectRatio,
+                                        ),
+                                        itemCount: _genres.length,
+                                        itemBuilder: (context, index) {
+                                          return GenreCard(
+                                            genre: _genres[index],
+                                            onTap: () {
+                                              setState(() {
+                                                _selectedGenre = _genres[index];
+                                              });
+                                            },
+                                          );
+                                        },
+                                      );
+                                    },
                                   ),
                                 ),
                                 const SizedBox(height: 120), // Bottom padding for player

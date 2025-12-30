@@ -42,8 +42,6 @@ class _GenreCardState extends State<GenreCard> {
             borderRadius: BorderRadius.circular(16),
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 200),
-              width: 160,
-              height: 100,
               decoration: BoxDecoration(
                 gradient: LinearGradient(
                   begin: Alignment.topLeft,
