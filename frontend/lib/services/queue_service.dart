@@ -14,6 +14,7 @@ class QueueService extends ChangeNotifier {
   LoopMode _loopMode = LoopMode.none;
   bool _isPlaylistQueue = false; // Track if queue is from a playlist
   bool _isTransitioning = false; // Prevent duplicate playNext calls
+  Future<String?> Function(QueueItem)? _loadStreamingUrlCallback; // Callback for lazy loading streaming URLs
 
   List<QueueItem> get queue => List.unmodifiable(_queue);
   int get currentIndex => _currentIndex;
@@ -32,9 +33,10 @@ class QueueService extends ChangeNotifier {
   }
 
   // Add multiple items to queue
-  void addAllToQueue(List<QueueItem> items, {bool isPlaylistQueue = false}) {
+  void addAllToQueue(List<QueueItem> items, {bool isPlaylistQueue = false, Future<String?> Function(QueueItem)? loadStreamingUrl}) {
     _queue.addAll(items);
     _isPlaylistQueue = isPlaylistQueue;
+    _loadStreamingUrlCallback = loadStreamingUrl;
     notifyListeners();
   }
 
@@ -53,11 +55,20 @@ class QueueService extends ChangeNotifier {
     }
   }
 
+  // Update item at specific index
+  void updateItemAt(int index, QueueItem newItem) {
+    if (index >= 0 && index < _queue.length) {
+      _queue[index] = newItem;
+      notifyListeners();
+    }
+  }
+
   // Clear the entire queue
   void clearQueue() {
     _queue.clear();
     _currentIndex = -1;
     _isPlaylistQueue = false;
+    _loadStreamingUrlCallback = null;
     notifyListeners();
   }
 
@@ -102,7 +113,7 @@ class QueueService extends ChangeNotifier {
   }
 
   // Move to next track
-  Future<void> playNext(PlayerStateService playerService) async {
+  Future<void> playNext(PlayerStateService playerService, {Future<String?> Function(QueueItem)? loadStreamingUrl}) async {
     // Prevent duplicate calls during transitions
     if (_isTransitioning) {
       return;
@@ -113,7 +124,7 @@ class QueueService extends ChangeNotifier {
       // If loop single mode, replay current song
       if (_loopMode == LoopMode.single && _currentIndex >= 0 && _currentIndex < _queue.length) {
         final currentItem = _queue[_currentIndex];
-        await _playItem(currentItem, playerService);
+        await _playItem(currentItem, playerService, loadStreamingUrl: loadStreamingUrl);
         return;
       }
       
@@ -121,13 +132,13 @@ class QueueService extends ChangeNotifier {
         _currentIndex++;
         notifyListeners(); // Notify immediately so UI updates
         final nextItem = _queue[_currentIndex];
-        await _playItem(nextItem, playerService);
+        await _playItem(nextItem, playerService, loadStreamingUrl: loadStreamingUrl);
       } else if (_loopMode == LoopMode.queue && _queue.isNotEmpty) {
         // Loop back to the beginning
         _currentIndex = 0;
         notifyListeners(); // Notify immediately so UI updates
         final firstItem = _queue[0];
-        await _playItem(firstItem, playerService);
+        await _playItem(firstItem, playerService, loadStreamingUrl: loadStreamingUrl);
       }
     } finally {
       // Reset flag after a short delay to allow the transition to complete
@@ -138,44 +149,64 @@ class QueueService extends ChangeNotifier {
   }
 
   // Move to previous track
-  Future<void> playPrevious(PlayerStateService playerService) async {
+  Future<void> playPrevious(PlayerStateService playerService, {Future<String?> Function(QueueItem)? loadStreamingUrl}) async {
     // If loop single mode, replay current song
     if (_loopMode == LoopMode.single && _currentIndex >= 0 && _currentIndex < _queue.length) {
       final currentItem = _queue[_currentIndex];
-      await _playItem(currentItem, playerService);
+      await _playItem(currentItem, playerService, loadStreamingUrl: loadStreamingUrl);
       return;
     }
     
     if (hasPrevious) {
       _currentIndex--;
       final previousItem = _queue[_currentIndex];
-      await _playItem(previousItem, playerService);
+      await _playItem(previousItem, playerService, loadStreamingUrl: loadStreamingUrl);
     } else if (_loopMode == LoopMode.queue && _queue.isNotEmpty) {
       // Loop to the end
       _currentIndex = _queue.length - 1;
       final lastItem = _queue[_currentIndex];
-      await _playItem(lastItem, playerService);
+      await _playItem(lastItem, playerService, loadStreamingUrl: loadStreamingUrl);
     }
   }
 
   // Play a specific item from queue
-  Future<void> playItem(int index, PlayerStateService playerService) async {
+  Future<void> playItem(int index, PlayerStateService playerService, {Future<String?> Function(QueueItem)? loadStreamingUrl}) async {
     if (index >= 0 && index < _queue.length) {
       _currentIndex = index;
       final item = _queue[index];
-      await _playItem(item, playerService);
+      await _playItem(item, playerService, loadStreamingUrl: loadStreamingUrl);
     }
   }
 
   // Internal method to play an item
-  Future<void> _playItem(QueueItem item, PlayerStateService playerService) async {
+  Future<void> _playItem(QueueItem item, PlayerStateService playerService, {Future<String?> Function(QueueItem)? loadStreamingUrl}) async {
     // Skip recently played if this is a playlist queue
     final skipRecentlyPlayed = _isPlaylistQueue;
     
-    if (item.url != null) {
+    // Use provided callback or stored callback for lazy loading
+    final loadCallback = loadStreamingUrl ?? _loadStreamingUrlCallback;
+    
+    // If item doesn't have streaming URL but has originalUrl, load it first
+    String? streamingUrl = item.url;
+    if (streamingUrl == null && item.originalUrl != null && loadCallback != null) {
+      try {
+        streamingUrl = await loadCallback(item);
+        // Update the item with the loaded streaming URL
+        if (streamingUrl != null && _currentIndex >= 0 && _currentIndex < _queue.length) {
+          final updatedItem = item.copyWithStreamingUrl(streamingUrl);
+          _queue[_currentIndex] = updatedItem;
+        }
+      } catch (e) {
+        // If loading fails, try to play with original URL (might work for some cases)
+        // Or we could throw an error here
+        throw Exception('Failed to load streaming URL: $e');
+      }
+    }
+    
+    if (streamingUrl != null) {
       // Stream from URL
       await playerService.streamTrack(
-        item.url!,
+        streamingUrl,
         trackName: item.title,
         trackArtist: item.artist,
         skipRecentlyPlayed: skipRecentlyPlayed,
@@ -188,23 +219,42 @@ class QueueService extends ChangeNotifier {
         trackArtist: item.artist,
         skipRecentlyPlayed: skipRecentlyPlayed,
       );
+    } else {
+      throw Exception('No URL or filename available for playback');
     }
     
     // Preload the next song in the queue
-    _preloadNextSong(playerService);
+    _preloadNextSong(playerService, loadStreamingUrl: loadStreamingUrl);
     
     notifyListeners();
   }
   
   // Preload the next song in queue
-  void _preloadNextSong(PlayerStateService playerService) {
+  void _preloadNextSong(PlayerStateService playerService, {Future<String?> Function(QueueItem)? loadStreamingUrl}) {
     final nextItem = getNextForCompletion();
     if (nextItem != null) {
+      // Use provided callback or stored callback for lazy loading
+      final loadCallback = loadStreamingUrl ?? _loadStreamingUrlCallback;
+      
       // Preload asynchronously without blocking
       if (nextItem.url != null) {
         playerService.preloadTrackUrl(nextItem.url!);
       } else if (nextItem.filename != null) {
         playerService.preloadTrack(nextItem.filename!);
+      } else if (nextItem.originalUrl != null && loadCallback != null) {
+        // Load streaming URL in background for lazy-loaded items
+        loadCallback(nextItem).then((streamingUrl) {
+          if (streamingUrl != null) {
+            // Update the item and preload
+            final nextIndex = _currentIndex + 1;
+            if (nextIndex < _queue.length && _queue[nextIndex].id == nextItem.id) {
+              _queue[nextIndex] = nextItem.copyWithStreamingUrl(streamingUrl);
+              playerService.preloadTrackUrl(streamingUrl);
+            }
+          }
+        }).catchError((_) {
+          // Silently fail preloading
+        });
       }
     }
   }

@@ -357,102 +357,57 @@ class _SpotifyPlaylistScreenState extends State<SpotifyPlaylistScreen> {
       );
     }
 
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => const Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            CircularProgressIndicator(),
-            SizedBox(height: 16),
-            Text('Preparing playlist...'),
-          ],
-        ),
-      ),
-    );
-
     try {
       final tracks = _sortedTracks;
       final queueItems = <QueueItem>[];
-      int successCount = 0;
-      int failCount = 0;
 
+      // Create queue items immediately without fetching streaming URLs
       for (final track in tracks) {
-        try {
-          QueueItem? queueItem;
-
-          if (track.filename.isNotEmpty) {
-            queueItem = QueueItem.fromDownloadedFile(
-              filename: track.filename,
-              title: track.title,
-              artist: track.artist,
-              album: track.album,
-            );
-            queueItems.add(queueItem);
-            successCount++;
-          } else if (track.url != null && track.url!.isNotEmpty) {
-            try {
-              String? youtubeUrl = track.url;
-              if (!track.url!.contains('youtube.com') && !track.url!.contains('youtu.be')) {
-                final query = "${track.title} ${track.artist}";
-                final results = await _apiService.searchYoutube(query);
-                if (results.isNotEmpty) {
-                  youtubeUrl = results.first.url;
-                }
-              }
-
-              if (youtubeUrl != null) {
-                final result = await _apiService.getStreamingUrl(
-                  url: youtubeUrl,
-                  title: track.title,
-                  artist: track.artist ?? '',
-                );
-
-                queueItem = QueueItem.fromPlaylistTrack(
-                  trackId: track.id,
-                  title: result.title,
-                  artist: result.artist,
-                  streamingUrl: result.streamingUrl,
-                  album: track.album,
-                );
-                queueItems.add(queueItem);
-                successCount++;
-              } else {
-                failCount++;
-              }
-            } catch (e) {
-              failCount++;
-            }
-          } else {
-            failCount++;
-          }
-        } catch (e) {
-          failCount++;
+        if (track.filename.isNotEmpty) {
+          // Local file - ready to play
+          queueItems.add(QueueItem.fromDownloadedFile(
+            filename: track.filename,
+            title: track.title,
+            artist: track.artist,
+            album: track.album,
+          ));
+        } else if (track.url != null && track.url!.isNotEmpty) {
+          // Create item with original URL for lazy loading
+          queueItems.add(QueueItem.fromPlaylistTrackLazy(
+            trackId: track.id,
+            title: track.title,
+            artist: track.artist,
+            originalUrl: track.url!,
+            album: track.album,
+            thumbnail: track.thumbnail,
+          ));
         }
       }
 
-      if (mounted) {
-        Navigator.of(context).pop();
-
-        if (queueItems.isNotEmpty) {
-          widget.queueService!.clearQueue();
-          widget.queueService!.addAllToQueue(queueItems, isPlaylistQueue: true);
-          
-          if (widget.recentlyPlayedService != null) {
-            await widget.recentlyPlayedService!.addPlaylist(
-              playlistId: widget.playlistId,
-              title: widget.playlistName,
-              thumbnail: widget.coverUrl,
-            );
-          }
-          
-          await widget.queueService!.playItem(0, widget.playerStateService!);
+      if (queueItems.isNotEmpty) {
+        widget.queueService!.clearQueue();
+        widget.queueService!.addAllToQueue(
+          queueItems, 
+          isPlaylistQueue: true,
+          loadStreamingUrl: _loadStreamingUrlForQueueItem,
+        );
+        
+        if (widget.recentlyPlayedService != null) {
+          await widget.recentlyPlayedService!.addPlaylist(
+            playlistId: widget.playlistId,
+            title: widget.playlistName,
+            thumbnail: widget.coverUrl,
+          );
         }
+        
+        // Start playing first item (will load streaming URL if needed)
+        await widget.queueService!.playItem(0, widget.playerStateService!);
+        
+        // Preload streaming URLs for next 2 items in background
+        _preloadNextStreamingUrls(0, 2);
       }
     } catch (e) {
       if (mounted) {
-        Navigator.of(context).pop();
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Failed to play playlist: $e'),
@@ -499,23 +454,6 @@ class _SpotifyPlaylistScreenState extends State<SpotifyPlaylistScreen> {
       );
     }
 
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const CircularProgressIndicator(),
-            if (shuffle) ...[
-              const SizedBox(height: 16),
-              const Text('Shuffling playlist...'),
-            ],
-          ],
-        ),
-      ),
-    );
-
     try {
       final tracks = List<PlaylistTrack>.from(_sortedTracks);
       if (shuffle) {
@@ -523,88 +461,57 @@ class _SpotifyPlaylistScreenState extends State<SpotifyPlaylistScreen> {
       }
 
       final queueItems = <QueueItem>[];
-      int successCount = 0;
-      int failCount = 0;
 
+      // Create queue items immediately without fetching streaming URLs
       for (final track in tracks) {
-        try {
-          QueueItem? queueItem;
-
-          if (track.filename.isNotEmpty) {
-            queueItem = QueueItem.fromDownloadedFile(
-              filename: track.filename,
-              title: track.title,
-              artist: track.artist,
-              album: track.album,
-            );
-            queueItems.add(queueItem);
-            successCount++;
-          } else if (track.url != null && track.url!.isNotEmpty) {
-            try {
-              String? youtubeUrl = track.url;
-              if (!track.url!.contains('youtube.com') && !track.url!.contains('youtu.be')) {
-                final query = "${track.title} ${track.artist}";
-                final results = await _apiService.searchYoutube(query);
-                if (results.isNotEmpty) {
-                  youtubeUrl = results.first.url;
-                }
-              }
-
-              if (youtubeUrl != null) {
-                final result = await _apiService.getStreamingUrl(
-                  url: youtubeUrl,
-                  title: track.title,
-                  artist: track.artist ?? '',
-                );
-
-                queueItem = QueueItem.fromPlaylistTrack(
-                  trackId: track.id,
-                  title: result.title,
-                  artist: result.artist,
-                  streamingUrl: result.streamingUrl,
-                  album: track.album,
-                );
-                queueItems.add(queueItem);
-                successCount++;
-              } else {
-                failCount++;
-              }
-            } catch (e) {
-              failCount++;
-            }
-          } else {
-            failCount++;
-          }
-        } catch (e) {
-          failCount++;
+        if (track.filename.isNotEmpty) {
+          // Local file - ready to play
+          queueItems.add(QueueItem.fromDownloadedFile(
+            filename: track.filename,
+            title: track.title,
+            artist: track.artist,
+            album: track.album,
+          ));
+        } else if (track.url != null && track.url!.isNotEmpty) {
+          // Create item with original URL for lazy loading
+          queueItems.add(QueueItem.fromPlaylistTrackLazy(
+            trackId: track.id,
+            title: track.title,
+            artist: track.artist,
+            originalUrl: track.url!,
+            album: track.album,
+            thumbnail: track.thumbnail,
+          ));
         }
       }
 
-      if (mounted) {
-        Navigator.of(context).pop();
+      if (queueItems.isNotEmpty) {
+        if (shuffle) {
+          widget.queueService!.clearQueue();
+        }
+        
+        widget.queueService!.addAllToQueue(
+          queueItems, 
+          isPlaylistQueue: true,
+          loadStreamingUrl: _loadStreamingUrlForQueueItem,
+        );
 
-        if (queueItems.isNotEmpty) {
-          if (shuffle) {
-            widget.queueService!.clearQueue();
+        if (shuffle && widget.playerStateService != null) {
+          if (widget.recentlyPlayedService != null) {
+            await widget.recentlyPlayedService!.addPlaylist(
+              playlistId: widget.playlistId,
+              title: widget.playlistName,
+              thumbnail: widget.coverUrl,
+            );
           }
+          await widget.queueService!.playItem(0, widget.playerStateService!);
           
-          widget.queueService!.addAllToQueue(queueItems, isPlaylistQueue: true);
-
-          if (shuffle && widget.playerStateService != null) {
-            if (widget.recentlyPlayedService != null) {
-              await widget.recentlyPlayedService!.addPlaylist(
-                playlistId: widget.playlistId,
-                title: widget.playlistName,
-                thumbnail: widget.coverUrl,
-              );
-            }
-            await widget.queueService!.playItem(0, widget.playerStateService!);
-          }
+          // Preload streaming URLs for next 2 items in background
+          _preloadNextStreamingUrls(0, 2);
         }
       }
     } catch (e) {
       if (mounted) {
-        Navigator.of(context).pop();
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Failed to ${shuffle ? 'shuffle and ' : ''}add playlist to queue: $e'),
@@ -616,6 +523,67 @@ class _SpotifyPlaylistScreenState extends State<SpotifyPlaylistScreen> {
           ),
         );
       }
+    }
+  }
+
+  // Preload streaming URLs for next N items in background
+  Future<void> _preloadNextStreamingUrls(int startIndex, int count) async {
+    final queue = widget.queueService!.queue;
+    final endIndex = (startIndex + count + 1).clamp(0, queue.length);
+    
+    for (int i = startIndex + 1; i < endIndex; i++) {
+      final item = queue[i];
+      
+      // Skip if already has streaming URL or is a local file
+      if (item.url != null || item.filename != null || item.originalUrl == null) {
+        continue;
+      }
+      
+      // Load streaming URL in background
+      _loadStreamingUrlForItem(item, i).catchError((e) {
+        // Silently fail - we'll load it when needed
+      });
+    }
+  }
+
+  // Load streaming URL for a queue item (callback for queue service)
+  Future<String?> _loadStreamingUrlForQueueItem(QueueItem item) async {
+    if (item.originalUrl == null) return null;
+    
+    try {
+      String youtubeUrl = item.originalUrl!;
+      
+      // If not a YouTube URL, search for it
+      if (!youtubeUrl.contains('youtube.com') && !youtubeUrl.contains('youtu.be')) {
+        final query = "${item.title} ${item.artist}";
+        final results = await _apiService.searchYoutube(query);
+        if (results.isNotEmpty) {
+          youtubeUrl = results.first.url;
+        } else {
+          return null;
+        }
+      }
+
+      final result = await _apiService.getStreamingUrl(
+        url: youtubeUrl,
+        title: item.title ?? '',
+        artist: item.artist ?? '',
+      );
+
+      return result.streamingUrl;
+    } catch (e) {
+      // Return null on error - will be handled by queue service
+      return null;
+    }
+  }
+
+  // Load streaming URL for a specific queue item and update it (for background preloading)
+  Future<void> _loadStreamingUrlForItem(QueueItem item, int queueIndex) async {
+    final streamingUrl = await _loadStreamingUrlForQueueItem(item);
+    if (streamingUrl != null) {
+      // Update the queue item with streaming URL
+      final updatedItem = item.copyWithStreamingUrl(streamingUrl);
+      widget.queueService!.updateItemAt(queueIndex, updatedItem);
     }
   }
 
