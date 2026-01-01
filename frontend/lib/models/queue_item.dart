@@ -106,6 +106,20 @@ class QueueItem {
     );
   }
 
+  // Create a copy with updated thumbnail
+  QueueItem copyWithThumbnail(String? thumbnail) {
+    return QueueItem(
+      id: id,
+      title: title,
+      artist: artist,
+      album: album,
+      url: url,
+      filename: filename,
+      thumbnail: thumbnail,
+      originalUrl: originalUrl,
+    );
+  }
+
   String get displayTitle => title ?? filename ?? 'Unknown Track';
   String? get displayArtist => artist;
 }

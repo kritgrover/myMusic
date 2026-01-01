@@ -5,6 +5,7 @@ import '../services/queue_service.dart';
 import '../services/player_state_service.dart';
 import '../utils/song_display_utils.dart';
 import '../widgets/album_cover.dart';
+import '../models/queue_item.dart';
 
 class BottomPlayer extends StatefulWidget {
   final AudioPlayerService playerService;
@@ -193,12 +194,14 @@ class _BottomPlayerState extends State<BottomPlayer> {
     String? filename;
     String? title;
     String? artist;
+    String? artworkUrl;
     
     if (widget.queueService != null && widget.queueService!.currentItem != null) {
       final currentItem = widget.queueService!.currentItem!;
       filename = currentItem.filename;
       title = currentItem.title;
       artist = currentItem.artist;
+      artworkUrl = currentItem.thumbnail;
     } else {
       // Fallback to player state
       title = widget.currentTrackName;
@@ -260,9 +263,23 @@ class _BottomPlayerState extends State<BottomPlayer> {
                           filename: filename,
                           title: title,
                           artist: artist,
+                          artworkUrl: artworkUrl,
                           size: 56,
                           backgroundColor: primaryColor.withOpacity(0.15),
                           iconColor: primaryColor,
+                          onArtworkResolved: widget.queueService != null && widget.queueService!.currentItem != null
+                              ? (url) {
+                                  // Update QueueItem with resolved artwork URL
+                                  final currentIndex = widget.queueService!.currentIndex;
+                                  if (currentIndex >= 0 && currentIndex < widget.queueService!.queue.length) {
+                                    final item = widget.queueService!.queue[currentIndex];
+                                    if (item.thumbnail != url) {
+                                      final updatedItem = item.copyWithThumbnail(url);
+                                      widget.queueService!.updateItemAt(currentIndex, updatedItem);
+                                    }
+                                  }
+                                }
+                              : null,
                         ),
                         const SizedBox(width: 16),
                         Expanded(

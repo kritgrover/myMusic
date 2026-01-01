@@ -548,17 +548,23 @@ class _SpotifyPlaylistScreenState extends State<SpotifyPlaylistScreen> {
 
   // Load streaming URL for a queue item (callback for queue service)
   Future<String?> _loadStreamingUrlForQueueItem(QueueItem item) async {
-    if (item.originalUrl == null) return null;
+    final originalUrl = item.originalUrl;
+    if (originalUrl == null) return null;
     
     try {
-      String youtubeUrl = item.originalUrl!;
+      String youtubeUrl = originalUrl;
       
       // If not a YouTube URL, search for it
       if (!youtubeUrl.contains('youtube.com') && !youtubeUrl.contains('youtu.be')) {
         final query = "${item.title} ${item.artist}";
         final results = await _apiService.searchYoutube(query);
         if (results.isNotEmpty) {
-          youtubeUrl = results.first.url;
+          final foundUrl = results.first.url;
+          if (foundUrl != null) {
+            youtubeUrl = foundUrl;
+          } else {
+            return null;
+          }
         } else {
           return null;
         }

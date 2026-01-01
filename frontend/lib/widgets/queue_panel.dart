@@ -147,11 +147,20 @@ class QueuePanel extends StatelessWidget {
                                 title: item.title,
                                 artist: item.artist,
                                 album: item.album,
+                                artworkUrl: item.thumbnail,
                                 size: 40,
                                 backgroundColor: isCurrent 
                                     ? primaryColor.withOpacity(0.2)
                                     : surfaceHover,
                                 iconColor: isCurrent ? primaryColor : Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+                                onArtworkResolved: (url) {
+                                  // Update QueueItem with resolved artwork URL
+                                  final itemIndex = queueService.queue.indexOf(item);
+                                  if (itemIndex >= 0 && item.thumbnail != url) {
+                                    final updatedItem = item.copyWithThumbnail(url);
+                                    queueService.updateItemAt(itemIndex, updatedItem);
+                                  }
+                                },
                               ),
                               const SizedBox(width: 12),
                               Expanded(

@@ -10,10 +10,12 @@ class AlbumCover extends StatefulWidget {
   final String? title;
   final String? artist;
   final String? album;
+  final String? artworkUrl; // Pre-resolved artwork URL (takes priority)
   final double size;
   final Color? backgroundColor;
   final Color? iconColor;
   final BorderRadius? borderRadius;
+  final Function(String?)? onArtworkResolved; // Callback when artwork is resolved
 
   const AlbumCover({
     super.key,
@@ -21,10 +23,12 @@ class AlbumCover extends StatefulWidget {
     this.title,
     this.artist,
     this.album,
+    this.artworkUrl,
     this.size = 40,
     this.backgroundColor,
     this.iconColor,
     this.borderRadius,
+    this.onArtworkResolved,
   });
 
   @override
@@ -51,12 +55,23 @@ class _AlbumCoverState extends State<AlbumCover> {
     if (oldWidget.filename != widget.filename ||
         oldWidget.title != widget.title ||
         oldWidget.artist != widget.artist ||
-        oldWidget.album != widget.album) {
+        oldWidget.album != widget.album ||
+        oldWidget.artworkUrl != widget.artworkUrl) {
       _loadAlbumCover();
     }
   }
 
   Future<void> _loadAlbumCover() async {
+    // If artworkUrl is provided directly, use it (highest priority)
+    if (widget.artworkUrl != null && widget.artworkUrl!.isNotEmpty) {
+      setState(() {
+        _artworkUrl = widget.artworkUrl;
+        _isLoading = false;
+        _hasError = false;
+      });
+      return;
+    }
+
     // Generate cache key
     final cacheKey = AlbumCoverCache.generateKey(
       filename: widget.filename,
@@ -69,11 +84,16 @@ class _AlbumCoverState extends State<AlbumCover> {
     final cachedUrl = _cache.get(cacheKey);
     if (cachedUrl != null) {
       // Found in cache (null means we cached that there's no artwork)
+      final artworkUrl = cachedUrl.isEmpty ? null : cachedUrl;
       setState(() {
-        _artworkUrl = cachedUrl.isEmpty ? null : cachedUrl;
+        _artworkUrl = artworkUrl;
         _isLoading = false;
         _hasError = cachedUrl.isEmpty;
       });
+      // Notify callback if provided
+      if (widget.onArtworkResolved != null) {
+        widget.onArtworkResolved!(artworkUrl);
+      }
       return;
     }
 
@@ -118,6 +138,11 @@ class _AlbumCoverState extends State<AlbumCover> {
         _isLoading = false;
         _hasError = artworkUrl == null;
       });
+      
+      // Notify callback when artwork is resolved
+      if (widget.onArtworkResolved != null) {
+        widget.onArtworkResolved!(artworkUrl);
+      }
     } catch (e) {
       // Cache the failure to avoid repeated attempts
       _cache.put(cacheKey, '');
@@ -125,6 +150,11 @@ class _AlbumCoverState extends State<AlbumCover> {
         _isLoading = false;
         _hasError = true;
       });
+      
+      // Notify callback of failure
+      if (widget.onArtworkResolved != null) {
+        widget.onArtworkResolved!(null);
+      }
     }
   }
 
