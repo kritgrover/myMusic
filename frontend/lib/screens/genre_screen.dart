@@ -3,7 +3,11 @@ import '../services/recommendation_service.dart';
 import '../services/player_state_service.dart';
 import '../services/queue_service.dart';
 import '../services/recently_played_service.dart';
-import 'spotify_playlist_screen.dart';
+import '../services/api_service.dart';
+import '../services/playlist_service.dart';
+import '../models/playlist.dart';
+import '../models/queue_item.dart';
+import '../widgets/playlist_selection_dialog.dart';
 
 class GenreScreen extends StatefulWidget {
   final String genre;
@@ -31,22 +35,28 @@ class GenreScreen extends StatefulWidget {
 
 class _GenreScreenState extends State<GenreScreen> {
   final RecommendationService _recommendationService = RecommendationService();
-  List<dynamic> _playlists = [];
+  final ApiService _apiService = ApiService();
+  final PlaylistService _playlistService = PlaylistService();
+  List<PlaylistTrack> _tracks = [];
   bool _isLoading = true;
-  Map<String, dynamic>? _selectedPlaylist;
 
   @override
   void initState() {
     super.initState();
-    _loadPlaylists();
+    _loadTracks();
   }
 
-  Future<void> _loadPlaylists() async {
+  Future<void> _loadTracks() async {
+    setState(() {
+      _isLoading = true;
+    });
+    
     try {
-      final playlists = await _recommendationService.getGenrePlaylists(widget.genre);
+      // Use the new genre recommendations (actual tracks, not playlists!)
+      final tracks = await _recommendationService.getGenreTracks(widget.genre);
       if (mounted) {
         setState(() {
-          _playlists = playlists;
+          _tracks = tracks;
           _isLoading = false;
         });
       }
@@ -56,152 +66,256 @@ class _GenreScreenState extends State<GenreScreen> {
           _isLoading = false;
         });
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error loading playlists: $e')),
+          SnackBar(content: Text('Error loading ${widget.genre} tracks: $e')),
         );
       }
     }
   }
 
-  void _showPlaylistDetail(Map<String, dynamic> playlist) {
-    setState(() {
-      _selectedPlaylist = playlist;
-    });
+  Future<void> _playTrack(PlaylistTrack track) async {
+    try {
+      // Search YouTube for this track
+      final searchResults = await _apiService.searchYoutube(
+        '${track.title} ${track.artist ?? ""}',
+        durationMin: 0,
+        durationMax: 600,
+      );
+
+      if (searchResults.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Could not find "${track.title}" on YouTube')),
+          );
+        }
+        return;
+      }
+
+      // Get streaming URL for the first result
+      final result = await _apiService.getStreamingUrl(
+        url: searchResults.first.url,
+        title: track.title,
+        artist: track.artist ?? '',
+      );
+
+      await widget.playerStateService.streamTrack(
+        result.streamingUrl,
+        trackName: result.title,
+        trackArtist: result.artist,
+        url: searchResults.first.url,
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to play: $e')),
+        );
+      }
+    }
   }
 
-  void _hidePlaylistDetail() {
-    setState(() {
-      _selectedPlaylist = null;
-    });
+  Future<void> _addToQueue(PlaylistTrack track) async {
+    try {
+      final searchResults = await _apiService.searchYoutube(
+        '${track.title} ${track.artist ?? ""}',
+        durationMin: 0,
+        durationMax: 600,
+      );
+
+      if (searchResults.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Could not find "${track.title}" on YouTube')),
+          );
+        }
+        return;
+      }
+
+      final result = await _apiService.getStreamingUrl(
+        url: searchResults.first.url,
+        title: track.title,
+        artist: track.artist ?? '',
+      );
+
+      final queueItem = QueueItem(
+        id: searchResults.first.id,
+        title: result.title,
+        artist: result.artist,
+        streamingUrl: result.streamingUrl,
+        thumbnail: track.thumbnail,
+      );
+
+      widget.queueService.addToQueue(queueItem);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Added "${track.title}" to queue')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to add to queue: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _showAddToPlaylistDialog(PlaylistTrack track) async {
+    await showDialog(
+      context: context,
+      builder: (context) => PlaylistSelectionDialog(
+        playlistService: _playlistService,
+        track: track,
+      ),
+    );
+  }
+
+  Future<void> _playAll() async {
+    if (_tracks.isEmpty) return;
+
+    // Play first track
+    await _playTrack(_tracks.first);
+
+    // Add rest to queue
+    for (int i = 1; i < _tracks.length && i < 20; i++) {
+      await _addToQueue(_tracks[i]);
+    }
   }
 
   Widget _buildContent() {
-    // If a playlist is selected, show the detail view
-    if (_selectedPlaylist != null) {
-      return SpotifyPlaylistScreen(
-        playlistId: _selectedPlaylist!['id'],
-        playlistName: _selectedPlaylist!['name'],
-        coverUrl: _selectedPlaylist!['thumbnail'],
-        playerStateService: widget.playerStateService,
-        queueService: widget.queueService,
-        recentlyPlayedService: widget.recentlyPlayedService,
-        embedded: true,
-        onBack: _hidePlaylistDetail,
-        onDownloadStart: widget.onDownloadStart,
+    if (_isLoading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    if (_tracks.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.music_off,
+              size: 64,
+              color: Theme.of(context).colorScheme.onSurface.withOpacity(0.3),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'No tracks found for ${widget.genre}',
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+              ),
+            ),
+            const SizedBox(height: 16),
+            ElevatedButton.icon(
+              onPressed: _loadTracks,
+              icon: const Icon(Icons.refresh),
+              label: const Text('Try Again'),
+            ),
+          ],
+        ),
       );
     }
 
-    return _isLoading
-        ? const Center(child: CircularProgressIndicator())
-        : _playlists.isEmpty
-            ? Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(
-                      Icons.music_off,
-                      size: 64,
-                      color: Theme.of(context).colorScheme.onSurface.withOpacity(0.3),
+    return RefreshIndicator(
+      onRefresh: _loadTracks,
+      child: Column(
+        children: [
+          // Play All button
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 8.0),
+            child: Row(
+              children: [
+                ElevatedButton.icon(
+                  onPressed: _playAll,
+                  icon: const Icon(Icons.play_arrow),
+                  label: const Text('Play All'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Theme.of(context).colorScheme.primary,
+                    foregroundColor: Theme.of(context).colorScheme.onPrimary,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  '${_tracks.length} tracks',
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          // Track list
+          Expanded(
+            child: ListView.builder(
+              padding: const EdgeInsets.symmetric(horizontal: 16.0),
+              itemCount: _tracks.length,
+              itemBuilder: (context, index) {
+                final track = _tracks[index];
+                return Card(
+                  margin: const EdgeInsets.symmetric(vertical: 4.0),
+                  child: ListTile(
+                    leading: ClipRRect(
+                      borderRadius: BorderRadius.circular(4),
+                      child: track.thumbnail != null
+                          ? Image.network(
+                              track.thumbnail!,
+                              width: 48,
+                              height: 48,
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, __, ___) => Container(
+                                width: 48,
+                                height: 48,
+                                color: Theme.of(context).colorScheme.surfaceVariant,
+                                child: const Icon(Icons.music_note),
+                              ),
+                            )
+                          : Container(
+                              width: 48,
+                              height: 48,
+                              color: Theme.of(context).colorScheme.surfaceVariant,
+                              child: const Icon(Icons.music_note),
+                            ),
                     ),
-                    const SizedBox(height: 16),
-                    Text(
-                      'No playlists found',
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    title: Text(
+                      track.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    subtitle: Text(
+                      track.artist ?? 'Unknown Artist',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
                         color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
                       ),
                     ),
-                  ],
-                ),
-              )
-            : GridView.builder(
-                padding: const EdgeInsets.all(24),
-                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 4,
-                  crossAxisSpacing: 16,
-                  mainAxisSpacing: 16,
-                  childAspectRatio: 0.85,
-                ),
-                itemCount: _playlists.length,
-                itemBuilder: (context, index) {
-                  final playlist = _playlists[index];
-                  return Card(
-                    clipBehavior: Clip.antiAlias,
-                    elevation: 2,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Material(
-                      color: Colors.transparent,
-                      child: InkWell(
-                        onTap: () {
-                          _showPlaylistDetail(playlist);
-                        },
-                        borderRadius: BorderRadius.circular(12),
-                        child: Padding(
-                          padding: const EdgeInsets.all(10.0),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              // Smaller image
-                              AspectRatio(
-                                aspectRatio: 1.0,
-                                child: ClipRRect(
-                                  borderRadius: BorderRadius.circular(8),
-                                  child: playlist['thumbnail'] != null
-                                      ? Image.network(
-                                          playlist['thumbnail'],
-                                          fit: BoxFit.cover,
-                                          width: double.infinity,
-                                          errorBuilder: (_, __, ___) => Container(
-                                            color: Theme.of(context).colorScheme.surfaceVariant,
-                                            child: Icon(
-                                              Icons.music_note,
-                                              size: 28,
-                                              color: Theme.of(context).colorScheme.onSurfaceVariant,
-                                            ),
-                                          ),
-                                        )
-                                      : Container(
-                                          color: Theme.of(context).colorScheme.surfaceVariant,
-                                          child: Icon(
-                                            Icons.music_note,
-                                            size: 28,
-                                            color: Theme.of(context).colorScheme.onSurfaceVariant,
-                                          ),
-                                        ),
-                                ),
-                              ),
-                              const SizedBox(height: 10),
-                              // Title text
-                              Flexible(
-                                child: Text(
-                                  playlist['name'] ?? 'Unknown Playlist',
-                                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                                    fontWeight: FontWeight.w600,
-                                    fontSize: 14,
-                                  ),
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              // Owner text
-                              Text(
-                                playlist['owner'] ?? '',
-                                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                  color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
-                                  fontSize: 12,
-                                ),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ],
-                          ),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(
+                          icon: const Icon(Icons.playlist_add),
+                          tooltip: 'Add to playlist',
+                          onPressed: () => _showAddToPlaylistDialog(track),
                         ),
-                      ),
+                        IconButton(
+                          icon: const Icon(Icons.queue_music),
+                          tooltip: 'Add to queue',
+                          onPressed: () => _addToQueue(track),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.play_arrow),
+                          tooltip: 'Play',
+                          onPressed: () => _playTrack(track),
+                        ),
+                      ],
                     ),
-                  );
-                },
-              );
+                    onTap: () => _playTrack(track),
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -222,10 +336,16 @@ class _GenreScreenState extends State<GenreScreen> {
                 ),
                 const SizedBox(width: 8),
                 Text(
-                  '${widget.genre} Playlists',
+                  '${widget.genre} Music',
                   style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                     fontWeight: FontWeight.w700,
                   ),
+                ),
+                const Spacer(),
+                IconButton(
+                  icon: const Icon(Icons.refresh),
+                  onPressed: _loadTracks,
+                  tooltip: 'Refresh recommendations',
                 ),
               ],
             ),
@@ -237,7 +357,14 @@ class _GenreScreenState extends State<GenreScreen> {
     
     return Scaffold(
       appBar: AppBar(
-        title: Text('${widget.genre} Playlists'),
+        title: Text('${widget.genre} Music'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: _loadTracks,
+            tooltip: 'Refresh recommendations',
+          ),
+        ],
       ),
       body: _buildContent(),
     );

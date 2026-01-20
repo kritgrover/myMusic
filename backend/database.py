@@ -39,6 +39,15 @@ class Database:
         )
         ''')
         
+        # Genre tracking table - tracks user's genre preferences
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS genre_counts (
+            genre TEXT PRIMARY KEY,
+            count INTEGER DEFAULT 0,
+            last_played DATETIME
+        )
+        ''')
+        
         conn.commit()
         conn.close()
 
@@ -112,6 +121,35 @@ class Database:
         cursor.execute('DELETE FROM spotify_cache WHERE key = ?', (key,))
         conn.commit()
         conn.close()
+
+    def increment_genres(self, genres):
+        """Increment play count for genres based on what user listens to"""
+        if not genres:
+            return
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        for genre in genres:
+            cursor.execute('''
+            INSERT INTO genre_counts (genre, count, last_played) 
+            VALUES (?, 1, ?)
+            ON CONFLICT(genre) DO UPDATE SET 
+                count = count + 1,
+                last_played = ?
+            ''', (genre, datetime.now(), datetime.now()))
+        conn.commit()
+        conn.close()
+
+    def get_top_genres(self, limit=5):
+        """Get user's top genres by play count"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+        SELECT genre, count FROM genre_counts 
+        ORDER BY count DESC LIMIT ?
+        ''', (limit,))
+        rows = cursor.fetchall()
+        conn.close()
+        return [row['genre'] for row in rows]
 
 db = Database()
 
