@@ -77,8 +77,6 @@ class _GenreScreenState extends State<GenreScreen> {
       // Search YouTube for this track
       final searchResults = await _apiService.searchYoutube(
         '${track.title} ${track.artist ?? ""}',
-        durationMin: 0,
-        durationMax: 600,
       );
 
       if (searchResults.isEmpty) {
@@ -116,8 +114,6 @@ class _GenreScreenState extends State<GenreScreen> {
     try {
       final searchResults = await _apiService.searchYoutube(
         '${track.title} ${track.artist ?? ""}',
-        durationMin: 0,
-        durationMax: 600,
       );
 
       if (searchResults.isEmpty) {
@@ -139,7 +135,7 @@ class _GenreScreenState extends State<GenreScreen> {
         id: searchResults.first.id,
         title: result.title,
         artist: result.artist,
-        streamingUrl: result.streamingUrl,
+        url: result.streamingUrl,
         thumbnail: track.thumbnail,
       );
 
