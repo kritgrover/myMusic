@@ -9,6 +9,7 @@ import uuid
 import shutil
 import asyncio
 from datetime import datetime
+from pathlib import Path
 import httpx
 from download_service import DownloadService
 from database import db
@@ -18,15 +19,56 @@ from mutagen.easyid3 import EasyID3
 from mutagen.id3 import ID3, APIC
 from mutagen.mp4 import MP4Cover
 
+
+def validate_path_safety(base_dir: str, requested_path: str) -> Path:
+    """
+    Safely validate that a requested path is within the base directory.
+    Prevents path traversal attacks.
+    
+    Args:
+        base_dir: The base directory that paths must be within
+        requested_path: The user-requested path/filename
+        
+    Returns:
+        The resolved safe path
+        
+    Raises:
+        HTTPException: If the path is unsafe or attempts traversal
+    """
+    try:
+        base = Path(base_dir).resolve()
+        # Normalize path separators and join
+        requested = (base / requested_path.replace('\\', '/').replace('//', '/')).resolve()
+        
+        # Verify the resolved path is within the base directory
+        if not str(requested).startswith(str(base)):
+            raise HTTPException(status_code=400, detail="Invalid file path: path traversal detected")
+        
+        return requested
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise
+        raise HTTPException(status_code=400, detail=f"Invalid file path: {str(e)}")
+
 app = FastAPI(title="Music Download API")
 
 # CORS middleware to allow Flutter app to connect
+# Configure allowed origins - more specific than wildcard for better security
+ALLOWED_ORIGINS = [
+    "http://localhost:*",
+    "http://127.0.0.1:*",
+    "http://localhost:3000",  # Web development
+    "http://localhost:8080",  # Flutter web
+    "http://127.0.0.1:8080",
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # Allow all origins for Flutter desktop/mobile apps
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],  # Explicitly list allowed methods
+    allow_headers=["Content-Type", "Authorization", "Range", "Accept"],  # Only needed headers
+    expose_headers=["Content-Length", "Content-Range", "Accept-Ranges"],  # For streaming support
 )
 
 # Initialize download service
@@ -42,6 +84,32 @@ csv_progress: Dict[str, Dict] = {}
 
 # Global progress tracking for downloads
 download_progress: Dict[str, Dict] = {}
+
+# Maximum age for progress entries (1 hour in seconds)
+PROGRESS_MAX_AGE = 3600
+
+def cleanup_old_progress():
+    """Remove progress entries older than PROGRESS_MAX_AGE seconds"""
+    import time
+    current_time = time.time()
+    
+    # Cleanup csv_progress
+    keys_to_remove = []
+    for key, value in csv_progress.items():
+        created_at = value.get('created_at', 0)
+        if current_time - created_at > PROGRESS_MAX_AGE:
+            keys_to_remove.append(key)
+    for key in keys_to_remove:
+        del csv_progress[key]
+    
+    # Cleanup download_progress
+    keys_to_remove = []
+    for key, value in download_progress.items():
+        created_at = value.get('created_at', 0)
+        if current_time - created_at > PROGRESS_MAX_AGE:
+            keys_to_remove.append(key)
+    for key in keys_to_remove:
+        del download_progress[key]
 
 
 class SearchRequest(BaseModel):
@@ -107,7 +175,14 @@ def load_playlists() -> Dict:
         try:
             with open(PLAYLISTS_FILE, 'r') as f:
                 return json.load(f)
-        except:
+        except json.JSONDecodeError as e:
+            print(f"Warning: Playlists file is corrupted: {e}. Starting fresh.")
+            return {}
+        except PermissionError as e:
+            print(f"Error: Cannot read playlists file - permission denied: {e}")
+            return {}
+        except Exception as e:
+            print(f"Error loading playlists: {e}")
             return {}
     return {}
 
@@ -264,16 +339,21 @@ class BatchDownloadRequest(BaseModel):
 def start_batch_download(request: BatchDownloadRequest):
     """Start a batch download with progress tracking"""
     import uuid
+    import time
     download_id = str(uuid.uuid4())
     
-    # Initialize progress tracking
+    # Clean up old progress entries to prevent memory leaks
+    cleanup_old_progress()
+    
+    # Initialize progress tracking with timestamp
     download_progress[download_id] = {
         "current": 0,
         "total": len(request.downloads),
         "status": "downloading",
         "processed": 0,
         "failed": 0,
-        "downloads": []
+        "downloads": [],
+        "created_at": time.time()
     }
     
     # Start downloads in background
@@ -359,7 +439,8 @@ def list_downloads():
                                     title = title[0] if title else None
                                     artist = audio.get('artist')
                                     artist = artist[0] if artist else None
-                                except:
+                                except Exception as e:
+                                    # MP3 might not have ID3 tags, this is expected
                                     pass
                         except Exception:
                             # If metadata reading fails, continue without it
@@ -380,13 +461,10 @@ def list_downloads():
 @app.get("/downloads/{filename:path}")
 def get_download_file(filename: str, request: Request):
     """Serve download file for streaming with Range request support"""
-    # Handle subdirectory paths (e.g., "playlist_name/song.m4a")
-    filename = filename.replace('\\', os.sep).replace('/', os.sep)
-    if '..' in filename or filename.startswith('/'):
-        raise HTTPException(status_code=400, detail="Invalid file path")
+    # Safely validate the path using pathlib
+    file_path = validate_path_safety(download_service.output_dir, filename)
     
-    file_path = os.path.join(download_service.output_dir, filename)
-    if not os.path.isfile(file_path):
+    if not file_path.is_file():
         raise HTTPException(status_code=404, detail="File not found")
     
     # Get just the filename for the download (without subdirectory)
@@ -407,13 +485,10 @@ def get_download_file(filename: str, request: Request):
 def delete_download_file(filename: str):
     """Delete a downloaded file (supports subdirectory paths) and update playlists"""
     try:
-        # Handle subdirectory paths and prevent directory traversal
-        filename = filename.replace('\\', os.sep).replace('/', os.sep)
-        if '..' in filename or filename.startswith('/'):
-            raise HTTPException(status_code=400, detail="Invalid file path")
+        # Safely validate the path using pathlib
+        file_path = validate_path_safety(download_service.output_dir, filename)
         
-        file_path = os.path.join(download_service.output_dir, filename)
-        if not os.path.isfile(file_path):
+        if not file_path.is_file():
             raise HTTPException(status_code=404, detail="File not found")
         
         # Delete the file
@@ -455,13 +530,10 @@ def delete_download_file(filename: str):
 async def get_file_artwork(filename: str):
     """Extract album artwork from a downloaded audio file"""
     try:
-        # Handle subdirectory paths and prevent directory traversal
-        filename = filename.replace('\\', os.sep).replace('/', os.sep)
-        if '..' in filename or filename.startswith('/'):
-            raise HTTPException(status_code=400, detail="Invalid file path")
+        # Safely validate the path using pathlib
+        file_path = validate_path_safety(download_service.output_dir, filename)
         
-        file_path = os.path.join(download_service.output_dir, filename)
-        if not os.path.isfile(file_path):
+        if not file_path.is_file():
             raise HTTPException(status_code=404, detail="File not found")
         
         artwork_data = None
@@ -515,9 +587,66 @@ async def get_file_artwork(filename: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def _normalize_for_comparison(text: str) -> str:
+    """Normalize text for fuzzy comparison by lowercasing and removing punctuation."""
+    import re
+    if not text:
+        return ""
+    return re.sub(r'[^\w\s]', '', text.lower()).strip()
+
+
+def _score_itunes_result(result: dict, title: str, artist: str, album: str) -> int:
+    """Score an iTunes result based on how well it matches the requested track.
+    
+    Higher score = better match. Max score is 100.
+    """
+    score = 0
+    
+    result_artist = _normalize_for_comparison(result.get("artistName", ""))
+    result_track = _normalize_for_comparison(result.get("trackName", ""))
+    result_album = _normalize_for_comparison(result.get("collectionName", ""))
+    
+    norm_title = _normalize_for_comparison(title)
+    norm_artist = _normalize_for_comparison(artist)
+    norm_album = _normalize_for_comparison(album)
+    
+    # Artist match (40 points max)
+    if norm_artist:
+        if result_artist == norm_artist:
+            score += 40  # Exact match
+        elif norm_artist in result_artist or result_artist in norm_artist:
+            score += 30  # Partial match
+        elif any(word in result_artist for word in norm_artist.split() if len(word) > 2):
+            score += 15  # Word match
+    
+    # Track name match (30 points max)
+    if norm_title:
+        if result_track == norm_title:
+            score += 30  # Exact match
+        elif norm_title in result_track or result_track in norm_title:
+            score += 20  # Partial match
+        elif any(word in result_track for word in norm_title.split() if len(word) > 2):
+            score += 10  # Word match
+    
+    # Album match (30 points max)
+    if norm_album:
+        if result_album == norm_album:
+            score += 30  # Exact match
+        elif norm_album in result_album or result_album in norm_album:
+            score += 20  # Partial match
+        elif any(word in result_album for word in norm_album.split() if len(word) > 2):
+            score += 10  # Word match
+    
+    return score
+
+
 @app.get("/album-cover")
 async def get_album_cover(title: str, artist: str = "", album: str = ""):
-    """Fetch album cover from iTunes API based on track metadata"""
+    """Fetch album cover from iTunes API based on track metadata.
+    
+    Improved version that fetches multiple results and scores them to find
+    the best matching album cover.
+    """
     try:
         # Build search query - prefer album if available, otherwise use title + artist
         if album and artist:
@@ -527,14 +656,14 @@ async def get_album_cover(title: str, artist: str = "", album: str = ""):
         else:
             search_term = title
         
-        # Search iTunes API
+        # Search iTunes API with more results for better matching
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.get(
                 "https://itunes.apple.com/search",
                 params={
                     "term": search_term,
                     "media": "music",
-                    "limit": 1,
+                    "limit": 10,  # Get more results for better matching
                 }
             )
             
@@ -543,12 +672,38 @@ async def get_album_cover(title: str, artist: str = "", album: str = ""):
                 results = data.get("results", [])
                 
                 if results:
-                    # Get the artwork URL (replace 100x100 with larger size)
-                    artwork_url = results[0].get("artworkUrl100", "")
-                    if artwork_url:
-                        # Replace with higher resolution (600x600 is max)
-                        artwork_url = artwork_url.replace("100x100", "600x600")
-                        return {"artwork_url": artwork_url}
+                    # Score each result and find the best match
+                    scored_results = []
+                    for result in results:
+                        artwork_url = result.get("artworkUrl100", "")
+                        if artwork_url:
+                            score = _score_itunes_result(result, title, artist, album)
+                            scored_results.append((score, artwork_url, result))
+                    
+                    if scored_results:
+                        # Sort by score (highest first) and get best match
+                        scored_results.sort(key=lambda x: x[0], reverse=True)
+                        best_score, best_artwork_url, best_result = scored_results[0]
+                        
+                        # Only use result if it has a reasonable score (at least 20)
+                        if best_score >= 20:
+                            # Replace with higher resolution (600x600 is max)
+                            artwork_url = best_artwork_url.replace("100x100", "600x600")
+                            return {
+                                "artwork_url": artwork_url,
+                                "match_score": best_score,
+                                "matched_artist": best_result.get("artistName"),
+                                "matched_track": best_result.get("trackName"),
+                            }
+                        
+                        # If no good match, still return the first result but with low confidence
+                        artwork_url = results[0].get("artworkUrl100", "").replace("100x100", "600x600")
+                        if artwork_url:
+                            return {
+                                "artwork_url": artwork_url,
+                                "match_score": best_score,
+                                "low_confidence": True
+                            }
             
             # If no results, return None
             return {"artwork_url": None}
@@ -603,6 +758,7 @@ def format_playlist_name(csv_filename: str) -> str:
 @app.post("/csv/convert/{filename}")
 def convert_csv_file(filename: str, request: CsvConversionRequest):
     """Convert a specific CSV file to playlist entries (search only, no download)"""
+    import time
     try:
         temp_dir = os.path.join(BASE_DIR, "temp")
         csv_path = os.path.join(temp_dir, filename)
@@ -610,8 +766,18 @@ def convert_csv_file(filename: str, request: CsvConversionRequest):
         if not os.path.isfile(csv_path):
             raise HTTPException(status_code=404, detail="CSV file not found")
         
-        # Initialize progress tracking for this filename
-        csv_progress[filename] = {"current": 0, "total": 0, "status": "", "processed": 0, "not_found": 0}
+        # Clean up old progress entries to prevent memory leaks
+        cleanup_old_progress()
+        
+        # Initialize progress tracking for this filename with timestamp
+        csv_progress[filename] = {
+            "current": 0, 
+            "total": 0, 
+            "status": "", 
+            "processed": 0, 
+            "not_found": 0,
+            "created_at": time.time()
+        }
         
         def progress_callback(current, total, status):
             csv_progress[filename]["current"] = current

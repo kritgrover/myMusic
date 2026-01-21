@@ -52,12 +52,15 @@ class SpotifyService:
                 track = items[0]
                 result = {
                     'id': track['id'],
-                    'name': track['name'],
+                    'title': track['name'],  # Standardized: use 'title' everywhere
+                    'name': track['name'],   # Keep 'name' for backward compatibility
                     'artist': track['artists'][0]['name'],
                     'artist_id': track['artists'][0]['id'],
                     'album': track['album']['name'],
-                    'image': track['album']['images'][0]['url'] if track['album']['images'] else None,
-                    'preview_url': track['preview_url']
+                    'thumbnail': track['album']['images'][0]['url'] if track['album']['images'] else None,
+                    'image': track['album']['images'][0]['url'] if track['album']['images'] else None,  # Backward compat
+                    'preview_url': track['preview_url'],
+                    'duration': track.get('duration_ms', 0) / 1000 if track.get('duration_ms') else 0  # Duration in seconds
                 }
                 db.set_cache(cache_key, result, ttl_seconds=86400*7) # Cache for 1 week
                 return result
@@ -110,7 +113,8 @@ class SpotifyService:
                     'artist': track['artists'][0]['name'],
                     'album': track['album']['name'],
                     'thumbnail': track['album']['images'][0]['url'] if track['album']['images'] else None,
-                    'url': track['external_urls']['spotify']
+                    'url': track['external_urls']['spotify'],
+                    'duration': track.get('duration_ms', 0) / 1000 if track.get('duration_ms') else 0  # Duration in seconds
                 })
             
             db.set_cache(cache_key, tracks, ttl_seconds=3600) # Cache for 1 hour
@@ -193,7 +197,8 @@ class SpotifyService:
                     'artist': track['artists'][0]['name'],
                     'album': track['album']['name'],
                     'thumbnail': track['album']['images'][0]['url'] if track['album']['images'] else None,
-                    'url': track['external_urls']['spotify']
+                    'url': track['external_urls']['spotify'],
+                    'duration': track.get('duration_ms', 0) / 1000 if track.get('duration_ms') else 0  # Duration in seconds
                 })
             
             db.set_cache(cache_key, tracks, ttl_seconds=3600)  # Cache for 1 hour (fresher!)
@@ -296,7 +301,8 @@ class SpotifyService:
                     'artist': track['artists'][0]['name'],
                     'album': track['album']['name'],
                     'thumbnail': track['album']['images'][0]['url'] if track['album']['images'] else None,
-                    'url': track['external_urls']['spotify']
+                    'url': track['external_urls']['spotify'],
+                    'duration': track.get('duration_ms', 0) / 1000 if track.get('duration_ms') else 0  # Duration in seconds
                 })
             
             db.set_cache(cache_key, tracks, ttl_seconds=3600) # Cache for 1 hour

@@ -8,9 +8,13 @@ class Database:
     def __init__(self):
         self.db_url = settings.DATABASE_URL.replace("sqlite:///", "")
         self.init_db()
+        # Clean up expired cache entries on startup
+        self.cleanup_expired_cache()
 
     def get_connection(self):
-        conn = sqlite3.connect(self.db_url)
+        # check_same_thread=False allows the connection to be used across threads
+        # This is safe because we create a new connection per operation
+        conn = sqlite3.connect(self.db_url, check_same_thread=False)
         conn.row_factory = sqlite3.Row
         return conn
 
@@ -121,6 +125,57 @@ class Database:
         cursor.execute('DELETE FROM spotify_cache WHERE key = ?', (key,))
         conn.commit()
         conn.close()
+
+    def cleanup_expired_cache(self):
+        """Remove all expired cache entries.
+        
+        This should be called periodically to prevent the cache table
+        from growing indefinitely.
+        
+        Returns:
+            int: Number of entries deleted
+        """
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        current_time = time.time()
+        
+        # First, count how many we're about to delete
+        cursor.execute('SELECT COUNT(*) FROM spotify_cache WHERE expiry < ?', (current_time,))
+        count = cursor.fetchone()[0]
+        
+        # Delete expired entries
+        cursor.execute('DELETE FROM spotify_cache WHERE expiry < ?', (current_time,))
+        conn.commit()
+        conn.close()
+        
+        if count > 0:
+            print(f"Cleaned up {count} expired cache entries")
+        
+        return count
+
+    def get_cache_stats(self):
+        """Get statistics about the cache.
+        
+        Returns:
+            dict: Cache statistics including total entries and expired count
+        """
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        current_time = time.time()
+        
+        cursor.execute('SELECT COUNT(*) FROM spotify_cache')
+        total = cursor.fetchone()[0]
+        
+        cursor.execute('SELECT COUNT(*) FROM spotify_cache WHERE expiry < ?', (current_time,))
+        expired = cursor.fetchone()[0]
+        
+        conn.close()
+        
+        return {
+            'total_entries': total,
+            'expired_entries': expired,
+            'valid_entries': total - expired
+        }
 
     def increment_genres(self, genres):
         """Increment play count for genres based on what user listens to"""
