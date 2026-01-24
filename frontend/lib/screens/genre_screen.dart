@@ -110,14 +110,14 @@ class _GenreScreenState extends State<GenreScreen> {
     }
   }
 
-  Future<void> _addToQueue(PlaylistTrack track) async {
+  Future<void> _addToQueue(PlaylistTrack track, {bool showSnackbar = true}) async {
     try {
       final searchResults = await _apiService.searchYoutube(
         '${track.title} ${track.artist ?? ""}',
       );
 
       if (searchResults.isEmpty) {
-        if (mounted) {
+        if (mounted && showSnackbar) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text('Could not find "${track.title}" on YouTube')),
           );
@@ -141,13 +141,13 @@ class _GenreScreenState extends State<GenreScreen> {
 
       widget.queueService.addToQueue(queueItem);
 
-      if (mounted) {
+      if (mounted && showSnackbar) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Added "${track.title}" to queue')),
         );
       }
     } catch (e) {
-      if (mounted) {
+      if (mounted && showSnackbar) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Failed to add to queue: $e')),
         );
@@ -171,9 +171,9 @@ class _GenreScreenState extends State<GenreScreen> {
     // Play first track
     await _playTrack(_tracks.first);
 
-    // Add rest to queue
+    // Add rest to queue (silently, without snackbar messages)
     for (int i = 1; i < _tracks.length && i < 20; i++) {
-      await _addToQueue(_tracks[i]);
+      await _addToQueue(_tracks[i], showSnackbar: false);
     }
   }
 
