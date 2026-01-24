@@ -436,8 +436,8 @@ class _HomeScreenState extends State<HomeScreen> {
                                   HorizontalSongList(
                                     title: 'Songs for You',
                                     songs: _dailyMix,
-                                    onPlay: _streamVideo,
-                                    onAddToQueue: _addToQueue,
+                                    onPlay: _streamRecommendedVideo,
+                                    onAddToQueue: _addRecommendedToQueue,
                                     maxItems: 8,
                                     onShowAll: () {
                                       setState(() {
@@ -950,6 +950,102 @@ class _HomeScreenState extends State<HomeScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Stream failed: $e'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    }
+  }
+
+  // For recommended songs (from Spotify), search YouTube first
+  Future<void> _streamRecommendedVideo(VideoInfo video) async {
+    try {
+      // Search YouTube for this track first
+      final searchResults = await _apiService.searchYoutube(
+        '${video.title} ${video.uploader}',
+      );
+
+      if (searchResults.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Could not find "${video.title}" on YouTube'),
+              backgroundColor: Colors.red,
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+        return;
+      }
+
+      // Get streaming URL for the first result
+      final result = await _apiService.getStreamingUrl(
+        url: searchResults.first.url,
+        title: video.title,
+        artist: video.uploader,
+      );
+
+      await _playerStateService.streamTrack(
+        result.streamingUrl,
+        trackName: result.title,
+        trackArtist: result.artist,
+        url: searchResults.first.url,
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Stream failed: $e'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    }
+  }
+
+  // For recommended songs (from Spotify), search YouTube first
+  Future<void> _addRecommendedToQueue(VideoInfo video) async {
+    try {
+      // Search YouTube for this track first
+      final searchResults = await _apiService.searchYoutube(
+        '${video.title} ${video.uploader}',
+      );
+
+      if (searchResults.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Could not find "${video.title}" on YouTube'),
+              backgroundColor: Colors.red,
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+        return;
+      }
+
+      final result = await _apiService.getStreamingUrl(
+        url: searchResults.first.url,
+        title: video.title,
+        artist: video.uploader,
+      );
+
+      final queueItem = QueueItem.fromVideoInfo(
+        videoId: searchResults.first.id,
+        title: result.title,
+        artist: result.artist,
+        streamingUrl: result.streamingUrl,
+        thumbnail: video.thumbnail,
+      );
+
+      _queueService.addToQueue(queueItem);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to add to queue: $e'),
             backgroundColor: Colors.red,
             behavior: SnackBarBehavior.floating,
           ),

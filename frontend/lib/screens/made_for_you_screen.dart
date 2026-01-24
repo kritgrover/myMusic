@@ -34,8 +34,23 @@ class _MadeForYouScreenState extends State<MadeForYouScreen> {
 
   Future<void> _playTrack(VideoInfo song) async {
     try {
+      // Search YouTube for this track first (like GenreScreen does)
+      final searchResults = await _apiService.searchYoutube(
+        '${song.title} ${song.uploader}',
+      );
+
+      if (searchResults.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Could not find "${song.title}" on YouTube')),
+          );
+        }
+        return;
+      }
+
+      // Get streaming URL for the first result
       final result = await _apiService.getStreamingUrl(
-        url: song.url,
+        url: searchResults.first.url,
         title: song.title,
         artist: song.uploader,
       );
@@ -44,7 +59,7 @@ class _MadeForYouScreenState extends State<MadeForYouScreen> {
         result.streamingUrl,
         trackName: result.title,
         trackArtist: result.artist,
-        url: song.url,
+        url: searchResults.first.url,
       );
     } catch (e) {
       if (mounted) {
@@ -57,14 +72,28 @@ class _MadeForYouScreenState extends State<MadeForYouScreen> {
 
   Future<void> _addToQueue(VideoInfo song, {bool showSnackbar = true}) async {
     try {
+      // Search YouTube for this track first
+      final searchResults = await _apiService.searchYoutube(
+        '${song.title} ${song.uploader}',
+      );
+
+      if (searchResults.isEmpty) {
+        if (mounted && showSnackbar) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Could not find "${song.title}" on YouTube')),
+          );
+        }
+        return;
+      }
+
       final result = await _apiService.getStreamingUrl(
-        url: song.url,
+        url: searchResults.first.url,
         title: song.title,
         artist: song.uploader,
       );
 
       final queueItem = QueueItem(
-        id: song.id,
+        id: searchResults.first.id,
         title: result.title,
         artist: result.artist,
         url: result.streamingUrl,
