@@ -25,6 +25,7 @@ import '../widgets/horizontal_song_list.dart';
 import '../widgets/genre_card.dart';
 import 'genre_screen.dart';
 import 'spotify_playlist_screen.dart';
+import 'made_for_you_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -71,6 +72,9 @@ class _HomeScreenState extends State<HomeScreen> {
   
   // Genre navigation
   String? _selectedGenre;
+  
+  // Made for You navigation
+  bool _showMadeForYou = false;
 
   // Search state
   final TextEditingController _searchController = TextEditingController();
@@ -164,6 +168,20 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildCurrentScreen() {
     switch (_currentIndex) {
       case 0:
+        // If Made for You is selected, show that screen
+        if (_showMadeForYou) {
+          return MadeForYouScreen(
+            songs: _dailyMix,
+            playerStateService: _playerStateService,
+            queueService: _queueService,
+            recentlyPlayedService: _recentlyPlayedService,
+            onBack: () {
+              setState(() {
+                _showMadeForYou = false;
+              });
+            },
+          );
+        }
         // If a genre is selected, show genre screen, otherwise show home content
         if (_selectedGenre != null) {
           return GenreScreen(
@@ -416,10 +434,16 @@ class _HomeScreenState extends State<HomeScreen> {
                                   )
                                 else ...[
                                   HorizontalSongList(
-                                    title: 'Made for You',
+                                    title: 'Songs for You',
                                     songs: _dailyMix,
                                     onPlay: _streamVideo,
                                     onAddToQueue: _addToQueue,
+                                    maxItems: 8,
+                                    onShowAll: () {
+                                      setState(() {
+                                        _showMadeForYou = true;
+                                      });
+                                    },
                                   ),
                                 ],
 

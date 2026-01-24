@@ -7,6 +7,8 @@ class HorizontalSongList extends StatelessWidget {
   final List<VideoInfo> songs;
   final Function(VideoInfo) onPlay;
   final Function(VideoInfo) onAddToQueue;
+  final VoidCallback? onShowAll;
+  final int maxItems;
 
   const HorizontalSongList({
     super.key,
@@ -14,56 +16,88 @@ class HorizontalSongList extends StatelessWidget {
     required this.songs,
     required this.onPlay,
     required this.onAddToQueue,
+    this.onShowAll,
+    this.maxItems = 8,
   });
 
   @override
   Widget build(BuildContext context) {
     if (songs.isEmpty) return const SizedBox.shrink();
 
+    final displayedSongs = songs.length > maxItems ? songs.sublist(0, maxItems) : songs;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 8.0),
-          child: Text(
-            title,
-            style: Theme.of(context).textTheme.titleLarge?.copyWith(
-              fontWeight: FontWeight.w600,
-            ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                title,
+                style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              if (onShowAll != null && songs.length > maxItems)
+                TextButton(
+                  onPressed: onShowAll,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        'Show All',
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.primary,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      Icon(
+                        Icons.arrow_forward,
+                        size: 16,
+                        color: Theme.of(context).colorScheme.primary,
+                      ),
+                    ],
+                  ),
+                ),
+            ],
           ),
         ),
         SizedBox(
-          height: 180, // Height for card + title/subtitle
+          height: 230, // Height for square card (160) + spacing (8) + title/subtitle (~52)
           child: ListView.separated(
             padding: const EdgeInsets.symmetric(horizontal: 24.0),
             scrollDirection: Axis.horizontal,
-            itemCount: songs.length,
-            separatorBuilder: (context, index) => const SizedBox(width: 16),
+            itemCount: displayedSongs.length,
+            separatorBuilder: (context, index) => const SizedBox(width: 24),
             itemBuilder: (context, index) {
-              final song = songs[index];
+              final song = displayedSongs[index];
               return SizedBox(
-                width: 140,
+                width: 160,
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // Thumbnail with play button overlay
+                    // Square thumbnail with play button overlay
                     Stack(
                       alignment: Alignment.center,
                       children: [
-                        AspectRatio(
-                          aspectRatio: 16 / 9,
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(8),
-                            child: Image.network(
-                              song.thumbnail,
-                              fit: BoxFit.cover,
-                              errorBuilder: (context, error, stackTrace) {
-                                return Container(
-                                  color: Colors.grey[800],
-                                  child: const Icon(Icons.music_note, size: 32),
-                                );
-                              },
-                            ),
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(8),
+                          child: Image.network(
+                            song.thumbnail,
+                            width: 160,
+                            height: 160,
+                            fit: BoxFit.cover,
+                            errorBuilder: (context, error, stackTrace) {
+                              return Container(
+                                width: 160,
+                                height: 160,
+                                color: Colors.grey[800],
+                                child: const Icon(Icons.music_note, size: 48),
+                              );
+                            },
                           ),
                         ),
                         Material(
