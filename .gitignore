@@ -26,11 +26,16 @@ build/
 # Downloads
 backend/downloads/
 backend/temp/
+backend/.cache
+backend/music_app.db
 backend/playlists.json
 backend/covers/
 *.mp3
 *.m4a
 *.m3u
+
+# Environment variables
+.env
 
 # IDE
 .vscode/

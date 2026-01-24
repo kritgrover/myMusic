@@ -6,6 +6,7 @@ class QueueItem {
   final String? url; // For streaming URLs
   final String? filename; // For local files
   final String? thumbnail;
+  final String? originalUrl; // Original YouTube/Spotify URL for lazy loading streaming URL
 
   QueueItem({
     required this.id,
@@ -15,6 +16,7 @@ class QueueItem {
     this.url,
     this.filename,
     this.thumbnail,
+    this.originalUrl,
   });
 
   // Create from VideoInfo (search results)
@@ -59,6 +61,7 @@ class QueueItem {
     required String? artist,
     required String streamingUrl,
     String? album,
+    String? originalUrl,
   }) {
     return QueueItem(
       id: 'track_$trackId',
@@ -66,6 +69,54 @@ class QueueItem {
       artist: artist,
       album: album,
       url: streamingUrl,
+      originalUrl: originalUrl,
+    );
+  }
+
+  // Create from playlist track with original URL (for lazy loading)
+  factory QueueItem.fromPlaylistTrackLazy({
+    required String trackId,
+    required String? title,
+    required String? artist,
+    required String originalUrl,
+    String? album,
+    String? thumbnail,
+  }) {
+    return QueueItem(
+      id: 'track_$trackId',
+      title: title,
+      artist: artist,
+      album: album,
+      originalUrl: originalUrl,
+      thumbnail: thumbnail,
+    );
+  }
+
+  // Create a copy with updated streaming URL
+  QueueItem copyWithStreamingUrl(String streamingUrl) {
+    return QueueItem(
+      id: id,
+      title: title,
+      artist: artist,
+      album: album,
+      url: streamingUrl,
+      filename: filename,
+      thumbnail: thumbnail,
+      originalUrl: originalUrl,
+    );
+  }
+
+  // Create a copy with updated thumbnail
+  QueueItem copyWithThumbnail(String? thumbnail) {
+    return QueueItem(
+      id: id,
+      title: title,
+      artist: artist,
+      album: album,
+      url: url,
+      filename: filename,
+      thumbnail: thumbnail,
+      originalUrl: originalUrl,
     );
   }
 

@@ -73,6 +73,34 @@ class DownloadService:
             except Exception as e:
                 print(f"Warning: Could not verify yt-dlp installation: {e}")
     
+    def _yt_cmd(self, extra_args, search_spec):
+        """Build yt-dlp command with proper executable and ffmpeg location.
+        
+        This is a centralized method to avoid code duplication.
+        
+        Args:
+            extra_args: List of additional arguments for yt-dlp
+            search_spec: The URL or search query to process
+            
+        Returns:
+            List of command arguments ready for subprocess
+        """
+        if isinstance(self.yt_dlp_exe, list):
+            cmd = self.yt_dlp_exe.copy()
+        else:
+            cmd = [self.yt_dlp_exe]
+        cmd.append("--no-config")
+        # Only add ffmpeg-location if ffmpeg is in a specific directory
+        ffmpeg_dir = os.path.dirname(self.ffmpeg_exe) if isinstance(self.ffmpeg_exe, str) and os.path.dirname(self.ffmpeg_exe) else ""
+        if ffmpeg_dir and os.path.isdir(ffmpeg_dir):
+            cmd.append(f"--ffmpeg-location={ffmpeg_dir}")
+        cmd += extra_args + [search_spec]
+        return cmd
+    
+    def _get_creationflags(self):
+        """Get subprocess creation flags for the current platform."""
+        return subprocess.CREATE_NO_WINDOW if platform.system() == 'Windows' else 0
+    
     def normalize(self, text: str) -> str:
         """Lowercase and strip out any punctuation, leaving only word chars and spaces."""
         return re.sub(r"[^\w\s]", "", text.lower())
@@ -140,29 +168,15 @@ class DownloadService:
     
     def search_youtube(self, query: str, duration_min: int = 0, duration_max: float = float("inf")):
         """Search YouTube and return video information"""
-        creationflags = subprocess.CREATE_NO_WINDOW if platform.system() == 'Windows' else 0
+        creationflags = self._get_creationflags()
         
         # Check if yt-dlp is available
         if not self.yt_dlp_exe:
             raise Exception(f"yt-dlp not found. Please install it: pip install yt-dlp")
         
-        def yt_cmd(extra_args, search_spec):
-            # Handle both string and list formats
-            if isinstance(self.yt_dlp_exe, list):
-                cmd = self.yt_dlp_exe.copy()
-            else:
-                cmd = [self.yt_dlp_exe]
-            cmd.append("--no-config")
-            # Only add ffmpeg-location if ffmpeg is in a specific directory
-            ffmpeg_dir = os.path.dirname(self.ffmpeg_exe) if isinstance(self.ffmpeg_exe, str) and os.path.dirname(self.ffmpeg_exe) else ""
-            if ffmpeg_dir and os.path.isdir(ffmpeg_dir):
-                cmd.append(f"--ffmpeg-location={ffmpeg_dir}")
-            cmd += extra_args + [search_spec]
-            return cmd
-        
         # Always use deep search
         proc_q = subprocess.run(
-            yt_cmd(["--flat-playlist", "--dump-single-json", "--no-playlist"], f"ytsearch3:{query}"),
+            self._yt_cmd(["--flat-playlist", "--dump-single-json", "--no-playlist"], f"ytsearch3:{query}"),
             capture_output=True, text=True, creationflags=creationflags, timeout=30
         )
         if proc_q.returncode != 0:
@@ -198,7 +212,7 @@ class DownloadService:
                 'uploader': uploader,
                 'duration': duration,
                 'url': url,
-                'thumbnail': f"https://img.youtube.com/vi/{vid_id}/maxresdefault.jpg"
+                'thumbnail': f"https://img.youtube.com/vi/{vid_id}/hqdefault.jpg"
             })
         
         return results
@@ -206,7 +220,7 @@ class DownloadService:
     def download_audio(self, url: str, title: str, artist: str = "", album: str = "", 
                       output_format: str = "m4a", embed_thumbnail: bool = False):
         """Download audio from YouTube URL"""
-        creationflags = subprocess.CREATE_NO_WINDOW if platform.system() == 'Windows' else 0
+        creationflags = self._get_creationflags()
         
         # Sanitize filename
         safe_title = re.sub(r"[^\w\s]", "", title).strip()
@@ -221,22 +235,8 @@ class DownloadService:
         
         output_path = os.path.join(self.output_dir, filename)
         
-        def yt_cmd(extra_args, search_spec):
-            # Handle both string and list formats
-            if isinstance(self.yt_dlp_exe, list):
-                cmd = self.yt_dlp_exe.copy()
-            else:
-                cmd = [self.yt_dlp_exe]
-            cmd.append("--no-config")
-            # Only add ffmpeg-location if ffmpeg is in a specific directory
-            ffmpeg_dir = os.path.dirname(self.ffmpeg_exe) if isinstance(self.ffmpeg_exe, str) and os.path.dirname(self.ffmpeg_exe) else ""
-            if ffmpeg_dir and os.path.isdir(ffmpeg_dir):
-                cmd.append(f"--ffmpeg-location={ffmpeg_dir}")
-            cmd += extra_args + [search_spec]
-            return cmd
-        
         # Build download command
-        cmd_dl = yt_cmd([
+        cmd_dl = self._yt_cmd([
             '-f', 'bestaudio[ext=m4a]/bestaudio',
             '--output', output_path + '.%(ext)s',
             '--no-playlist'
@@ -305,28 +305,14 @@ class DownloadService:
     
     def get_streaming_url(self, url: str):
         """Get direct streaming URL from YouTube URL without downloading"""
-        creationflags = subprocess.CREATE_NO_WINDOW if platform.system() == 'Windows' else 0
+        creationflags = self._get_creationflags()
         
         # Check if yt-dlp is available
         if not self.yt_dlp_exe:
             raise Exception(f"yt-dlp not found. Please install it: pip install yt-dlp")
         
-        def yt_cmd(extra_args, search_spec):
-            # Handle both string and list formats
-            if isinstance(self.yt_dlp_exe, list):
-                cmd = self.yt_dlp_exe.copy()
-            else:
-                cmd = [self.yt_dlp_exe]
-            cmd.append("--no-config")
-            # Only add ffmpeg-location if ffmpeg is in a specific directory
-            ffmpeg_dir = os.path.dirname(self.ffmpeg_exe) if isinstance(self.ffmpeg_exe, str) and os.path.dirname(self.ffmpeg_exe) else ""
-            if ffmpeg_dir and os.path.isdir(ffmpeg_dir):
-                cmd.append(f"--ffmpeg-location={ffmpeg_dir}")
-            cmd += extra_args + [search_spec]
-            return cmd
-        
         # Get the best audio stream URL using -g flag
-        cmd_stream = yt_cmd([
+        cmd_stream = self._yt_cmd([
             '-f', '140/251/bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio[acodec*=mp4a]/bestaudio/best',
             '-g'
         ], url)
@@ -343,31 +329,17 @@ class DownloadService:
     
     def download_for_streaming(self, url: str, output_path: str):
         """Download audio in browser-compatible format for streaming"""
-        creationflags = subprocess.CREATE_NO_WINDOW if platform.system() == 'Windows' else 0
+        creationflags = self._get_creationflags()
         
         # Check if yt-dlp is available
         if not self.yt_dlp_exe:
             raise Exception(f"yt-dlp not found. Please install it: pip install yt-dlp")
         
-        def yt_cmd(extra_args, search_spec):
-            # Handle both string and list formats
-            if isinstance(self.yt_dlp_exe, list):
-                cmd = self.yt_dlp_exe.copy()
-            else:
-                cmd = [self.yt_dlp_exe]
-            cmd.append("--no-config")
-            # Only add ffmpeg-location if ffmpeg is in a specific directory
-            ffmpeg_dir = os.path.dirname(self.ffmpeg_exe) if isinstance(self.ffmpeg_exe, str) and os.path.dirname(self.ffmpeg_exe) else ""
-            if ffmpeg_dir and os.path.isdir(ffmpeg_dir):
-                cmd.append(f"--ffmpeg-location={ffmpeg_dir}")
-            cmd += extra_args + [search_spec]
-            return cmd
-        
         # Use a temporary file first, then apply faststart
         temp_output = output_path + ".tmp"
         
         # Download as M4A (AAC) which is browser-compatible
-        cmd_download = yt_cmd([
+        cmd_download = self._yt_cmd([
             '-f', 'bestaudio[ext=m4a]/bestaudio',
             '--remux-video', 'm4a',
             '--postprocessor-args', 'ffmpeg:-movflags +faststart',
@@ -393,58 +365,6 @@ class DownloadService:
             raise Exception(f"Downloaded file not found: {output_path}")
         
         return output_path
-        
-        if ret.returncode != 0:
-            error_msg = ret.stderr or ret.stdout or "Unknown error"
-            raise Exception(f"Download failed: {error_msg[:200]}")
-        
-        # Find the downloaded file
-        ext = '.mp3' if output_format == 'mp3' else '.m4a'
-        downloaded_file = output_path + ext
-        
-        # If file doesn't exist, try to find it
-        if not os.path.isfile(downloaded_file):
-            # yt-dlp might have added a number suffix
-            for f in os.listdir(self.output_dir):
-                if f.startswith(filename) and f.endswith(ext):
-                    downloaded_file = os.path.join(self.output_dir, f)
-                    break
-        
-        if not os.path.isfile(downloaded_file):
-            raise Exception("Downloaded file not found")
-        
-        # Embed metadata
-        try:
-            if ext == '.m4a':
-                audio = MP4(downloaded_file)
-                tags = audio.tags or MP4Tags()
-                tags['\xa9nam'] = [title]
-                if artist:
-                    tags['\xa9ART'] = [artist]
-                if album:
-                    tags['\xa9alb'] = [album]
-                audio.save()
-            else:  # MP3
-                try:
-                    audio = EasyID3(downloaded_file)
-                except:
-                    audio = EasyID3()
-                audio['title'] = title
-                if artist:
-                    audio['artist'] = artist
-                if album:
-                    audio['album'] = album
-                audio.save()
-        except Exception as e:
-            print(f"Warning: Could not embed metadata: {e}")
-        
-        return {
-            'file_path': downloaded_file,
-            'filename': os.path.basename(downloaded_file),
-            'title': title,
-            'artist': artist,
-            'album': album
-        }
     
     def get_download_progress(self, url: str):
         """Get download progress for a URL"""
@@ -461,7 +381,7 @@ class DownloadService:
         if variants is None:
             variants = ['']
         
-        creationflags = subprocess.CREATE_NO_WINDOW if platform.system() == 'Windows' else 0
+        creationflags = self._get_creationflags()
         
         # Check if yt-dlp is available
         if not self.yt_dlp_exe:
@@ -470,18 +390,6 @@ class DownloadService:
         playlist_name = os.path.splitext(os.path.basename(csv_path))[0]
         output_dir = os.path.join(self.output_dir, playlist_name)
         os.makedirs(output_dir, exist_ok=True)
-        
-        def yt_cmd(extra_args, search_spec):
-            if isinstance(self.yt_dlp_exe, list):
-                cmd = self.yt_dlp_exe.copy()
-            else:
-                cmd = [self.yt_dlp_exe]
-            cmd.append("--no-config")
-            ffmpeg_dir = os.path.dirname(self.ffmpeg_exe) if isinstance(self.ffmpeg_exe, str) and os.path.dirname(self.ffmpeg_exe) else ""
-            if ffmpeg_dir and os.path.isdir(ffmpeg_dir):
-                cmd.append(f"--ffmpeg-location={ffmpeg_dir}")
-            cmd += extra_args + [search_spec]
-            return cmd
         
         rows = list(csv.DictReader(open(csv_path, newline='', encoding='utf-8')))
         total = len(rows)
@@ -518,7 +426,7 @@ class DownloadService:
                 
                 # Always use deep search
                 proc_q = subprocess.run(
-                    yt_cmd(["--flat-playlist", "--dump-single-json", "--no-playlist"], f"ytsearch1:{q}"),
+                    self._yt_cmd(["--flat-playlist", "--dump-single-json", "--no-playlist"], f"ytsearch1:{q}"),
                     capture_output=True, text=True, creationflags=creationflags, timeout=30
                 )
                 try:
@@ -546,7 +454,7 @@ class DownloadService:
                 else:
                         # Phase 2: deep-search candidate IDs with parallel fetching
                         proc_ids = subprocess.run(
-                            yt_cmd(["--flat-playlist", "--dump-single-json", "--no-playlist"], f"ytsearch3:{q}"),
+                            self._yt_cmd(["--flat-playlist", "--dump-single-json", "--no-playlist"], f"ytsearch3:{q}"),
                             capture_output=True, text=True, creationflags=creationflags, timeout=30
                         )
                         try:
@@ -568,7 +476,7 @@ class DownloadService:
                                     return None
                                 url = f"https://www.youtube.com/watch?v={vid}"
                                 proc_i = subprocess.run(
-                                    yt_cmd(["--dump-single-json", "--no-playlist"], url),
+                                    self._yt_cmd(["--dump-single-json", "--no-playlist"], url),
                                     capture_output=True, text=True, creationflags=creationflags, timeout=30
                                 )
                                 if "Sign in to confirm your age" in (proc_i.stderr or ''):
@@ -638,7 +546,7 @@ class DownloadService:
                 file_title = re.sub(r"[^\w\s]", "", title).strip()
                 base = f"{i:03d} - {file_title}" + (f" - {variant}" if variant else "")
                 tmpl = base + ".%(ext)s"
-                cmd_dl = yt_cmd([
+                cmd_dl = self._yt_cmd([
                     '--download-archive', archive_file,
                     '-f', 'bestaudio[ext=m4a]/bestaudio',
                     '--output', os.path.join(output_dir, tmpl),
@@ -722,25 +630,13 @@ class DownloadService:
         if variants is None:
             variants = ['']
         
-        creationflags = subprocess.CREATE_NO_WINDOW if platform.system() == 'Windows' else 0
+        creationflags = self._get_creationflags()
         
         # Check if yt-dlp is available
         if not self.yt_dlp_exe:
             raise Exception(f"yt-dlp not found. Please install it: pip install yt-dlp")
         
         playlist_name = os.path.splitext(os.path.basename(csv_path))[0]
-        
-        def yt_cmd(extra_args, search_spec):
-            if isinstance(self.yt_dlp_exe, list):
-                cmd = self.yt_dlp_exe.copy()
-            else:
-                cmd = [self.yt_dlp_exe]
-            cmd.append("--no-config")
-            ffmpeg_dir = os.path.dirname(self.ffmpeg_exe) if isinstance(self.ffmpeg_exe, str) and os.path.dirname(self.ffmpeg_exe) else ""
-            if ffmpeg_dir and os.path.isdir(ffmpeg_dir):
-                cmd.append(f"--ffmpeg-location={ffmpeg_dir}")
-            cmd += extra_args + [search_spec]
-            return cmd
         
         rows = list(csv.DictReader(open(csv_path, newline='', encoding='utf-8')))
         total = len(rows)
@@ -776,7 +672,7 @@ class DownloadService:
                 
                 # Always use deep search - Phase 1: quick flat-playlist probe with scoring
                 proc_q = subprocess.run(
-                    yt_cmd(["--flat-playlist", "--dump-single-json", "--no-playlist"], f"ytsearch1:{q}"),
+                    self._yt_cmd(["--flat-playlist", "--dump-single-json", "--no-playlist"], f"ytsearch1:{q}"),
                     capture_output=True, text=True, creationflags=creationflags, timeout=30
                 )
                 try:
@@ -807,14 +703,14 @@ class DownloadService:
                             'artist': artist_primary,
                             'album': album,
                             'url': top.get('webpage_url', f"https://www.youtube.com/watch?v={vid_id}"),
-                            'thumbnail': f"https://img.youtube.com/vi/{vid_id}/maxresdefault.jpg",
+                            'thumbnail': f"https://img.youtube.com/vi/{vid_id}/hqdefault.jpg",
                             'duration': duration
                         }
                         break
                 else:
                         # Phase 2: deep-search candidate IDs with parallel fetching
                         proc_ids = subprocess.run(
-                            yt_cmd(["--flat-playlist", "--dump-single-json", "--no-playlist"], f"ytsearch3:{q}"),
+                            self._yt_cmd(["--flat-playlist", "--dump-single-json", "--no-playlist"], f"ytsearch3:{q}"),
                             capture_output=True, text=True, creationflags=creationflags, timeout=30
                         )
                         try:
@@ -837,7 +733,7 @@ class DownloadService:
                                 return None
                             url = f"https://www.youtube.com/watch?v={vid}"
                             proc_i = subprocess.run(
-                                yt_cmd(["--dump-single-json", "--no-playlist"], url),
+                                self._yt_cmd(["--dump-single-json", "--no-playlist"], url),
                                 capture_output=True, text=True, creationflags=creationflags, timeout=30
                             )
                             if "Sign in to confirm your age" in (proc_i.stderr or ''):
@@ -890,7 +786,7 @@ class DownloadService:
                                         'artist': artist_primary,
                                         'album': album,
                                         'url': info.get('webpage_url', f"https://www.youtube.com/watch?v={vid_id}"),
-                                        'thumbnail': f"https://img.youtube.com/vi/{vid_id}/maxresdefault.jpg",
+                                        'thumbnail': f"https://img.youtube.com/vi/{vid_id}/hqdefault.jpg",
                                         'duration': dur2
                                     }
                                     scored.append((score, track_info))

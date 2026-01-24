@@ -20,6 +20,12 @@ import '../services/recently_played_service.dart';
 import '../models/queue_item.dart';
 import '../models/playlist.dart';
 import '../utils/song_display_utils.dart';
+import '../services/recommendation_service.dart';
+import '../widgets/horizontal_song_list.dart';
+import '../widgets/genre_card.dart';
+import 'genre_screen.dart';
+import 'spotify_playlist_screen.dart';
+import 'made_for_you_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -57,6 +63,18 @@ class _HomeScreenState extends State<HomeScreen> {
   // Services for dialog
   final ApiService _apiService = ApiService();
   final PlaylistService _playlistService = PlaylistService();
+  final RecommendationService _recommendationService = RecommendationService();
+
+  // Recommendations
+  List<VideoInfo> _dailyMix = [];
+  bool _isLoadingRecommendations = false;
+  final List<String> _genres = ['Pop', 'Rock', 'Hip Hop', 'Electronic', 'Jazz', 'Classical', 'Indie', 'Metal'];
+  
+  // Genre navigation
+  String? _selectedGenre;
+  
+  // Made for You navigation
+  bool _showMadeForYou = false;
 
   // Search state
   final TextEditingController _searchController = TextEditingController();
@@ -105,6 +123,40 @@ class _HomeScreenState extends State<HomeScreen> {
         }
       });
     }
+    
+    _fetchRecommendations();
+  }
+
+  Future<void> _fetchRecommendations() async {
+    setState(() {
+      _isLoadingRecommendations = true;
+    });
+
+    try {
+      final dailyMixTracks = await _recommendationService.getDailyMix();
+
+      if (mounted) {
+        setState(() {
+          _dailyMix = dailyMixTracks.map((t) => VideoInfo(
+            id: t.url ?? '',
+            title: t.title,
+            uploader: t.artist ?? 'Unknown',
+            duration: t.duration ?? 0,
+            url: t.url ?? '',
+            thumbnail: t.thumbnail ?? '',
+          )).toList();
+          
+          _isLoadingRecommendations = false;
+        });
+      }
+    } catch (e) {
+      print('Error fetching recommendations: $e');
+      if (mounted) {
+        setState(() {
+          _isLoadingRecommendations = false;
+        });
+      }
+    }
   }
 
   void _onRecentlyPlayedChanged() {
@@ -116,6 +168,42 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildCurrentScreen() {
     switch (_currentIndex) {
       case 0:
+        // If Made for You is selected, show that screen
+        if (_showMadeForYou) {
+          return MadeForYouScreen(
+            songs: _dailyMix,
+            playerStateService: _playerStateService,
+            queueService: _queueService,
+            recentlyPlayedService: _recentlyPlayedService,
+            onBack: () {
+              setState(() {
+                _showMadeForYou = false;
+              });
+            },
+          );
+        }
+        // If a genre is selected, show genre screen, otherwise show home content
+        if (_selectedGenre != null) {
+          return GenreScreen(
+            genre: _selectedGenre!,
+            playerStateService: _playerStateService,
+            queueService: _queueService,
+            recentlyPlayedService: _recentlyPlayedService,
+            embedded: true,
+            onBack: () {
+              setState(() {
+                _selectedGenre = null;
+              });
+            },
+            onDownloadStart: (downloadId) {
+              setState(() {
+                _downloadId = downloadId;
+                _downloadProgress = null;
+              });
+              _startDownloadProgressPolling(downloadId);
+            },
+          );
+        }
         return _buildHomeContent();
       case 1:
         return DownloadsScreen(
@@ -285,74 +373,126 @@ class _HomeScreenState extends State<HomeScreen> {
                             ],
                           ),
                         )
-                      : ListenableBuilder(
-                          listenable: _recentlyPlayedService,
-                          builder: (context, _) {
-                            if (_recentlyPlayedService.items.isEmpty) {
-                              return Center(
-                                child: Column(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    Icon(
-                                      Icons.search,
-                                      size: 64,
-                                      color: Theme.of(context).colorScheme.onSurface.withOpacity(0.3),
-                                    ),
-                                    const SizedBox(height: 16),
-                                    Text(
-                                      'Search for your favorite music',
-                                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                                        color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              );
-                            }
-                            
-                            return Column(
+                      : RefreshIndicator(
+                          onRefresh: _fetchRecommendations,
+                          child: SingleChildScrollView(
+                            child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
+                                // Recently Played
+                                ListenableBuilder(
+                                  listenable: _recentlyPlayedService,
+                                  builder: (context, _) {
+                                    if (_recentlyPlayedService.items.isEmpty) return const SizedBox.shrink();
+                                    
+                                    return Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Padding(
+                                          padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 16.0),
+                                          child: Text(
+                                            'Recently Played',
+                                            style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                          ),
+                                        ),
+                                        Padding(
+                                          padding: const EdgeInsets.symmetric(horizontal: 24.0),
+                                          child: LayoutBuilder(
+                                            builder: (context, constraints) {
+                                              final cardWidth = (constraints.maxWidth - 16) / 2;
+                                              final cardHeight = 112.0;
+                                              final aspectRatio = cardWidth / cardHeight;
+                                              
+                                              return GridView.builder(
+                                                shrinkWrap: true,
+                                                physics: const NeverScrollableScrollPhysics(),
+                                                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                                                  crossAxisCount: 2,
+                                                  crossAxisSpacing: 16,
+                                                  mainAxisSpacing: 16,
+                                                  childAspectRatio: aspectRatio,
+                                                ),
+                                                itemCount: _recentlyPlayedService.items.length,
+                                                itemBuilder: (context, index) {
+                                                  return _buildRecentlyPlayedCard(_recentlyPlayedService.items[index]);
+                                                },
+                                              );
+                                            },
+                                          ),
+                                        ),
+                                      ],
+                                    );
+                                  },
+                                ),
+
+                                if (_isLoadingRecommendations)
+                                  const Padding(
+                                    padding: EdgeInsets.all(32.0),
+                                    child: Center(child: CircularProgressIndicator()),
+                                  )
+                                else ...[
+                                  HorizontalSongList(
+                                    title: 'Songs for You',
+                                    songs: _dailyMix,
+                                    onPlay: _streamRecommendedVideo,
+                                    onAddToQueue: _addRecommendedToQueue,
+                                    maxItems: 8,
+                                    onShowAll: () {
+                                      setState(() {
+                                        _showMadeForYou = true;
+                                      });
+                                    },
+                                  ),
+                                ],
+
+                                // Genres
                                 Padding(
-                                  padding: const EdgeInsets.symmetric(horizontal: 24.0),
+                                  padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 16.0),
                                   child: Text(
-                                    'Recently Played',
+                                    'Browse by Genre',
                                     style: Theme.of(context).textTheme.titleLarge?.copyWith(
                                       fontWeight: FontWeight.w600,
                                     ),
                                   ),
                                 ),
-                                const SizedBox(height: 16),
-                                Expanded(
-                                  child: Padding(
-                                    padding: const EdgeInsets.symmetric(horizontal: 24.0),
-                                    child: LayoutBuilder(
-                                      builder: (context, constraints) {
-                                        // Calculate aspect ratio based on card height (112px) and available width
-                                        final cardWidth = (constraints.maxWidth - 16) / 2; // Account for spacing
-                                        final cardHeight = 112.0; // Match VideoCard height
-                                        final aspectRatio = cardWidth / cardHeight;
-                                        
-                                        return GridView.builder(
-                                          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                                            crossAxisCount: 2,
-                                            crossAxisSpacing: 16,
-                                            mainAxisSpacing: 16,
-                                            childAspectRatio: aspectRatio,
-                                          ),
-                                          itemCount: _recentlyPlayedService.items.length,
-                                          itemBuilder: (context, index) {
-                                            final item = _recentlyPlayedService.items[index];
-                                            return _buildRecentlyPlayedCard(item);
-                                          },
-                                        );
-                                      },
-                                    ),
+                                Padding(
+                                  padding: const EdgeInsets.symmetric(horizontal: 24.0),
+                                  child: LayoutBuilder(
+                                    builder: (context, constraints) {
+                                      final cardWidth = (constraints.maxWidth - 48) / 4; // 4 columns with 3 gaps of 16px
+                                      final cardHeight = 112.0;
+                                      final aspectRatio = cardWidth / cardHeight;
+                                      
+                                      return GridView.builder(
+                                        shrinkWrap: true,
+                                        physics: const NeverScrollableScrollPhysics(),
+                                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                                          crossAxisCount: 4,
+                                          crossAxisSpacing: 16,
+                                          mainAxisSpacing: 16,
+                                          childAspectRatio: aspectRatio,
+                                        ),
+                                        itemCount: _genres.length,
+                                        itemBuilder: (context, index) {
+                                          return GenreCard(
+                                            genre: _genres[index],
+                                            onTap: () {
+                                              setState(() {
+                                                _selectedGenre = _genres[index];
+                                              });
+                                            },
+                                          );
+                                        },
+                                      );
+                                    },
                                   ),
                                 ),
+                                const SizedBox(height: 120), // Bottom padding for player
                               ],
-                            );
-                          },
+                            ),
+                          ),
                         ),
         ),
       ],
@@ -380,16 +520,35 @@ class _HomeScreenState extends State<HomeScreen> {
                   ClipRRect(
                     borderRadius: BorderRadius.circular(10),
                     child: item.type == RecentlyPlayedType.playlist
-                        ? Container(
-                            width: 80,
-                            height: 80,
-                            color: surfaceHover,
-                            child: Icon(
-                              Icons.playlist_play,
-                              size: 32,
-                              color: primaryColor,
-                            ),
-                          )
+                        ? item.thumbnail != null && item.thumbnail!.isNotEmpty
+                            ? Image.network(
+                                item.thumbnail!,
+                                width: 80,
+                                height: 80,
+                                fit: BoxFit.cover,
+                                errorBuilder: (context, error, stackTrace) {
+                                  return Container(
+                                    width: 80,
+                                    height: 80,
+                                    color: surfaceHover,
+                                    child: Icon(
+                                      Icons.playlist_play,
+                                      size: 32,
+                                      color: primaryColor,
+                                    ),
+                                  );
+                                },
+                              )
+                            : Container(
+                                width: 80,
+                                height: 80,
+                                color: surfaceHover,
+                                child: Icon(
+                                  Icons.playlist_play,
+                                  size: 32,
+                                  color: primaryColor,
+                                ),
+                              )
                         : item.thumbnail != null
                             ? Image.network(
                                 item.thumbnail!,
@@ -466,13 +625,37 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _handleRecentlyPlayedTap(RecentlyPlayedItem item) async {
     if (item.type == RecentlyPlayedType.playlist) {
-      // Switch to playlists tab and show the playlist directly
-      setState(() {
-        _navigateToPlaylistId = item.playlistId ?? item.id;
-        _currentIndex = 2; // Switch to Playlists tab
-      });
-      // The PlaylistsScreen will automatically load and show the playlist
-      // via the initialPlaylistId parameter
+      if (item.playlistId != null) {
+        bool isLocal = false;
+        try {
+          // Check if it exists in local playlists
+          final localPlaylists = await _playlistService.getAllPlaylists();
+          isLocal = localPlaylists.any((p) => p.id == item.playlistId);
+        } catch (_) {}
+
+        if (isLocal) {
+          // Switch to playlists tab and show the playlist directly
+          setState(() {
+            _navigateToPlaylistId = item.playlistId;
+            _currentIndex = 2; // Switch to Playlists tab
+          });
+        } else {
+          // Navigate to SpotifyPlaylistScreen
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => SpotifyPlaylistScreen(
+                playlistId: item.playlistId!,
+                playlistName: item.title,
+                coverUrl: item.thumbnail,
+                playerStateService: _playerStateService,
+                queueService: _queueService,
+                recentlyPlayedService: _recentlyPlayedService,
+              ),
+            ),
+          );
+        }
+      }
     } else {
       // Play the song
       // First, try to stream if URL is available (even if filename exists, URL takes priority for non-downloaded songs)
@@ -767,6 +950,102 @@ class _HomeScreenState extends State<HomeScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Stream failed: $e'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    }
+  }
+
+  // For recommended songs (from Spotify), search YouTube first
+  Future<void> _streamRecommendedVideo(VideoInfo video) async {
+    try {
+      // Search YouTube for this track first
+      final searchResults = await _apiService.searchYoutube(
+        '${video.title} ${video.uploader}',
+      );
+
+      if (searchResults.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Could not find "${video.title}" on YouTube'),
+              backgroundColor: Colors.red,
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+        return;
+      }
+
+      // Get streaming URL for the first result
+      final result = await _apiService.getStreamingUrl(
+        url: searchResults.first.url,
+        title: video.title,
+        artist: video.uploader,
+      );
+
+      await _playerStateService.streamTrack(
+        result.streamingUrl,
+        trackName: result.title,
+        trackArtist: result.artist,
+        url: searchResults.first.url,
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Stream failed: $e'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    }
+  }
+
+  // For recommended songs (from Spotify), search YouTube first
+  Future<void> _addRecommendedToQueue(VideoInfo video) async {
+    try {
+      // Search YouTube for this track first
+      final searchResults = await _apiService.searchYoutube(
+        '${video.title} ${video.uploader}',
+      );
+
+      if (searchResults.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Could not find "${video.title}" on YouTube'),
+              backgroundColor: Colors.red,
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+        return;
+      }
+
+      final result = await _apiService.getStreamingUrl(
+        url: searchResults.first.url,
+        title: video.title,
+        artist: video.uploader,
+      );
+
+      final queueItem = QueueItem.fromVideoInfo(
+        videoId: searchResults.first.id,
+        title: result.title,
+        artist: result.artist,
+        streamingUrl: result.streamingUrl,
+        thumbnail: video.thumbnail,
+      );
+
+      _queueService.addToQueue(queueItem);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to add to queue: $e'),
             backgroundColor: Colors.red,
             behavior: SnackBarBehavior.floating,
           ),

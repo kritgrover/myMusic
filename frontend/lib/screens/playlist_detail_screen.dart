@@ -803,6 +803,15 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
       return;
     }
 
+    // Add playlist to recently played
+    if (widget.recentlyPlayedService != null) {
+      widget.recentlyPlayedService!.addPlaylist(
+        playlistId: _playlist.id,
+        title: _playlist.name,
+        thumbnail: _getCoverImageUrl(),
+      );
+    }
+
     // Show loading indicator
     showDialog(
       context: context,
@@ -923,6 +932,15 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
         );
       }
       return;
+    }
+
+    // Add playlist to recently played
+    if (widget.recentlyPlayedService != null) {
+      widget.recentlyPlayedService!.addPlaylist(
+        playlistId: _playlist.id,
+        title: _playlist.name,
+        thumbnail: _getCoverImageUrl(),
+      );
     }
 
     // Show loading indicator
