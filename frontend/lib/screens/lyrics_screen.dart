@@ -9,6 +9,8 @@ class LyricsScreen extends StatefulWidget {
   final String? albumName;
   final int? duration;
   final LyricsService lyricsService;
+  final bool embedded; // If true, don't show Scaffold/AppBar
+  final VoidCallback? onBack; // Callback for back button when embedded
 
   const LyricsScreen({
     super.key,
@@ -17,6 +19,8 @@ class LyricsScreen extends StatefulWidget {
     this.albumName,
     this.duration,
     required this.lyricsService,
+    this.embedded = false,
+    this.onBack,
   });
 
   @override
@@ -42,20 +46,8 @@ class _LyricsScreenState extends State<LyricsScreen> {
     );
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Lyrics'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: _fetchLyrics,
-            tooltip: 'Refresh lyrics',
-          ),
-        ],
-      ),
-      body: ListenableBuilder(
+  Widget _buildContent() {
+    return ListenableBuilder(
         listenable: widget.lyricsService,
         builder: (context, _) {
           if (widget.lyricsService.isLoading) {
@@ -183,7 +175,75 @@ class _LyricsScreenState extends State<LyricsScreen> {
             ],
           );
         },
+      );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (widget.embedded) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header with back button
+          Padding(
+            padding: const EdgeInsets.all(24.0),
+            child: Row(
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.arrow_back),
+                  onPressed: widget.onBack ?? () => Navigator.of(context).pop(),
+                  tooltip: 'Back',
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Lyrics',
+                        style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                              fontWeight: FontWeight.w700,
+                            ),
+                      ),
+                      if (widget.trackName.isNotEmpty) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          widget.trackName,
+                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
+                              ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.refresh),
+                  onPressed: _fetchLyrics,
+                  tooltip: 'Refresh lyrics',
+                ),
+              ],
+            ),
+          ),
+          Expanded(child: _buildContent()),
+        ],
+      );
+    }
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Lyrics'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: _fetchLyrics,
+            tooltip: 'Refresh lyrics',
+          ),
+        ],
       ),
+      body: _buildContent(),
     );
   }
 }

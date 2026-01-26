@@ -3,11 +3,9 @@ import 'dart:async';
 import '../services/audio_player_service.dart';
 import '../services/queue_service.dart';
 import '../services/player_state_service.dart';
-import '../services/lyrics_service.dart';
 import '../utils/song_display_utils.dart';
 import '../widgets/album_cover.dart';
 import '../models/queue_item.dart';
-import '../screens/lyrics_screen.dart';
 
 class BottomPlayer extends StatefulWidget {
   final AudioPlayerService playerService;
@@ -16,6 +14,7 @@ class BottomPlayer extends StatefulWidget {
   final QueueService? queueService;
   final PlayerStateService? playerStateService;
   final VoidCallback? onQueueToggle;
+  final VoidCallback? onLyricsToggle;
 
   const BottomPlayer({
     super.key,
@@ -25,6 +24,7 @@ class BottomPlayer extends StatefulWidget {
     this.queueService,
     this.playerStateService,
     this.onQueueToggle,
+    this.onLyricsToggle,
   });
 
   @override
@@ -43,7 +43,6 @@ class _BottomPlayerState extends State<BottomPlayer> {
   StreamSubscription<Duration>? _positionSubscription;
   StreamSubscription<Duration?>? _durationSubscription;
   StreamSubscription<PlayerState>? _stateSubscription;
-  final LyricsService _lyricsService = LyricsService();
 
   @override
   void initState() {
@@ -82,46 +81,6 @@ class _BottomPlayerState extends State<BottomPlayer> {
     super.dispose();
   }
 
-  void _showLyricsScreen(BuildContext context) {
-    final trackName = widget.currentTrackName ?? '';
-    final artistName = widget.currentTrackArtist ?? '';
-    String? albumName;
-    int? duration;
-    
-    // Try to get album and duration from queue item
-    if (widget.queueService?.currentItem != null) {
-      final currentItem = widget.queueService!.currentItem!;
-      albumName = currentItem.album;
-      // Duration is in seconds, convert from Duration
-      if (_duration.inSeconds > 0) {
-        duration = _duration.inSeconds;
-      }
-    } else if (_duration.inSeconds > 0) {
-      duration = _duration.inSeconds;
-    }
-    
-    if (trackName.isEmpty || artistName.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Track information not available'),
-        ),
-      );
-      return;
-    }
-    
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => LyricsScreen(
-          trackName: trackName,
-          artistName: artistName,
-          albumName: albumName,
-          duration: duration,
-          lyricsService: _lyricsService,
-        ),
-      ),
-    );
-  }
 
   String _formatDuration(Duration duration) {
     try {
@@ -506,10 +465,10 @@ class _BottomPlayerState extends State<BottomPlayer> {
                           },
                         ),
                       // Lyrics button (mic icon)
-                      if (hasTrack)
+                      if (hasTrack && widget.onLyricsToggle != null)
                         IconButton(
                           icon: const Icon(Icons.mic, size: 20),
-                          onPressed: () => _showLyricsScreen(context),
+                          onPressed: widget.onLyricsToggle,
                           tooltip: 'Lyrics',
                           constraints: const BoxConstraints(
                             minWidth: 48,
