@@ -189,20 +189,33 @@ class _LyricsScreenState extends State<LyricsScreen> {
   void _scrollToLine(int lineIndex) {
     if (!_scrollController.hasClients) return;
     
-    // Calculate approximate position (each line is roughly 40-50 pixels with current styling)
-    final lineHeight = 50.0;
-    final targetOffset = lineIndex * lineHeight;
+    // Calculate line height more accurately
+    // Font size: 16 * 1.5 = 24, line height: 24 * 1.8 = 43.2
+    // Vertical padding per item: 8.0 * 2 = 16.0
+    // Total per line item: ~59 pixels
+    const itemHeight = 59.0;
+    const listTopPadding = 24.0; // Top vertical padding from ListView
+    
+    // Calculate the center position of the target line item
+    // Position = top padding + (index * item height) + (item height / 2)
+    final targetLineCenter = listTopPadding + (lineIndex * itemHeight) + (itemHeight / 2);
+    
     final maxScroll = _scrollController.position.maxScrollExtent;
     final viewportHeight = _scrollController.position.viewportDimension;
+    final currentOffset = _scrollController.offset;
     
-    // Center the highlighted line in viewport
-    final centeredOffset = (targetOffset - viewportHeight / 2).clamp(0.0, maxScroll);
+    // Calculate where the line center should be relative to viewport
+    final desiredOffset = targetLineCenter - viewportHeight / 2;
+    final centeredOffset = desiredOffset.clamp(0.0, maxScroll);
     
-    _scrollController.animateTo(
-      centeredOffset,
-      duration: const Duration(milliseconds: 300),
-      curve: Curves.easeInOut,
-    );
+    // Only scroll if the line is not already reasonably centered (within 20 pixels)
+    if ((centeredOffset - currentOffset).abs() > 20.0) {
+      _scrollController.animateTo(
+        centeredOffset,
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeInOut,
+      );
+    }
   }
 
   Widget _buildContent() {
