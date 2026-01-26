@@ -173,6 +173,25 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildCurrentScreen() {
+    // If lyrics is shown, show lyrics screen (applies to all tabs)
+    if (_showLyrics && _playerStateService.currentTrackName != null && _playerStateService.currentTrackArtist != null) {
+      final currentItem = _queueService.currentItem;
+      return LyricsScreen(
+        trackName: _playerStateService.currentTrackName!,
+        artistName: _playerStateService.currentTrackArtist ?? '',
+        albumName: currentItem?.album,
+        duration: null,
+        lyricsService: _lyricsService,
+        playerStateService: _playerStateService,
+        embedded: true,
+        onBack: () {
+          setState(() {
+            _showLyrics = false;
+          });
+        },
+      );
+    }
+
     switch (_currentIndex) {
       case 0:
         // If Made for You is selected, show that screen
@@ -185,24 +204,6 @@ class _HomeScreenState extends State<HomeScreen> {
             onBack: () {
               setState(() {
                 _showMadeForYou = false;
-              });
-            },
-          );
-        }
-        // If lyrics is shown, show lyrics screen
-        if (_showLyrics && _playerStateService.currentTrackName != null && _playerStateService.currentTrackArtist != null) {
-          final currentItem = _queueService.currentItem;
-          return LyricsScreen(
-            trackName: _playerStateService.currentTrackName!,
-            artistName: _playerStateService.currentTrackArtist ?? '',
-            albumName: currentItem?.album,
-            duration: null,
-            lyricsService: _lyricsService,
-            playerStateService: _playerStateService,
-            embedded: true,
-            onBack: () {
-              setState(() {
-                _showLyrics = false;
               });
             },
           );
