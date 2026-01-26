@@ -125,9 +125,11 @@ class _LyricsScreenState extends State<LyricsScreen> {
           }
 
           return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               // Track info header
               Container(
+                width: double.infinity,
                 padding: const EdgeInsets.all(24.0),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -162,13 +164,17 @@ class _LyricsScreenState extends State<LyricsScreen> {
               Expanded(
                 child: SingleChildScrollView(
                   padding: const EdgeInsets.all(24.0),
-                  child: SelectableText(
-                    lyrics.plainLyrics ?? '',
-                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                          height: 1.8,
-                          letterSpacing: 0.3,
-                        ),
-                    textAlign: TextAlign.center,
+                  child: SizedBox(
+                    width: double.infinity,
+                    child: SelectableText(
+                      lyrics.plainLyrics ?? '',
+                      style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                            fontSize: (Theme.of(context).textTheme.bodyLarge?.fontSize ?? 16) * 2,
+                            height: 1.8,
+                            letterSpacing: 0.3,
+                          ),
+                      textAlign: TextAlign.left,
+                    ),
                   ),
                 ),
               ),
@@ -205,17 +211,6 @@ class _LyricsScreenState extends State<LyricsScreen> {
                               fontWeight: FontWeight.w700,
                             ),
                       ),
-                      if (widget.trackName.isNotEmpty) ...[
-                        const SizedBox(height: 4),
-                        Text(
-                          widget.trackName,
-                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
-                              ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ],
                     ],
                   ),
                 ),
