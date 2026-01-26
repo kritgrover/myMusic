@@ -17,7 +17,8 @@ A full-stack application for searching YouTube, downloading music, playing audio
 │   │   │   ├── genre_screen.dart          # Genre-based music browsing
 │   │   │   ├── made_for_you_screen.dart   # Personalized recommendations
 │   │   │   ├── spotify_playlist_screen.dart
-│   │   │   └── csv_upload_screen.dart     # CSV playlist import
+│   │   │   ├── csv_upload_screen.dart     # CSV playlist import
+│   │   │   └── lyrics_screen.dart         # Lyrics display with sync
 │   │   ├── services/            # API and state management
 │   │   │   ├── api_service.dart           # Backend API client
 │   │   │   ├── recommendation_service.dart # Spotify recommendations
@@ -25,8 +26,9 @@ A full-stack application for searching YouTube, downloading music, playing audio
 │   │   │   ├── queue_service.dart         # Queue management
 │   │   │   ├── playlist_service.dart      # Playlist operations
 │   │   │   ├── recently_played_service.dart
+│   │   │   ├── lyrics_service.dart        # Lyrics fetching and management
 │   │   │   └── album_cover_cache.dart
-│   │   ├── models/              # Data models (Playlist, QueueItem)
+│   │   ├── models/              # Data models (Playlist, QueueItem, Lyrics)
 │   │   └── widgets/             # Reusable UI components
 │   │       ├── horizontal_song_list.dart
 │   │       ├── genre_card.dart
@@ -36,6 +38,7 @@ A full-stack application for searching YouTube, downloading music, playing audio
 │   ├── app.py                   # Main API server
 │   ├── spotify_service.py       # Spotify Web API integration
 │   ├── download_service.py      # YouTube download handling
+│   ├── lyrics_service.py        # LRCLIB lyrics API integration
 │   ├── database.py              # SQLite database for history/cache
 │   ├── config.py                # Configuration (Spotify credentials)
 │   ├── downloads/               # Downloaded audio files
@@ -70,6 +73,16 @@ A full-stack application for searching YouTube, downloading music, playing audio
 - 📊 **Listening History**: Tracks play history to improve recommendations
 - 🎼 **Genre Preferences**: Learns your favorite genres over time
 - 🖼️ **Album Artwork**: Automatic album cover fetching from iTunes and Spotify
+
+### Lyrics Integration
+- 🎤 **Lyrics Display**: View lyrics for currently playing tracks
+- ⏱️ **Synced Lyrics**: Real-time synchronized lyrics that highlight as the song plays (LRC format)
+- 🎯 **Clickable Lyrics**: Tap on any lyric line to seek to that timestamp in the song
+- 📝 **Plain Lyrics**: Fallback to plain text lyrics when synced lyrics aren't available
+- 🔄 **Auto-fetch**: Lyrics are automatically fetched when opening the lyrics view
+- 💾 **Caching**: Lyrics are cached for 7 days to improve performance
+- 🎹 **Instrumental Detection**: Detects and displays when a track is instrumental
+- 🌐 **LRCLIB Integration**: Powered by the LRCLIB API for comprehensive lyrics database
 
 ## Quick Start
 
@@ -185,6 +198,11 @@ CLIENT_SECRET=your_client_secret
 | GET | `/recommendations/genres` | Get list of available genres |
 | GET | `/recommendations/browse/new-releases` | Get new album releases |
 
+### Lyrics Endpoints
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/lyrics` | Get lyrics for a track (query params: `track_name`, `artist_name`, `album_name` (optional), `duration` (optional)) |
+
 ### Other Endpoints
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -200,6 +218,7 @@ CLIENT_SECRET=your_client_secret
 - ffmpeg
 - FastAPI
 - mutagen
+- httpx (for lyrics API requests)
 - spotipy (for Spotify integration)
 - python-dotenv
 
@@ -212,12 +231,14 @@ CLIENT_SECRET=your_client_secret
 - The backend uses yt-dlp to search and download from YouTube
 - Downloaded files are saved in `backend/downloads/`
 - Playlists are stored in `backend/playlists.json`
-- Listening history and Spotify cache are stored in `backend/music_app.db` (SQLite)
+- Listening history, Spotify cache, and lyrics cache are stored in `backend/music_app.db` (SQLite)
 - Audio metadata is automatically embedded using mutagen
 - The app supports both local file playback and streaming from YouTube
 - The app requires network access to connect to the backend API
 - The frontend works on web, desktop (Windows/macOS/Linux), and mobile platforms
 - Spotify integration is optional but enables personalized recommendations
+- Lyrics are fetched from LRCLIB API and cached for 7 days to reduce API calls
+- Synced lyrics (LRC format) enable real-time highlighting and click-to-seek functionality
 
 ## Troubleshooting
 
@@ -235,6 +256,8 @@ CLIENT_SECRET=your_client_secret
 - **Audio won't play**: Ensure the backend is serving files correctly
 - **Build errors**: Run `flutter clean` and `flutter pub get`
 - **Recommendations not loading**: Check that Spotify is configured in the backend
+- **Lyrics not loading**: Ensure the backend has network access to reach LRCLIB API
+- **Synced lyrics not working**: Verify the track has synced lyrics available and the player is actively playing
 
 ## License
 

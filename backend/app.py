@@ -14,6 +14,7 @@ import httpx
 from download_service import DownloadService
 from database import db
 from spotify_service import spotify_service
+from lyrics_service import lyrics_service
 from mutagen.mp4 import MP4
 from mutagen.easyid3 import EasyID3
 from mutagen.id3 import ID3, APIC
@@ -1294,6 +1295,34 @@ def get_spotify_playlist_tracks(playlist_id: str):
         return tracks
     except Exception as e:
         print(f"Error getting playlist tracks: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Lyrics Endpoints
+
+@app.get("/lyrics")
+def get_lyrics(track_name: str, artist_name: str = "", 
+               album_name: str = "", duration: Optional[int] = None):
+    """Get lyrics for a song from LRCLIB"""
+    try:
+        if not track_name or not artist_name:
+            raise HTTPException(status_code=400, detail="track_name and artist_name are required")
+        
+        lyrics = lyrics_service.get_lyrics(
+            track_name=track_name,
+            artist_name=artist_name,
+            album_name=album_name or "",
+            duration=duration
+        )
+        
+        if lyrics:
+            return lyrics
+        else:
+            raise HTTPException(status_code=404, detail="Lyrics not found")
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error getting lyrics: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

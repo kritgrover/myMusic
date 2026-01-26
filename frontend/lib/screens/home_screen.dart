@@ -6,6 +6,7 @@ import 'csv_upload_screen.dart';
 import 'playlist_detail_screen.dart';
 import '../widgets/bottom_player.dart';
 import '../widgets/queue_panel.dart';
+import 'lyrics_screen.dart';
 import '../widgets/csv_progress_bar.dart';
 import '../widgets/download_progress_bar.dart';
 import '../widgets/not_found_songs_dialog.dart';
@@ -14,6 +15,7 @@ import '../widgets/album_cover.dart';
 import '../widgets/playlist_selection_dialog.dart';
 import '../services/player_state_service.dart';
 import '../services/queue_service.dart';
+import '../services/lyrics_service.dart';
 import '../services/api_service.dart';
 import '../services/playlist_service.dart';
 import '../services/recently_played_service.dart';
@@ -39,7 +41,9 @@ class _HomeScreenState extends State<HomeScreen> {
   late final RecentlyPlayedService _recentlyPlayedService;
   late final PlayerStateService _playerStateService;
   final QueueService _queueService = QueueService();
+  final LyricsService _lyricsService = LyricsService();
   bool _showQueuePanel = false;
+  bool _showLyrics = false;
   StreamSubscription? _completionSubscription;
   DateTime? _lastCompletionTime;
   int? _lastCompletedIndex;
@@ -86,6 +90,9 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     _recentlyPlayedService = RecentlyPlayedService();
     _playerStateService = PlayerStateService(recentlyPlayedService: _recentlyPlayedService);
+
+    // Listen for track changes to update lyrics panel
+    _playerStateService.addListener(_onTrackChanged);
 
     // Listen for song completion and auto-play next song in queue
     _completionSubscription = _playerStateService.audioPlayer.completionStream.listen((_) {
@@ -166,6 +173,25 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildCurrentScreen() {
+    // If lyrics is shown, show lyrics screen (applies to all tabs)
+    if (_showLyrics && _playerStateService.currentTrackName != null && _playerStateService.currentTrackArtist != null) {
+      final currentItem = _queueService.currentItem;
+      return LyricsScreen(
+        trackName: _playerStateService.currentTrackName!,
+        artistName: _playerStateService.currentTrackArtist ?? '',
+        albumName: currentItem?.album,
+        duration: null,
+        lyricsService: _lyricsService,
+        playerStateService: _playerStateService,
+        embedded: true,
+        onBack: () {
+          setState(() {
+            _showLyrics = false;
+          });
+        },
+      );
+    }
+
     switch (_currentIndex) {
       case 0:
         // If Made for You is selected, show that screen
@@ -1335,6 +1361,21 @@ class _HomeScreenState extends State<HomeScreen> {
                           _showQueuePanel = !_showQueuePanel;
                         });
                       },
+                      onLyricsToggle: () {
+                        setState(() {
+                          _showLyrics = !_showLyrics;
+                          // Fetch lyrics when opening screen
+                          if (_showLyrics && _playerStateService.currentTrackName != null && _playerStateService.currentTrackArtist != null) {
+                            final currentItem = _queueService.currentItem;
+                            _lyricsService.fetchLyrics(
+                              _playerStateService.currentTrackName!,
+                              _playerStateService.currentTrackArtist ?? '',
+                              albumName: currentItem?.album,
+                              duration: null,
+                            );
+                          }
+                        });
+                      },
                     );
                   },
                 ),
@@ -1362,6 +1403,19 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  void _onTrackChanged() {
+    // If lyrics screen is open, fetch lyrics for the new track
+    if (_showLyrics && _playerStateService.currentTrackName != null && _playerStateService.currentTrackArtist != null) {
+      final currentItem = _queueService.currentItem;
+      _lyricsService.fetchLyrics(
+        _playerStateService.currentTrackName!,
+        _playerStateService.currentTrackArtist ?? '',
+        albumName: currentItem?.album,
+        duration: null,
+      );
+    }
+  }
+
   @override
   void dispose() {
     _completionSubscription?.cancel();
@@ -1369,6 +1423,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _downloadProgressTimer?.cancel();
     _searchController.dispose();
     _recentlyPlayedService.removeListener(_onRecentlyPlayedChanged);
+    _playerStateService.removeListener(_onTrackChanged);
     _playerStateService.dispose();
     _queueService.dispose();
     super.dispose();

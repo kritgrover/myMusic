@@ -14,6 +14,7 @@ class BottomPlayer extends StatefulWidget {
   final QueueService? queueService;
   final PlayerStateService? playerStateService;
   final VoidCallback? onQueueToggle;
+  final VoidCallback? onLyricsToggle;
 
   const BottomPlayer({
     super.key,
@@ -23,6 +24,7 @@ class BottomPlayer extends StatefulWidget {
     this.queueService,
     this.playerStateService,
     this.onQueueToggle,
+    this.onLyricsToggle,
   });
 
   @override
@@ -78,6 +80,7 @@ class _BottomPlayerState extends State<BottomPlayer> {
     _stateSubscription?.cancel();
     super.dispose();
   }
+
 
   String _formatDuration(Duration duration) {
     try {
@@ -460,6 +463,17 @@ class _BottomPlayerState extends State<BottomPlayer> {
                               ],
                             );
                           },
+                        ),
+                      // Lyrics button (mic icon)
+                      if (hasTrack && widget.onLyricsToggle != null)
+                        IconButton(
+                          icon: const Icon(Icons.mic, size: 20),
+                          onPressed: widget.onLyricsToggle,
+                          tooltip: 'Lyrics',
+                          constraints: const BoxConstraints(
+                            minWidth: 48,
+                            minHeight: 48,
+                          ),
                         ),
                       if (widget.queueService != null && widget.onQueueToggle != null)
                         ListenableBuilder(
