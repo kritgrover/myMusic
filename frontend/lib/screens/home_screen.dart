@@ -1357,28 +1357,20 @@ class _HomeScreenState extends State<HomeScreen> {
                       onQueueToggle: () {
                         setState(() {
                           _showQueuePanel = !_showQueuePanel;
-                          // Close lyrics screen when opening queue
-                          if (_showQueuePanel) {
-                            _showLyrics = false;
-                          }
                         });
                       },
                       onLyricsToggle: () {
                         setState(() {
                           _showLyrics = !_showLyrics;
-                          // Close queue panel when opening lyrics
-                          if (_showLyrics) {
-                            _showQueuePanel = false;
-                            // Fetch lyrics when opening screen
-                            if (_playerStateService.currentTrackName != null && _playerStateService.currentTrackArtist != null) {
-                              final currentItem = _queueService.currentItem;
-                              _lyricsService.fetchLyrics(
-                                _playerStateService.currentTrackName!,
-                                _playerStateService.currentTrackArtist ?? '',
-                                albumName: currentItem?.album,
-                                duration: null,
-                              );
-                            }
+                          // Fetch lyrics when opening screen
+                          if (_showLyrics && _playerStateService.currentTrackName != null && _playerStateService.currentTrackArtist != null) {
+                            final currentItem = _queueService.currentItem;
+                            _lyricsService.fetchLyrics(
+                              _playerStateService.currentTrackName!,
+                              _playerStateService.currentTrackArtist ?? '',
+                              albumName: currentItem?.album,
+                              duration: null,
+                            );
                           }
                         });
                       },
