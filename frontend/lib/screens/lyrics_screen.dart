@@ -44,6 +44,7 @@ class _LyricsScreenState extends State<LyricsScreen> {
   Duration _currentPosition = Duration.zero;
   final ScrollController _scrollController = ScrollController();
   int _highlightedLineIndex = -1;
+  int _hoveredLineIndex = -1; // Track which line is being hovered
   List<LrcLine> _syncedLines = [];
   List<String> _plainLines = [];
 
@@ -366,26 +367,92 @@ class _LyricsScreenState extends State<LyricsScreen> {
       letterSpacing: 0.3,
     );
 
+    // Faint purple color for hover (same as highlight but slightly different)
+    final hoverColor = Theme.of(context).colorScheme.secondary.withOpacity(0.5);
+    
     return ListView.builder(
       controller: _scrollController,
       padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 24.0),
       itemCount: itemCount,
       itemBuilder: (context, index) {
         final isHighlighted = index == _highlightedLineIndex;
+        final isHovered = index == _hoveredLineIndex;
         final text = hasSynced ? _syncedLines[index].text : _plainLines[index];
+        final timestamp = hasSynced ? _syncedLines[index].timestamp : null;
+        
+        // Make lyrics clickable only if synced lyrics are available and player service exists
+        final isClickable = hasSynced && timestamp != null && widget.playerStateService != null;
+        
+        // Determine text color: highlighted > hovered > normal
+        Color textColor;
+        if (isHighlighted) {
+          textColor = highlightColor;
+        } else if (isHovered && isClickable) {
+          textColor = hoverColor;
+        } else {
+          textColor = Theme.of(context).colorScheme.onSurface.withOpacity(0.9);
+        }
+        
+        Widget textWidget = isClickable
+            ? Text(
+                text,
+                style: baseTextStyle?.copyWith(
+                  color: textColor,
+                  fontWeight: isHighlighted ? FontWeight.w500 : FontWeight.normal,
+                ),
+                textAlign: TextAlign.left,
+              )
+            : SelectableText(
+                text,
+                style: baseTextStyle?.copyWith(
+                  color: textColor,
+                  fontWeight: isHighlighted ? FontWeight.w500 : FontWeight.normal,
+                ),
+                textAlign: TextAlign.left,
+              );
+        
+        // Wrap in InkWell if clickable for better tap handling
+        if (isClickable) {
+          textWidget = InkWell(
+            onTap: () async {
+              // Seek to the timestamp of this lyric line
+              if (widget.playerStateService != null && timestamp != null) {
+                try {
+                  // Use the seek method directly, same as bottom player
+                  await widget.playerStateService!.audioPlayer.seek(timestamp);
+                  print('Seeking to: ${timestamp.inSeconds}s');
+                } catch (e) {
+                  // Log seek errors for debugging
+                  print('Seek error: $e');
+                }
+              }
+            },
+            splashColor: Colors.transparent,
+            highlightColor: Colors.transparent,
+            hoverColor: Colors.transparent,
+            child: MouseRegion(
+              cursor: SystemMouseCursors.click,
+              onEnter: (_) {
+                setState(() {
+                  _hoveredLineIndex = index;
+                });
+              },
+              onExit: (_) {
+                setState(() {
+                  _hoveredLineIndex = -1;
+                });
+              },
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4.0, vertical: 2.0),
+                child: textWidget,
+              ),
+            ),
+          );
+        }
         
         return Padding(
           padding: const EdgeInsets.symmetric(vertical: 8.0),
-          child: SelectableText(
-            text,
-            style: baseTextStyle?.copyWith(
-              color: isHighlighted 
-                  ? highlightColor 
-                  : Theme.of(context).colorScheme.onSurface.withOpacity(0.9),
-              fontWeight: isHighlighted ? FontWeight.w500 : FontWeight.normal,
-            ),
-            textAlign: TextAlign.left,
-          ),
+          child: textWidget,
         );
       },
     );
