@@ -198,6 +198,7 @@ class _HomeScreenState extends State<HomeScreen> {
             albumName: currentItem?.album,
             duration: null,
             lyricsService: _lyricsService,
+            playerStateService: _playerStateService,
             embedded: true,
             onBack: () {
               setState(() {

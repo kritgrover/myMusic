@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'dart:async';
 import '../services/lyrics_service.dart';
+import '../services/player_state_service.dart';
 import '../models/lyrics.dart';
 
 class LyricsScreen extends StatefulWidget {
@@ -9,6 +11,7 @@ class LyricsScreen extends StatefulWidget {
   final String? albumName;
   final int? duration;
   final LyricsService lyricsService;
+  final PlayerStateService? playerStateService; // Optional for syncing
   final bool embedded; // If true, don't show Scaffold/AppBar
   final VoidCallback? onBack; // Callback for back button when embedded
 
@@ -19,6 +22,7 @@ class LyricsScreen extends StatefulWidget {
     this.albumName,
     this.duration,
     required this.lyricsService,
+    this.playerStateService,
     this.embedded = false,
     this.onBack,
   });
@@ -27,7 +31,22 @@ class LyricsScreen extends StatefulWidget {
   State<LyricsScreen> createState() => _LyricsScreenState();
 }
 
+// LRC line with timestamp
+class LrcLine {
+  final Duration timestamp;
+  final String text;
+
+  LrcLine(this.timestamp, this.text);
+}
+
 class _LyricsScreenState extends State<LyricsScreen> {
+  StreamSubscription<Duration>? _positionSubscription;
+  Duration _currentPosition = Duration.zero;
+  final ScrollController _scrollController = ScrollController();
+  int _highlightedLineIndex = -1;
+  List<LrcLine> _syncedLines = [];
+  List<String> _plainLines = [];
+
   @override
   void initState() {
     super.initState();
@@ -35,6 +54,38 @@ class _LyricsScreenState extends State<LyricsScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _fetchLyrics();
     });
+    
+    // Listen to position stream if player service is available
+    if (widget.playerStateService != null) {
+      _positionSubscription = widget.playerStateService!.audioPlayer.positionStream.listen((position) {
+        if (mounted) {
+          setState(() {
+            _currentPosition = position;
+            _updateHighlightedLine();
+          });
+        }
+      });
+    }
+    
+    // Listen to lyrics service changes to re-parse when lyrics are fetched
+    widget.lyricsService.addListener(_onLyricsChanged);
+  }
+
+  void _onLyricsChanged() {
+    if (mounted) {
+      _parseLyrics();
+      setState(() {
+        _highlightedLineIndex = -1; // Reset highlight
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _positionSubscription?.cancel();
+    widget.lyricsService.removeListener(_onLyricsChanged);
+    _scrollController.dispose();
+    super.dispose();
   }
 
   Future<void> _fetchLyrics() async {
@@ -43,6 +94,114 @@ class _LyricsScreenState extends State<LyricsScreen> {
       widget.artistName,
       albumName: widget.albumName,
       duration: widget.duration,
+    );
+    
+    // Parse lyrics after fetching
+    if (mounted) {
+      _parseLyrics();
+    }
+  }
+
+  void _parseLyrics() {
+    final lyrics = widget.lyricsService.currentLyrics;
+    if (lyrics == null) return;
+
+    // Try to parse synced lyrics first
+    if (lyrics.hasSyncedLyrics && lyrics.syncedLyrics != null) {
+      _syncedLines = _parseLrc(lyrics.syncedLyrics!);
+      if (_syncedLines.isNotEmpty) {
+        return; // Use synced lyrics
+      }
+    }
+
+    // Fall back to plain lyrics, split by lines
+    if (lyrics.plainLyrics != null && lyrics.plainLyrics!.isNotEmpty) {
+      _plainLines = lyrics.plainLyrics!.split('\n').where((line) => line.trim().isNotEmpty).toList();
+    }
+  }
+
+  List<LrcLine> _parseLrc(String lrcText) {
+    final lines = <LrcLine>[];
+    final lrcLines = lrcText.split('\n');
+    
+    for (final line in lrcLines) {
+      final trimmed = line.trim();
+      if (trimmed.isEmpty) continue;
+      
+      // Parse LRC format: [mm:ss.xx] or [mm:ss] text
+      final regex = RegExp(r'\[(\d{2}):(\d{2})(?:\.(\d{2,3}))?\]\s*(.*)');
+      final match = regex.firstMatch(trimmed);
+      
+      if (match != null) {
+        final minutes = int.tryParse(match.group(1) ?? '0') ?? 0;
+        final seconds = int.tryParse(match.group(2) ?? '0') ?? 0;
+        final milliseconds = int.tryParse(match.group(3) ?? '0') ?? 0;
+        final text = match.group(4)?.trim() ?? '';
+        
+        if (text.isNotEmpty) {
+          // Convert milliseconds (could be 2 or 3 digits)
+          final ms = milliseconds < 100 ? milliseconds * 10 : milliseconds;
+          final timestamp = Duration(
+            minutes: minutes,
+            seconds: seconds,
+            milliseconds: ms,
+          );
+          lines.add(LrcLine(timestamp, text));
+        }
+      }
+    }
+    
+    // Sort by timestamp
+    lines.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+    return lines;
+  }
+
+  void _updateHighlightedLine() {
+    if (_syncedLines.isEmpty) {
+      // For plain lyrics, estimate based on position and duration
+      // This is a simple approximation - could be improved
+      return;
+    }
+
+    int newIndex = -1;
+    for (int i = 0; i < _syncedLines.length; i++) {
+      if (_currentPosition >= _syncedLines[i].timestamp) {
+        // Check if there's a next line, and if current position is before it
+        if (i + 1 < _syncedLines.length) {
+          if (_currentPosition < _syncedLines[i + 1].timestamp) {
+            newIndex = i;
+            break;
+          }
+        } else {
+          // Last line
+          newIndex = i;
+          break;
+        }
+      }
+    }
+
+    if (newIndex != _highlightedLineIndex && newIndex >= 0) {
+      _highlightedLineIndex = newIndex;
+      _scrollToLine(newIndex);
+    }
+  }
+
+  void _scrollToLine(int lineIndex) {
+    if (!_scrollController.hasClients) return;
+    
+    // Calculate approximate position (each line is roughly 40-50 pixels with current styling)
+    final lineHeight = 50.0;
+    final targetOffset = lineIndex * lineHeight;
+    final maxScroll = _scrollController.position.maxScrollExtent;
+    final viewportHeight = _scrollController.position.viewportDimension;
+    
+    // Center the highlighted line in viewport
+    final centeredOffset = (targetOffset - viewportHeight / 2).clamp(0.0, maxScroll);
+    
+    _scrollController.animateTo(
+      centeredOffset,
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeInOut,
     );
   }
 
@@ -124,6 +283,11 @@ class _LyricsScreenState extends State<LyricsScreen> {
             );
           }
 
+          // Parse lyrics if not already parsed
+          if (_syncedLines.isEmpty && _plainLines.isEmpty) {
+            _parseLyrics();
+          }
+
           return Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -162,26 +326,56 @@ class _LyricsScreenState extends State<LyricsScreen> {
               const Divider(height: 1),
               // Lyrics content
               Expanded(
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.all(24.0),
-                  child: SizedBox(
-                    width: double.infinity,
-                    child: SelectableText(
-                      lyrics.plainLyrics ?? '',
-                      style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                            fontSize: (Theme.of(context).textTheme.bodyLarge?.fontSize ?? 16) * 2,
-                            height: 1.8,
-                            letterSpacing: 0.3,
-                          ),
-                      textAlign: TextAlign.left,
-                    ),
-                  ),
-                ),
+                child: _buildLyricsContent(context),
               ),
             ],
           );
         },
       );
+  }
+
+  Widget _buildLyricsContent(BuildContext context) {
+    // Use synced lyrics if available, otherwise use plain lyrics
+    final hasSynced = _syncedLines.isNotEmpty;
+    final itemCount = hasSynced ? _syncedLines.length : _plainLines.length;
+    
+    if (itemCount == 0) {
+      return const Center(
+        child: Text('No lyrics to display'),
+      );
+    }
+
+    // Faint purple color for highlighting (secondaryAccent with low opacity)
+    final highlightColor = Theme.of(context).colorScheme.secondary.withOpacity(0.35);
+    final baseTextStyle = Theme.of(context).textTheme.bodyLarge?.copyWith(
+      fontSize: (Theme.of(context).textTheme.bodyLarge?.fontSize ?? 16) * 1.5,
+      height: 1.8,
+      letterSpacing: 0.3,
+    );
+
+    return ListView.builder(
+      controller: _scrollController,
+      padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 24.0),
+      itemCount: itemCount,
+      itemBuilder: (context, index) {
+        final isHighlighted = index == _highlightedLineIndex;
+        final text = hasSynced ? _syncedLines[index].text : _plainLines[index];
+        
+        return Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8.0),
+          child: SelectableText(
+            text,
+            style: baseTextStyle?.copyWith(
+              color: isHighlighted 
+                  ? highlightColor 
+                  : Theme.of(context).colorScheme.onSurface.withOpacity(0.9),
+              fontWeight: isHighlighted ? FontWeight.w500 : FontWeight.normal,
+            ),
+            textAlign: TextAlign.left,
+          ),
+        );
+      },
+    );
   }
 
   @override
