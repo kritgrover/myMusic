@@ -17,4 +17,9 @@ class Settings:
     # Database Configuration
     DATABASE_URL = "sqlite:///./music_app.db"
 
+    # Auth Configuration
+    JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "change-me-in-production")
+    JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
+    JWT_EXPIRE_MINUTES = int(os.getenv("JWT_EXPIRE_MINUTES", "10080"))
+
 settings = Settings()
