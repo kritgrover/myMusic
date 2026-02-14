@@ -90,12 +90,34 @@ class DownloadService:
         else:
             cmd = [self.yt_dlp_exe]
         cmd.append("--no-config")
+        cmd.append("--force-ipv4")
         # Only add ffmpeg-location if ffmpeg is in a specific directory
         ffmpeg_dir = os.path.dirname(self.ffmpeg_exe) if isinstance(self.ffmpeg_exe, str) and os.path.dirname(self.ffmpeg_exe) else ""
         if ffmpeg_dir and os.path.isdir(ffmpeg_dir):
             cmd.append(f"--ffmpeg-location={ffmpeg_dir}")
         cmd += extra_args + [search_spec]
         return cmd
+
+    def _run_yt_with_strategies(self, base_args, search_spec, creationflags):
+        """Run yt-dlp with a few fallback strategies for YouTube 403 issues."""
+        strategies = [
+            [],
+            ["--extractor-args", "youtube:player_client=android"],
+            ["--cookies-from-browser", "chrome"],
+            ["--cookies-from-browser", "edge"],
+            ["--extractor-args", "youtube:player_client=android", "--cookies-from-browser", "chrome"],
+        ]
+        errors = []
+        for strategy_args in strategies:
+            cmd = self._yt_cmd(strategy_args + base_args, search_spec)
+            ret = subprocess.run(cmd, capture_output=True, text=True, creationflags=creationflags)
+            if ret.returncode == 0:
+                return ret
+            stderr = (ret.stderr or "").strip()
+            if stderr:
+                errors.append(stderr)
+        error_detail = "\n---\n".join(errors[-3:]) if errors else "Unknown yt-dlp error"
+        raise Exception(error_detail)
     
     def _get_creationflags(self):
         """Get subprocess creation flags for the current platform."""
@@ -312,14 +334,15 @@ class DownloadService:
             raise Exception(f"yt-dlp not found. Please install it: pip install yt-dlp")
         
         # Get the best audio stream URL using -g flag
-        cmd_stream = self._yt_cmd([
+        base_args = [
             '-f', '140/251/bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio[acodec*=mp4a]/bestaudio/best',
             '-g'
-        ], url)
-        
-        ret = subprocess.run(cmd_stream, capture_output=True, text=True, creationflags=creationflags)
-        if ret.returncode != 0:
-            raise Exception(f"Failed to get streaming URL: {ret.stderr}")
+        ]
+
+        try:
+            ret = self._run_yt_with_strategies(base_args, url, creationflags)
+        except Exception as e:
+            raise Exception(f"Failed to get streaming URL: {e}")
         
         streaming_url = ret.stdout.strip()
         if not streaming_url or not streaming_url.startswith('http'):
@@ -339,18 +362,19 @@ class DownloadService:
         temp_output = output_path + ".tmp"
         
         # Download as M4A (AAC) which is browser-compatible
-        cmd_download = self._yt_cmd([
+        base_args = [
             '-f', 'bestaudio[ext=m4a]/bestaudio',
             '--remux-video', 'm4a',
             '--postprocessor-args', 'ffmpeg:-movflags +faststart',
             '--output', temp_output,
             '--no-playlist',
             '--no-warnings',
-        ], url)
-        
-        ret = subprocess.run(cmd_download, capture_output=True, text=True, creationflags=creationflags)
-        if ret.returncode != 0:
-            raise Exception(f"Failed to download for streaming: {ret.stderr}")
+        ]
+
+        try:
+            self._run_yt_with_strategies(base_args, url, creationflags)
+        except Exception as e:
+            raise Exception(f"Failed to download for streaming: {e}")
         
         # Move temp file to final location
         if os.path.exists(temp_output):
