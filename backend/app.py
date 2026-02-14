@@ -1,11 +1,12 @@
 from fastapi import FastAPI, HTTPException, Request, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse, Response
+from starlette.background import BackgroundTask
 from pydantic import BaseModel
 from typing import List, Optional, Dict
 import os
-import json
 import uuid
+import hashlib
 import shutil
 import asyncio
 from datetime import datetime
@@ -15,6 +16,7 @@ from download_service import DownloadService
 from database import db
 from spotify_service import spotify_service
 from lyrics_service import lyrics_service
+from auth_utils import create_access_token, decode_access_token
 from mutagen.mp4 import MP4
 from mutagen.easyid3 import EasyID3
 from mutagen.id3 import ID3, APIC
@@ -75,7 +77,6 @@ app.add_middleware(
 # Initialize download service
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DOWNLOADS_DIR = os.path.join(BASE_DIR, "downloads")
-PLAYLISTS_FILE = os.path.join(BASE_DIR, "playlists.json")
 os.makedirs(DOWNLOADS_DIR, exist_ok=True)
 
 download_service = DownloadService(output_dir=DOWNLOADS_DIR)
@@ -170,31 +171,100 @@ class AddSongRequest(BaseModel):
     duration: Optional[float] = 0.0
 
 
-# Helper functions for playlists
-def load_playlists() -> Dict:
-    if os.path.exists(PLAYLISTS_FILE):
-        try:
-            with open(PLAYLISTS_FILE, 'r') as f:
-                return json.load(f)
-        except json.JSONDecodeError as e:
-            print(f"Warning: Playlists file is corrupted: {e}. Starting fresh.")
-            return {}
-        except PermissionError as e:
-            print(f"Error: Cannot read playlists file - permission denied: {e}")
-            return {}
-        except Exception as e:
-            print(f"Error loading playlists: {e}")
-            return {}
-    return {}
+class LoginRequest(BaseModel):
+    username: str
+    password: str
 
-def save_playlists(playlists_data: Dict):
-    with open(PLAYLISTS_FILE, 'w') as f:
-        json.dump(playlists_data, f, indent=4)
+class LoginResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    user: Dict[str, object]
+
+
+def _require_current_user(request: Request) -> Dict:
+    current_user = getattr(request.state, "current_user", None)
+    if not current_user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    return current_user
+
+
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    public_paths = {
+        "/",
+        "/auth/login",
+        "/openapi.json",
+        "/docs",
+        "/docs/oauth2-redirect",
+        "/redoc",
+    }
+    path = request.url.path
+    is_public_media_get = (
+        request.method == "GET"
+        and (
+            path.startswith("/stream/")
+            or (path.startswith("/downloads/") and not path.startswith("/downloads/progress/"))
+            or (path.startswith("/playlists/") and path.endswith("/cover"))
+        )
+    )
+
+    if request.method == "OPTIONS":
+        return await call_next(request)
+
+    if path in public_paths or is_public_media_get:
+        return await call_next(request)
+
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        return Response(status_code=401, content="Unauthorized")
+
+    token = auth_header.split(" ", 1)[1]
+    payload = decode_access_token(token)
+    if not payload or "sub" not in payload:
+        return Response(status_code=401, content="Unauthorized")
+
+    try:
+        user_id = int(payload["sub"])
+    except (TypeError, ValueError):
+        return Response(status_code=401, content="Unauthorized")
+
+    user = db.get_user_by_id(user_id)
+    if not user or not user.get("is_active"):
+        return Response(status_code=401, content="Unauthorized")
+
+    request.state.current_user = user
+    return await call_next(request)
 
 
 @app.get("/")
 def read_root():
     return {"message": "Music Download API", "status": "running"}
+
+
+@app.post("/auth/login", response_model=LoginResponse)
+def login(request: LoginRequest):
+    user = db.verify_user_credentials(request.username, request.password)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+
+    token = create_access_token(user_id=user["id"], username=user["username"])
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "user": {
+            "id": user["id"],
+            "username": user["username"],
+        },
+    }
+
+
+@app.get("/auth/me")
+def get_me(request: Request):
+    current_user = _require_current_user(request)
+    return {
+        "id": current_user["id"],
+        "username": current_user["username"],
+    }
 
 
 @app.post("/search", response_model=List[VideoInfo])
@@ -227,6 +297,23 @@ async def stream_audio_options(encoded_url: str):
 @app.get("/stream/{encoded_url:path}")
 async def stream_audio(encoded_url: str, request: Request):
     """Stream audio directly from YouTube with range request support"""
+    def stream_from_cached_download(youtube_url: str):
+        """Fallback: download browser-compatible audio file and serve it locally."""
+        stream_cache_dir = os.path.join(DOWNLOADS_DIR, "_stream_cache")
+        os.makedirs(stream_cache_dir, exist_ok=True)
+        cache_key = hashlib.sha256(youtube_url.encode("utf-8")).hexdigest()
+        cache_file = os.path.join(stream_cache_dir, f"{cache_key}.m4a")
+
+        if not os.path.exists(cache_file):
+            download_service.download_for_streaming(youtube_url, cache_file)
+
+        return FileResponse(
+            cache_file,
+            media_type="audio/mp4",
+            filename=os.path.basename(cache_file),
+            headers={"Accept-Ranges": "bytes"},
+        )
+
     try:
         # Decode the URL
         import urllib.parse
@@ -243,69 +330,84 @@ async def stream_audio(encoded_url: str, request: Request):
         # Get range header from request if present
         range_header = request.headers.get("range")
         
-        # Proxy the stream with range request support
-        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=10.0)) as client:
-            headers = {}
-            if range_header:
-                headers["Range"] = range_header
-            
-            # Make request to YouTube's streaming URL
-            async with client.stream("GET", stream_url, headers=headers, follow_redirects=True) as response:
-                # Determine content type
-                content_type = response.headers.get("Content-Type", "audio/mp4")
-                
-                # Build response headers
-                response_headers = {
-                    "Content-Type": content_type,
-                    "Accept-Ranges": "bytes",
-                    "Access-Control-Allow-Origin": "*",
-                    "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
-                    "Access-Control-Allow-Headers": "Range, Content-Type",
-                    "Access-Control-Expose-Headers": "Content-Length, Content-Range, Accept-Ranges",
-                }
-                
-                # Check if it is a range request
-                is_range_request = range_header is not None and response.status_code == 206
-                
-                if is_range_request:
-                    # Read all bytes from the range response
-                    content_bytes = b""
-                    async for chunk in response.aiter_bytes():
-                        content_bytes += chunk
-                    
-                    # Copy Content-Range
-                    if "Content-Range" in response.headers:
-                        response_headers["Content-Range"] = response.headers["Content-Range"]
-                    
-                    # Set Content-Length to actual bytes read
-                    response_headers["Content-Length"] = str(len(content_bytes))
-                    
-                    # Return the response with the content bytes
-                    return Response(
-                        content=content_bytes,
-                        status_code=206,
-                        headers=response_headers,
-                        media_type=content_type,
-                    )
-                else:
-                    # For full requests (200), use chunked encoding
-                    async def generate_full():
-                        try:
-                            async for chunk in response.aiter_bytes():
-                                yield chunk
-                        except Exception as e:
-                            print(f"Error streaming full: {e}")
-                            raise
-                    
-                    return StreamingResponse(
-                        generate_full(),
-                        status_code=response.status_code,
-                        headers=response_headers,
-                    )
+        # Build upstream request headers. YouTube is sensitive to missing browser-like headers.
+        upstream_headers = {
+            "Accept": "*/*",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Referer": "https://www.youtube.com/",
+            "Origin": "https://www.youtube.com",
+            "User-Agent": request.headers.get(
+                "user-agent",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            ),
+        }
+        if range_header:
+            upstream_headers["Range"] = range_header
+
+        client = httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=10.0))
+        request_obj = client.build_request("GET", stream_url, headers=upstream_headers)
+        response = await client.send(request_obj, stream=True, follow_redirects=True)
+
+        # Determine content type
+        content_type = response.headers.get("Content-Type", "audio/mp4")
+
+        # Build response headers
+        response_headers = {
+            "Content-Type": content_type,
+            "Accept-Ranges": "bytes",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+            "Access-Control-Allow-Headers": "Range, Content-Type",
+            "Access-Control-Expose-Headers": "Content-Length, Content-Range, Accept-Ranges",
+        }
+
+        # If upstream denies/blocks, fall back to cached local stream file.
+        if response.status_code >= 400:
+            await response.aclose()
+            await client.aclose()
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(None, stream_from_cached_download, youtube_url)
+
+        # Check if it is a range request
+        is_range_request = range_header is not None and response.status_code == 206
+        if is_range_request:
+            try:
+                content_bytes = await response.aread()
+                if "Content-Range" in response.headers:
+                    response_headers["Content-Range"] = response.headers["Content-Range"]
+                response_headers["Content-Length"] = str(len(content_bytes))
+                return Response(
+                    content=content_bytes,
+                    status_code=206,
+                    headers=response_headers,
+                    media_type=content_type,
+                )
+            finally:
+                await response.aclose()
+                await client.aclose()
+
+        async def close_resources():
+            await response.aclose()
+            await client.aclose()
+
+        return StreamingResponse(
+            response.aiter_bytes(),
+            status_code=response.status_code,
+            headers=response_headers,
+            background=BackgroundTask(close_resources),
+        )
+    except HTTPException:
+        raise
     except Exception as e:
-        import traceback
-        print(f"Stream error: {traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=str(e))
+        try:
+            # Last-resort fallback for any transient upstream/proxy failures.
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(None, stream_from_cached_download, youtube_url)
+        except Exception:
+            import traceback
+            print(f"Stream error: {traceback.format_exc()}")
+            raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/download")
@@ -496,31 +598,7 @@ def delete_download_file(filename: str):
         os.remove(file_path)
         
         # Update all playlists to clear filename for tracks that reference this file
-        normalized_deleted_filename = filename.replace('\\', '/')
-        playlists = load_playlists()
-        playlists_updated = False
-        
-        for playlist_id, playlist_data in playlists.items():
-            songs_updated = False
-            for song in playlist_data.get("songs", []):
-                song_filename = song.get("filename", "")
-                if song_filename:
-                    # Normalize the song filename for comparison
-                    normalized_song_filename = song_filename.replace('\\', '/')
-                    # Check if filenames match
-                    if normalized_song_filename == normalized_deleted_filename or \
-                       normalized_song_filename.endswith('/' + normalized_deleted_filename) or \
-                       normalized_song_filename == os.path.basename(normalized_deleted_filename):
-                        song["filename"] = ""
-                        song["file_path"] = ""
-                        songs_updated = True
-            
-            if songs_updated:
-                playlist_data["updatedAt"] = datetime.now().isoformat()
-                playlists_updated = True
-        
-        if playlists_updated:
-            save_playlists(playlists)
+        db.clear_song_file_references(filename)
         
         return {"success": True, "message": f"File {filename} deleted successfully"}
     except Exception as e:
@@ -757,7 +835,7 @@ def format_playlist_name(csv_filename: str) -> str:
 
 
 @app.post("/csv/convert/{filename}")
-def convert_csv_file(filename: str, request: CsvConversionRequest):
+def convert_csv_file(filename: str, request: CsvConversionRequest, http_request: Request):
     """Convert a specific CSV file to playlist entries (search only, no download)"""
     import time
     try:
@@ -803,19 +881,13 @@ def convert_csv_file(filename: str, request: CsvConversionRequest):
         
         try:
             # Create the playlist
-            playlists = load_playlists()
-            playlist_id = str(uuid.uuid4())
-            now = datetime.now().isoformat()
-            new_playlist = {
-                "id": playlist_id,
-                "name": playlist_name,
-                "songs": [],
-                "createdAt": now,
-                "updatedAt": now,
-                "coverImage": None
-            }
-            playlists[playlist_id] = new_playlist
-            save_playlists(playlists)
+            current_user = _require_current_user(http_request)
+            playlist = db.create_playlist(
+                user_id=current_user["id"],
+                name=playlist_name,
+                playlist_id=str(uuid.uuid4()),
+            )
+            playlist_id = playlist["id"]
             playlist_created = True
             
             # Add all found tracks to the playlist (with URLs but no filenames)
@@ -836,11 +908,7 @@ def convert_csv_file(filename: str, request: CsvConversionRequest):
                 }
                 
                 # Add song to playlist
-                playlists[playlist_id]["songs"].append(song)
-            
-            # Update playlist timestamp
-            playlists[playlist_id]["updatedAt"] = datetime.now().isoformat()
-            save_playlists(playlists)
+                db.add_song_to_playlist(current_user["id"], playlist_id, song)
         except Exception as e:
             print(f"Warning: Could not create playlist: {e}")
             import traceback
@@ -926,46 +994,34 @@ def list_csv_converted_files(playlist_name: str):
 # Playlist Endpoints
 
 @app.get("/playlists", response_model=Dict[str, Playlist])
-def get_playlists():
+def get_playlists(request: Request):
     """Get all playlists"""
-    return load_playlists()
+    current_user = _require_current_user(request)
+    return db.get_all_playlists(current_user["id"])
 
 
 @app.post("/playlists", response_model=Playlist)
-def create_playlist(request: CreatePlaylistRequest):
+def create_playlist(request: CreatePlaylistRequest, http_request: Request):
     """Create a new playlist"""
-    playlists = load_playlists()
-    playlist_id = str(uuid.uuid4())
-    now = datetime.now().isoformat()
-    new_playlist = {
-        "id": playlist_id,
-        "name": request.name,
-        "songs": [],
-        "createdAt": now,
-        "updatedAt": now,
-        "coverImage": None
-    }
-    playlists[playlist_id] = new_playlist
-    save_playlists(playlists)
-    return new_playlist
+    current_user = _require_current_user(http_request)
+    return db.create_playlist(user_id=current_user["id"], name=request.name, playlist_id=str(uuid.uuid4()))
 
 
 @app.get("/playlists/{playlist_id}", response_model=Playlist)
-def get_playlist(playlist_id: str):
+def get_playlist(playlist_id: str, request: Request):
     """Get a specific playlist"""
-    playlists = load_playlists()
-    if playlist_id not in playlists:
+    current_user = _require_current_user(request)
+    playlist = db.get_playlist(current_user["id"], playlist_id)
+    if not playlist:
         raise HTTPException(status_code=404, detail="Playlist not found")
-    return playlists[playlist_id]
+    return playlist
 
 
 @app.delete("/playlists/{playlist_id}")
-def delete_playlist(playlist_id: str):
+def delete_playlist(playlist_id: str, request: Request):
     """Delete a playlist"""
-    playlists = load_playlists()
-    if playlist_id in playlists:
-        del playlists[playlist_id]
-        save_playlists(playlists)
+    current_user = _require_current_user(request)
+    if db.delete_playlist(current_user["id"], playlist_id):
         return {"success": True}
     raise HTTPException(status_code=404, detail="Playlist not found")
 
@@ -974,79 +1030,55 @@ class UpdatePlaylistRequest(BaseModel):
     name: str
 
 @app.put("/playlists/{playlist_id}", response_model=Playlist)
-def update_playlist(playlist_id: str, request: UpdatePlaylistRequest):
+def update_playlist(playlist_id: str, request: UpdatePlaylistRequest, http_request: Request):
     """Update a playlist (e.g. rename)"""
-    playlists = load_playlists()
-    if playlist_id not in playlists:
+    current_user = _require_current_user(http_request)
+    updated = db.update_playlist_name(current_user["id"], playlist_id, request.name)
+    if not updated:
         raise HTTPException(status_code=404, detail="Playlist not found")
-    
-    playlists[playlist_id]["name"] = request.name
-    playlists[playlist_id]["updatedAt"] = datetime.now().isoformat()
-    save_playlists(playlists)
-    return playlists[playlist_id]
+    playlist = db.get_playlist(current_user["id"], playlist_id)
+    if not playlist:
+        raise HTTPException(status_code=404, detail="Playlist not found")
+    return playlist
 
 @app.post("/playlists/{playlist_id}/songs", response_model=Playlist)
-def add_song_to_playlist(playlist_id: str, song: AddSongRequest):
+def add_song_to_playlist(playlist_id: str, song: AddSongRequest, request: Request):
     """Add a song to a playlist"""
-    playlists = load_playlists()
-    if playlist_id not in playlists:
+    current_user = _require_current_user(request)
+    playlist = db.add_song_to_playlist(current_user["id"], playlist_id, song.model_dump())
+    if not playlist:
         raise HTTPException(status_code=404, detail="Playlist not found")
-    
-    # Check if song already exists in playlist
-    for existing_song in playlists[playlist_id]["songs"]:
-        if existing_song.get("id") == song.id:
-             return playlists[playlist_id]
-        # Also check filename if it's a downloaded file
-        if song.filename and existing_song.get("filename") == song.filename:
-             return playlists[playlist_id]
-
-    playlists[playlist_id]["songs"].append(song.model_dump())
-    playlists[playlist_id]["updatedAt"] = datetime.now().isoformat()
-    save_playlists(playlists)
-    return playlists[playlist_id]
+    return playlist
 
 
 @app.delete("/playlists/{playlist_id}/songs/{song_id}", response_model=Playlist)
-def remove_song_from_playlist(playlist_id: str, song_id: str):
+def remove_song_from_playlist(playlist_id: str, song_id: str, request: Request):
     """Remove a song from a playlist"""
-    playlists = load_playlists()
-    if playlist_id not in playlists:
+    current_user = _require_current_user(request)
+    playlist = db.remove_song_from_playlist(current_user["id"], playlist_id, song_id)
+    if not playlist:
         raise HTTPException(status_code=404, detail="Playlist not found")
-    
-    initial_count = len(playlists[playlist_id]["songs"])
-    playlists[playlist_id]["songs"] = [
-        s for s in playlists[playlist_id]["songs"] 
-        if s["id"] != song_id
-    ]
-    
-    if len(playlists[playlist_id]["songs"]) != initial_count:
-        playlists[playlist_id]["updatedAt"] = datetime.now().isoformat()
-
-    save_playlists(playlists)
-    return playlists[playlist_id]
+    return playlist
 
 
 class UpdatePlaylistCoverRequest(BaseModel):
     coverImage: Optional[str] = None  # URL or base64 data URI
 
 @app.put("/playlists/{playlist_id}/cover")
-def update_playlist_cover(playlist_id: str, request: UpdatePlaylistCoverRequest):
+def update_playlist_cover(playlist_id: str, request: UpdatePlaylistCoverRequest, http_request: Request):
     """Update playlist cover image (URL or base64 data URI)"""
-    playlists = load_playlists()
-    if playlist_id not in playlists:
+    current_user = _require_current_user(http_request)
+    if not db.update_playlist_cover(current_user["id"], playlist_id, request.coverImage):
         raise HTTPException(status_code=404, detail="Playlist not found")
-    
-    playlists[playlist_id]["coverImage"] = request.coverImage
-    playlists[playlist_id]["updatedAt"] = datetime.now().isoformat()
-    save_playlists(playlists)
     return {"success": True, "coverImage": request.coverImage}
 
 
 @app.post("/playlists/{playlist_id}/cover/upload")
-async def upload_playlist_cover(playlist_id: str, file: UploadFile = File(...)):
+async def upload_playlist_cover(playlist_id: str, request: Request, file: UploadFile = File(...)):
     """Upload a cover image file for a playlist"""
-    playlists = load_playlists()
-    if playlist_id not in playlists:
+    current_user = _require_current_user(request)
+    playlist = db.get_playlist(current_user["id"], playlist_id)
+    if not playlist:
         raise HTTPException(status_code=404, detail="Playlist not found")
     
     # Validate file type
@@ -1069,21 +1101,20 @@ async def upload_playlist_cover(playlist_id: str, file: UploadFile = File(...)):
     # Store relative path or URL
     cover_url = f"/playlists/{playlist_id}/cover"
     
-    playlists[playlist_id]["coverImage"] = cover_url
-    playlists[playlist_id]["updatedAt"] = datetime.now().isoformat()
-    save_playlists(playlists)
+    db.update_playlist_cover(current_user["id"], playlist_id, cover_url)
     
     return {"success": True, "coverImage": cover_url}
 
 
 @app.get("/playlists/{playlist_id}/cover")
-def get_playlist_cover(playlist_id: str):
+def get_playlist_cover(playlist_id: str, request: Request):
     """Get playlist cover image"""
-    playlists = load_playlists()
-    if playlist_id not in playlists:
+    current_user = _require_current_user(request)
+    playlist = db.get_playlist(current_user["id"], playlist_id)
+    if not playlist:
         raise HTTPException(status_code=404, detail="Playlist not found")
     
-    cover_image = playlists[playlist_id].get("coverImage")
+    cover_image = playlist.get("coverImage")
     if not cover_image:
         raise HTTPException(status_code=404, detail="Cover image not found")
     
@@ -1134,9 +1165,10 @@ class HistoryEntry(BaseModel):
     spotify_id: Optional[str] = None
 
 @app.post("/history")
-def add_history(entry: HistoryEntry):
+def add_history(entry: HistoryEntry, request: Request):
     """Log a song play to history and track genre preferences"""
     try:
+        current_user = _require_current_user(request)
         artist_id = None
         
         # If no spotify_id provided, try to find it
@@ -1147,6 +1179,7 @@ def add_history(entry: HistoryEntry):
                 artist_id = track_info.get('artist_id')
         
         db.add_history(
+            current_user["id"],
             entry.song_title, 
             entry.artist, 
             entry.duration_played, 
@@ -1157,7 +1190,7 @@ def add_history(entry: HistoryEntry):
         if artist_id:
             genres = spotify_service.get_artist_genres(artist_id)
             if genres:
-                db.increment_genres(genres)
+                db.increment_genres(current_user["id"], genres)
         
         return {"success": True, "spotify_id": entry.spotify_id}
     except Exception as e:
@@ -1165,11 +1198,12 @@ def add_history(entry: HistoryEntry):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/recommendations/daily")
-def get_daily_mix():
+def get_daily_mix(request: Request):
     """Get personalized song recommendations based on history and genre preferences"""
     try:
         # Get recent history for seeding
-        recent = db.get_recent_history(limit=5)
+        current_user = _require_current_user(request)
+        recent = db.get_recent_history(current_user["id"], limit=5)
         
         seed_tracks = []
         
@@ -1183,7 +1217,7 @@ def get_daily_mix():
                     seed_tracks.append(track_info['id'])
         
         # Get user's top genres for better personalization
-        top_genres = db.get_top_genres(limit=2)
+        top_genres = db.get_top_genres(current_user["id"], limit=2)
         
         # Get recommendations with tracks + genres (much better than random playlists!)
         recommendations = spotify_service.get_recommendations(
@@ -1198,14 +1232,15 @@ def get_daily_mix():
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/recommendations/for-you")
-def get_personalized_recommendations():
+def get_personalized_recommendations(request: Request):
     """Smart recommendations based on user's genre preferences + listening history"""
     try:
         # Get user's top genres
-        top_genres = db.get_top_genres(limit=3)
+        current_user = _require_current_user(request)
+        top_genres = db.get_top_genres(current_user["id"], limit=3)
         
         # Get recent track seeds
-        recent = db.get_recent_history(limit=5)
+        recent = db.get_recent_history(current_user["id"], limit=5)
         seed_tracks = [r['spotify_id'] for r in recent if r.get('spotify_id')][:2]
         
         # If user has no history, return trending/popular
@@ -1225,10 +1260,11 @@ def get_personalized_recommendations():
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/recommendations/new-releases")
-def get_new_releases():
+def get_new_releases(request: Request):
     """Get new releases from top artists in history"""
     try:
-        top_artists = db.get_top_artists(limit=5)
+        current_user = _require_current_user(request)
+        top_artists = db.get_top_artists(current_user["id"], limit=5)
         all_releases = []
         
         for artist in top_artists:
