@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 import 'screens/home_screen.dart';
+import 'screens/login_screen.dart';
+import 'services/auth_http_client.dart';
+import 'services/auth_service.dart';
 
 // Modern color palette for dedicated music listeners
 const Color primaryAccent = Color(0xFF6366F1); // Indigo
@@ -16,8 +19,25 @@ void main() {
   runApp(const MyApp());
 }
 
-class MyApp extends StatelessWidget {
+class MyApp extends StatefulWidget {
   const MyApp({super.key});
+
+  @override
+  State<MyApp> createState() => _MyAppState();
+}
+
+class _MyAppState extends State<MyApp> {
+  final AuthService _authService = AuthService();
+
+  @override
+  void initState() {
+    super.initState();
+    AuthHttpClient.shared.configure(
+      tokenProvider: () => _authService.token,
+      onUnauthorized: _authService.handleUnauthorized,
+    );
+    _authService.initialize();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -203,7 +223,22 @@ class MyApp extends StatelessWidget {
           space: 1,
         ),
       ),
-      home: const HomeScreen(),
+      home: ListenableBuilder(
+        listenable: _authService,
+        builder: (context, _) {
+          if (!_authService.isInitialized || _authService.isLoading) {
+            return const Scaffold(
+              body: Center(
+                child: CircularProgressIndicator(),
+              ),
+            );
+          }
+          if (_authService.isAuthenticated) {
+            return HomeScreen(authService: _authService);
+          }
+          return LoginScreen(authService: _authService);
+        },
+      ),
     );
   }
 }
