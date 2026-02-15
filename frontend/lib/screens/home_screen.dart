@@ -3,7 +3,6 @@ import 'dart:async';
 import 'downloads_screen.dart';
 import 'playlists_screen.dart';
 import 'csv_upload_screen.dart';
-import 'playlist_detail_screen.dart';
 import '../widgets/bottom_player.dart';
 import '../widgets/queue_panel.dart';
 import 'lyrics_screen.dart';
@@ -21,8 +20,8 @@ import '../services/playlist_service.dart';
 import '../services/recently_played_service.dart';
 import '../models/queue_item.dart';
 import '../models/playlist.dart';
-import '../utils/song_display_utils.dart';
 import '../services/recommendation_service.dart';
+import '../services/auth_service.dart';
 import '../widgets/horizontal_song_list.dart';
 import '../widgets/genre_card.dart';
 import 'genre_screen.dart';
@@ -30,7 +29,9 @@ import 'spotify_playlist_screen.dart';
 import 'made_for_you_screen.dart';
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key});
+  final AuthService authService;
+
+  const HomeScreen({super.key, required this.authService});
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -88,8 +89,11 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
-    _recentlyPlayedService = RecentlyPlayedService();
-    _playerStateService = PlayerStateService(recentlyPlayedService: _recentlyPlayedService);
+    _recentlyPlayedService = RecentlyPlayedService(userNamespace: widget.authService.username ?? 'default');
+    _playerStateService = PlayerStateService(
+      recentlyPlayedService: _recentlyPlayedService,
+      recommendationService: _recommendationService,
+    );
 
     // Listen for track changes to update lyrics panel
     _playerStateService.addListener(_onTrackChanged);
@@ -1167,11 +1171,10 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _startProgressPolling(String filename) {
-    final apiService = ApiService();
     _csvProgressTimer?.cancel();
     _csvProgressTimer = Timer.periodic(const Duration(milliseconds: 500), (timer) async {
       try {
-        final progress = await apiService.getCsvProgress(filename);
+        final progress = await _apiService.getCsvProgress(filename);
         if (mounted) {
           setState(() {
             _csvProgress = progress;
@@ -1275,6 +1278,15 @@ class _HomeScreenState extends State<HomeScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('myMusic'),
+        actions: [
+          IconButton(
+            tooltip: 'Logout',
+            icon: const Icon(Icons.logout),
+            onPressed: () async {
+              await widget.authService.logout();
+            },
+          ),
+        ],
       ),
       body: Row(
         children: [
