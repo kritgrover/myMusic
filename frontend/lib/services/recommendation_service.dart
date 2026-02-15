@@ -1,12 +1,15 @@
 import 'dart:convert';
-import 'package:http/http.dart' as http;
 import '../config.dart';
 import '../models/playlist.dart';
+import 'auth_http_client.dart';
 
 class RecommendationService {
   final String baseUrl;
+  final AuthHttpClient _client;
 
-  RecommendationService({String? baseUrl}) : baseUrl = baseUrl ?? AppConfig.apiBaseUrl;
+  RecommendationService({String? baseUrl, AuthHttpClient? client})
+      : baseUrl = baseUrl ?? AppConfig.apiBaseUrl,
+        _client = client ?? AuthHttpClient.shared;
 
   Future<void> logHistory({
     required String title,
@@ -15,7 +18,7 @@ class RecommendationService {
     String? spotifyId,
   }) async {
     try {
-      await http.post(
+      await _client.post(
         Uri.parse('$baseUrl/history'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
@@ -32,7 +35,7 @@ class RecommendationService {
 
   Future<List<PlaylistTrack>> getDailyMix() async {
     try {
-      final response = await http.get(Uri.parse('$baseUrl/recommendations/daily'));
+      final response = await _client.get(Uri.parse('$baseUrl/recommendations/daily'));
       
       if (response.statusCode == 200) {
         final List<dynamic> data = jsonDecode(response.body);
@@ -56,7 +59,7 @@ class RecommendationService {
 
   Future<List<dynamic>> getNewReleases() async {
     try {
-      final response = await http.get(Uri.parse('$baseUrl/recommendations/new-releases'));
+      final response = await _client.get(Uri.parse('$baseUrl/recommendations/new-releases'));
       
       if (response.statusCode == 200) {
         return jsonDecode(response.body);
@@ -70,7 +73,7 @@ class RecommendationService {
 
   Future<List<PlaylistTrack>> getForYou() async {
     try {
-      final response = await http.get(Uri.parse('$baseUrl/recommendations/for-you'));
+      final response = await _client.get(Uri.parse('$baseUrl/recommendations/for-you'));
       
       if (response.statusCode == 200) {
         final List<dynamic> data = jsonDecode(response.body);
@@ -94,7 +97,7 @@ class RecommendationService {
 
   Future<List<PlaylistTrack>> getGenreTracks(String genre) async {
     try {
-      final response = await http.get(Uri.parse('$baseUrl/recommendations/genre/$genre'));
+      final response = await _client.get(Uri.parse('$baseUrl/recommendations/genre/$genre'));
       
       if (response.statusCode == 200) {
         final List<dynamic> data = jsonDecode(response.body);
@@ -119,7 +122,7 @@ class RecommendationService {
   Future<List<dynamic>> getGenrePlaylists(String genre) async {
     try {
       // Use the legacy playlists endpoint
-      final response = await http.get(Uri.parse('$baseUrl/recommendations/genre/$genre/playlists'));
+      final response = await _client.get(Uri.parse('$baseUrl/recommendations/genre/$genre/playlists'));
       
       if (response.statusCode == 200) {
         return jsonDecode(response.body);
@@ -133,7 +136,7 @@ class RecommendationService {
 
   Future<List<String>> getAvailableGenres() async {
     try {
-      final response = await http.get(Uri.parse('$baseUrl/recommendations/genres'));
+      final response = await _client.get(Uri.parse('$baseUrl/recommendations/genres'));
       
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
@@ -148,7 +151,7 @@ class RecommendationService {
 
   Future<List<dynamic>> getBrowseNewReleases({String country = 'US'}) async {
     try {
-      final response = await http.get(Uri.parse('$baseUrl/recommendations/browse/new-releases?country=$country'));
+      final response = await _client.get(Uri.parse('$baseUrl/recommendations/browse/new-releases?country=$country'));
       
       if (response.statusCode == 200) {
         return jsonDecode(response.body);
@@ -162,7 +165,7 @@ class RecommendationService {
 
   Future<List<PlaylistTrack>> getSpotifyPlaylistTracks(String playlistId) async {
     try {
-      final response = await http.get(Uri.parse('$baseUrl/recommendations/playlist/$playlistId'));
+      final response = await _client.get(Uri.parse('$baseUrl/recommendations/playlist/$playlistId'));
       
       if (response.statusCode == 200) {
         final List<dynamic> data = jsonDecode(response.body);

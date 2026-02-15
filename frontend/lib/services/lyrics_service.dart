@@ -1,16 +1,19 @@
 import 'package:flutter/foundation.dart';
 import 'dart:convert';
-import 'package:http/http.dart' as http;
 import '../config.dart';
 import '../models/lyrics.dart';
+import 'auth_http_client.dart';
 
 class LyricsService extends ChangeNotifier {
   final String baseUrl;
+  final AuthHttpClient _client;
   Lyrics? _currentLyrics;
   bool _isLoading = false;
   String? _error;
 
-  LyricsService({String? baseUrl}) : baseUrl = baseUrl ?? AppConfig.apiBaseUrl;
+  LyricsService({String? baseUrl, AuthHttpClient? client})
+      : baseUrl = baseUrl ?? AppConfig.apiBaseUrl,
+        _client = client ?? AuthHttpClient.shared;
 
   Lyrics? get currentLyrics => _currentLyrics;
   bool get isLoading => _isLoading;
@@ -41,7 +44,7 @@ class LyricsService extends ChangeNotifier {
         if (duration != null) 'duration': duration.toString(),
       });
 
-      final response = await http.get(uri);
+      final response = await _client.get(uri);
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body) as Map<String, dynamic>;

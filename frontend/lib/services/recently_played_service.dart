@@ -1,7 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
-import '../models/playlist.dart';
 
 enum RecentlyPlayedType {
   song,
@@ -64,13 +63,14 @@ class RecentlyPlayedItem {
 }
 
 class RecentlyPlayedService extends ChangeNotifier {
-  static const String _storageKey = 'recently_played';
+  final String _storageKey;
   static const int _maxItems = 4;
   List<RecentlyPlayedItem> _items = [];
 
   List<RecentlyPlayedItem> get items => List.unmodifiable(_items);
 
-  RecentlyPlayedService() {
+  RecentlyPlayedService({String userNamespace = 'default'})
+      : _storageKey = 'recently_played_$userNamespace' {
     _loadItems();
   }
 

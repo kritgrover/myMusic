@@ -8,15 +8,18 @@ import '../config.dart';
 class PlayerStateService extends ChangeNotifier {
   final AudioPlayerService _audioPlayerService = AudioPlayerService();
   final RecentlyPlayedService? _recentlyPlayedService;
-  final RecommendationService _recommendationService = RecommendationService();
+  final RecommendationService _recommendationService;
   String? _currentTrackName;
 
   String? _currentTrackArtist;
   String? _currentTrackFilename;
   StreamSubscription? _stateSubscription;
 
-  PlayerStateService({RecentlyPlayedService? recentlyPlayedService})
-      : _recentlyPlayedService = recentlyPlayedService {
+  PlayerStateService({
+    RecentlyPlayedService? recentlyPlayedService,
+    RecommendationService? recommendationService,
+  })  : _recentlyPlayedService = recentlyPlayedService,
+        _recommendationService = recommendationService ?? RecommendationService() {
     // Listen to player state changes to update UI
     _stateSubscription = _audioPlayerService.stateStream.listen((_) {
       notifyListeners();

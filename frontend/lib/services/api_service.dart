@@ -2,15 +2,19 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../config.dart';
+import 'auth_http_client.dart';
 
 class ApiService {
   final String baseUrl;
+  final AuthHttpClient _client;
   
-  ApiService({String? baseUrl}) : baseUrl = baseUrl ?? AppConfig.apiBaseUrl;
+  ApiService({String? baseUrl, AuthHttpClient? client})
+      : baseUrl = baseUrl ?? AppConfig.apiBaseUrl,
+        _client = client ?? AuthHttpClient.shared;
   
   Future<List<VideoInfo>> searchYoutube(String query) async {
     try {
-      final response = await http.post(
+      final response = await _client.post(
         Uri.parse('$baseUrl/search'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
@@ -60,7 +64,7 @@ class ApiService {
     bool embedThumbnail = false,
   }) async {
     try {
-      final response = await http.post(
+      final response = await _client.post(
         Uri.parse('$baseUrl/download'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
@@ -87,7 +91,7 @@ class ApiService {
   
   Future<List<DownloadedFile>> listDownloads() async {
     try {
-      final response = await http.get(Uri.parse('$baseUrl/downloads'));
+      final response = await _client.get(Uri.parse('$baseUrl/downloads'));
       
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
@@ -104,7 +108,7 @@ class ApiService {
   Future<void> deleteDownload(String filename) async {
     try {
       final encodedFilename = Uri.encodeComponent(filename);
-      final response = await http.delete(Uri.parse('$baseUrl/downloads/$encodedFilename'));
+      final response = await _client.delete(Uri.parse('$baseUrl/downloads/$encodedFilename'));
       
       if (response.statusCode != 200) {
         final error = jsonDecode(response.body);
@@ -117,7 +121,7 @@ class ApiService {
 
   Future<Map<String, dynamic>> startBatchDownload(List<Map<String, dynamic>> downloads) async {
     try {
-      final response = await http.post(
+      final response = await _client.post(
         Uri.parse('$baseUrl/downloads/batch'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
@@ -138,7 +142,7 @@ class ApiService {
 
   Future<DownloadProgress> getDownloadProgress(String downloadId) async {
     try {
-      final response = await http.get(Uri.parse('$baseUrl/downloads/progress/$downloadId'));
+      final response = await _client.get(Uri.parse('$baseUrl/downloads/progress/$downloadId'));
       
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
@@ -155,11 +159,9 @@ class ApiService {
   Future<CsvUploadResult> uploadCsv(String filePath) async {
     try {
       final file = await http.MultipartFile.fromPath('file', filePath);
-      final request = http.MultipartRequest('POST', Uri.parse('$baseUrl/csv/upload'));
+      final request = _client.multipartRequest('POST', Uri.parse('$baseUrl/csv/upload'));
       request.files.add(file);
-      
-      final streamedResponse = await request.send();
-      final response = await http.Response.fromStream(streamedResponse);
+      final response = await _client.sendMultipart(request);
       
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
@@ -180,11 +182,9 @@ class ApiService {
         fileBytes,
         filename: filename,
       );
-      final request = http.MultipartRequest('POST', Uri.parse('$baseUrl/csv/upload'));
+      final request = _client.multipartRequest('POST', Uri.parse('$baseUrl/csv/upload'));
       request.files.add(file);
-      
-      final streamedResponse = await request.send();
-      final response = await http.Response.fromStream(streamedResponse);
+      final response = await _client.sendMultipart(request);
       
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
@@ -200,7 +200,7 @@ class ApiService {
 
   Future<CsvProgress> getCsvProgress(String filename) async {
     try {
-      final response = await http.get(Uri.parse('$baseUrl/csv/progress/$filename'));
+      final response = await _client.get(Uri.parse('$baseUrl/csv/progress/$filename'));
       
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
@@ -220,7 +220,7 @@ class ApiService {
     List<String> variants = const [],
   }) async {
     try {
-      final response = await http.post(
+      final response = await _client.post(
         Uri.parse('$baseUrl/csv/convert/$filename'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
@@ -245,7 +245,7 @@ class ApiService {
 
   Future<void> addSongToPlaylist(String playlistId, Map<String, dynamic> songData) async {
     try {
-      final response = await http.post(
+      final response = await _client.post(
         Uri.parse('$baseUrl/playlists/$playlistId/songs'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode(songData),
@@ -263,7 +263,7 @@ class ApiService {
   Future<List<CsvConvertedFile>> listCsvFiles(String playlistName) async {
     try {
       final encodedName = Uri.encodeComponent(playlistName);
-      final response = await http.get(Uri.parse('$baseUrl/csv/files/$encodedName'));
+      final response = await _client.get(Uri.parse('$baseUrl/csv/files/$encodedName'));
       
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
@@ -296,7 +296,7 @@ class ApiService {
         if (album.isNotEmpty) 'album': album,
       });
       
-      final response = await http.get(uri);
+      final response = await _client.get(uri);
       
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);

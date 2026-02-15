@@ -2,15 +2,19 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../config.dart';
 import '../models/playlist.dart';
+import 'auth_http_client.dart';
 
 class PlaylistService {
   final String baseUrl;
+  final AuthHttpClient _client;
 
-  PlaylistService({String? baseUrl}) : baseUrl = baseUrl ?? AppConfig.apiBaseUrl;
+  PlaylistService({String? baseUrl, AuthHttpClient? client})
+      : baseUrl = baseUrl ?? AppConfig.apiBaseUrl,
+        _client = client ?? AuthHttpClient.shared;
 
   Future<List<Playlist>> getAllPlaylists() async {
     try {
-      final response = await http.get(Uri.parse('$baseUrl/playlists'));
+      final response = await _client.get(Uri.parse('$baseUrl/playlists'));
 
       if (response.statusCode == 200) {
         final Map<String, dynamic> data = jsonDecode(response.body);
@@ -25,7 +29,7 @@ class PlaylistService {
 
   Future<Playlist?> getPlaylist(String id) async {
     try {
-      final response = await http.get(Uri.parse('$baseUrl/playlists/$id'));
+      final response = await _client.get(Uri.parse('$baseUrl/playlists/$id'));
       if (response.statusCode == 200) {
         return Playlist.fromJson(jsonDecode(response.body));
       }
@@ -36,7 +40,7 @@ class PlaylistService {
   }
 
   Future<Playlist> createPlaylist(String name) async {
-    final response = await http.post(
+    final response = await _client.post(
       Uri.parse('$baseUrl/playlists'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({'name': name}),
@@ -54,7 +58,7 @@ class PlaylistService {
   }
 
   Future<void> updatePlaylist(String id, String name) async {
-    final response = await http.put(
+    final response = await _client.put(
       Uri.parse('$baseUrl/playlists/$id'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({'name': name}),
@@ -66,14 +70,14 @@ class PlaylistService {
   }
 
   Future<void> deletePlaylist(String id) async {
-    final response = await http.delete(Uri.parse('$baseUrl/playlists/$id'));
+    final response = await _client.delete(Uri.parse('$baseUrl/playlists/$id'));
     if (response.statusCode != 200) {
        throw Exception('Failed to delete playlist');
     }
   }
 
   Future<void> addTrackToPlaylist(String playlistId, PlaylistTrack track) async {
-    final response = await http.post(
+    final response = await _client.post(
       Uri.parse('$baseUrl/playlists/$playlistId/songs'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode(track.toJson()),
@@ -85,7 +89,7 @@ class PlaylistService {
   }
 
   Future<void> removeTrackFromPlaylist(String playlistId, String trackId) async {
-    final response = await http.delete(
+    final response = await _client.delete(
       Uri.parse('$baseUrl/playlists/$playlistId/songs/$trackId'),
     );
     
@@ -95,7 +99,7 @@ class PlaylistService {
   }
 
   Future<void> updatePlaylistCover(String playlistId, String? coverImageUrl) async {
-    final response = await http.put(
+    final response = await _client.put(
       Uri.parse('$baseUrl/playlists/$playlistId/cover'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({'coverImage': coverImageUrl}),
@@ -107,42 +111,19 @@ class PlaylistService {
   }
 
   Future<void> uploadPlaylistCover(String playlistId, List<int> imageBytes, String filename) async {
-    final request = http.MultipartRequest(
+    final request = _client.multipartRequest(
       'POST',
       Uri.parse('$baseUrl/playlists/$playlistId/cover/upload'),
     );
-    
-    // Determine content type from filename extension
-    String contentType = 'image/jpeg'; // default
-    if (filename.contains('.')) {
-      final ext = filename.toLowerCase().split('.').last;
-      switch (ext) {
-        case 'jpg':
-        case 'jpeg':
-          contentType = 'image/jpeg';
-          break;
-        case 'png':
-          contentType = 'image/png';
-          break;
-        case 'gif':
-          contentType = 'image/gif';
-          break;
-        case 'webp':
-          contentType = 'image/webp';
-          break;
-      }
-    }
     
     final file = http.MultipartFile.fromBytes(
       'file',
       imageBytes,
       filename: filename,
-      contentType: http.MediaType.parse(contentType),
     );
     request.files.add(file);
     
-    final streamedResponse = await request.send();
-    final response = await http.Response.fromStream(streamedResponse);
+    final response = await _client.sendMultipart(request);
     
     if (response.statusCode != 200) {
       final errorBody = response.body;
