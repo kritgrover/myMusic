@@ -9,7 +9,7 @@ import uuid
 import hashlib
 import shutil
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 import httpx
 from download_service import DownloadService
@@ -181,6 +181,11 @@ class LoginResponse(BaseModel):
     user: Dict[str, object]
 
 
+class ProfileUpdateRequest(BaseModel):
+    username: str
+    tagline: Optional[str] = ""
+
+
 def _require_current_user(request: Request) -> Dict:
     current_user = getattr(request.state, "current_user", None)
     if not current_user:
@@ -254,6 +259,7 @@ def login(request: LoginRequest):
         "user": {
             "id": user["id"],
             "username": user["username"],
+            "tagline": user.get("tagline") or "",
         },
     }
 
@@ -264,6 +270,52 @@ def get_me(request: Request):
     return {
         "id": current_user["id"],
         "username": current_user["username"],
+        "tagline": current_user.get("tagline") or "",
+    }
+
+
+@app.get("/profile/me")
+def get_profile(request: Request):
+    current_user = _require_current_user(request)
+    profile = db.get_user_profile(current_user["id"])
+    if not profile:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    return {
+        "id": profile["id"],
+        "username": profile["username"],
+        "tagline": profile.get("tagline") or "",
+        "created_at": profile.get("created_at"),
+    }
+
+
+@app.put("/profile/me")
+def update_profile(payload: ProfileUpdateRequest, request: Request):
+    current_user = _require_current_user(request)
+    username = payload.username.strip()
+    if not username:
+        raise HTTPException(status_code=400, detail="Username cannot be empty")
+    tagline = (payload.tagline or "").strip()
+    if len(tagline) > 120:
+        raise HTTPException(status_code=400, detail="Tagline must be 120 characters or less")
+    try:
+        profile = db.update_user_profile(
+            user_id=current_user["id"],
+            username=username,
+            tagline=tagline,
+        )
+    except ValueError as exc:
+        if str(exc) == "username_taken":
+            raise HTTPException(status_code=409, detail="Username is already taken")
+        raise
+
+    if not profile:
+        raise HTTPException(status_code=404, detail="Profile not found")
+
+    return {
+        "id": profile["id"],
+        "username": profile["username"],
+        "tagline": profile.get("tagline") or "",
+        "created_at": profile.get("created_at"),
     }
 
 
@@ -1196,6 +1248,45 @@ def add_history(entry: HistoryEntry, request: Request):
     except Exception as e:
         print(f"Error adding history: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/history/recent")
+def get_recent_history(request: Request, limit: int = 20):
+    current_user = _require_current_user(request)
+    safe_limit = max(1, min(limit, 100))
+    return db.get_recent_history(current_user["id"], limit=safe_limit)
+
+
+@app.get("/analytics/recap")
+def get_analytics_recap(request: Request, period: str = "weekly"):
+    current_user = _require_current_user(request)
+    normalized_period = (period or "weekly").strip().lower()
+    if normalized_period not in {"weekly", "monthly"}:
+        raise HTTPException(status_code=400, detail="period must be weekly or monthly")
+
+    now = datetime.now()
+    start_ts = now - (timedelta(days=7) if normalized_period == "weekly" else timedelta(days=30))
+    start_iso = start_ts.isoformat()
+    end_iso = now.isoformat()
+
+    summary = db.get_history_summary(current_user["id"], start_iso, end_iso)
+    top_artists = db.get_top_artists_in_range(current_user["id"], start_iso, end_iso, limit=5)
+    top_tracks = db.get_top_tracks_in_range(current_user["id"], start_iso, end_iso, limit=5)
+    top_genres = db.get_top_genres(current_user["id"], limit=5)
+
+    return {
+        "period": normalized_period,
+        "start_date": start_iso,
+        "end_date": end_iso,
+        "totals": {
+            "plays": summary["plays"],
+            "minutes": round(summary["total_duration_played"] / 60.0, 1),
+            "unique_artists": summary["unique_artists"],
+        },
+        "top_artists": top_artists,
+        "top_tracks": top_tracks,
+        "top_genres": top_genres,
+    }
 
 @app.get("/recommendations/daily")
 def get_daily_mix(request: Request):

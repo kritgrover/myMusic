@@ -27,6 +27,7 @@ import '../widgets/genre_card.dart';
 import 'genre_screen.dart';
 import 'spotify_playlist_screen.dart';
 import 'made_for_you_screen.dart';
+import 'profile_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   final AuthService authService;
@@ -305,6 +306,12 @@ class _HomeScreenState extends State<HomeScreen> {
               print('CSV Conversion: All songs found, no dialog needed');
             }
           },
+        );
+      case 4:
+        return ProfileScreen(
+          authService: widget.authService,
+          playerStateService: _playerStateService,
+          queueService: _queueService,
         );
       default:
         return _buildHomeContent();
@@ -1329,6 +1336,11 @@ class _HomeScreenState extends State<HomeScreen> {
                   icon: const Icon(Icons.upload_file_outlined),
                   selectedIcon: const Icon(Icons.upload_file),
                   label: const Text('CSV'),
+                ),
+                NavigationRailDestination(
+                  icon: const Icon(Icons.person_outline),
+                  selectedIcon: const Icon(Icons.person),
+                  label: const Text('User'),
                 ),
               ],
             ),
