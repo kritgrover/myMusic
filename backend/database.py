@@ -34,6 +34,7 @@ class Database:
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )
         ''')
+        self._ensure_column(cursor, "users", "tagline", "TEXT")
 
         # History table
         cursor.execute('''
@@ -155,6 +156,44 @@ class Database:
         conn.close()
         return dict(row) if row else None
 
+    def get_user_profile(self, user_id):
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            '''
+            SELECT id, username, tagline, created_at
+            FROM users
+            WHERE id = ?
+            ''',
+            (user_id,),
+        )
+        row = cursor.fetchone()
+        conn.close()
+        return dict(row) if row else None
+
+    def update_user_profile(self, user_id, username, tagline):
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        safe_tagline = tagline.strip() if tagline else ""
+        try:
+            cursor.execute(
+                '''
+                UPDATE users
+                SET username = ?, tagline = ?
+                WHERE id = ?
+                ''',
+                (username, safe_tagline, user_id),
+            )
+            changed = cursor.rowcount > 0
+            conn.commit()
+            if not changed:
+                return None
+            return self.get_user_profile(user_id)
+        except sqlite3.IntegrityError as exc:
+            raise ValueError("username_taken") from exc
+        finally:
+            conn.close()
+
     def verify_user_credentials(self, username, password):
         user = self.get_user_by_username(username)
         if not user or not user.get("is_active"):
@@ -198,6 +237,72 @@ class Database:
         ORDER BY count DESC 
         LIMIT ?
         ''', (user_id, limit))
+        rows = cursor.fetchall()
+        conn.close()
+        return [dict(row) for row in rows]
+
+    def get_history_summary(self, user_id, start_ts, end_ts):
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            '''
+            SELECT
+                COUNT(*) AS plays,
+                COALESCE(SUM(duration_played), 0.0) AS total_duration_played,
+                COUNT(DISTINCT artist) AS unique_artists
+            FROM history
+            WHERE user_id = ?
+              AND timestamp >= ?
+              AND timestamp < ?
+            ''',
+            (user_id, start_ts, end_ts),
+        )
+        row = cursor.fetchone()
+        conn.close()
+        if not row:
+            return {"plays": 0, "total_duration_played": 0.0, "unique_artists": 0}
+        return {
+            "plays": int(row["plays"] or 0),
+            "total_duration_played": float(row["total_duration_played"] or 0.0),
+            "unique_artists": int(row["unique_artists"] or 0),
+        }
+
+    def get_top_artists_in_range(self, user_id, start_ts, end_ts, limit=5):
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            '''
+            SELECT artist, COUNT(*) AS count
+            FROM history
+            WHERE user_id = ?
+              AND timestamp >= ?
+              AND timestamp < ?
+            GROUP BY artist
+            ORDER BY count DESC
+            LIMIT ?
+            ''',
+            (user_id, start_ts, end_ts, limit),
+        )
+        rows = cursor.fetchall()
+        conn.close()
+        return [dict(row) for row in rows]
+
+    def get_top_tracks_in_range(self, user_id, start_ts, end_ts, limit=5):
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            '''
+            SELECT song_title, artist, COUNT(*) AS count
+            FROM history
+            WHERE user_id = ?
+              AND timestamp >= ?
+              AND timestamp < ?
+            GROUP BY song_title, artist
+            ORDER BY count DESC, song_title ASC
+            LIMIT ?
+            ''',
+            (user_id, start_ts, end_ts, limit),
+        )
         rows = cursor.fetchall()
         conn.close()
         return [dict(row) for row in rows]
