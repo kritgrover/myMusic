@@ -181,11 +181,13 @@ class _HomeScreenState extends State<HomeScreen> {
     // If lyrics is shown, show lyrics screen (applies to all tabs)
     if (_showLyrics && _playerStateService.currentTrackName != null && _playerStateService.currentTrackArtist != null) {
       final currentItem = _queueService.currentItem;
+      final duration = _playerStateService.audioPlayer.duration;
+      final durationSeconds = duration.inSeconds > 0 ? duration.inSeconds : null;
       return LyricsScreen(
         trackName: _playerStateService.currentTrackName!,
         artistName: _playerStateService.currentTrackArtist ?? '',
         albumName: currentItem?.album,
-        duration: null,
+        duration: durationSeconds,
         lyricsService: _lyricsService,
         playerStateService: _playerStateService,
         embedded: true,
@@ -1391,11 +1393,12 @@ class _HomeScreenState extends State<HomeScreen> {
                           // Fetch lyrics when opening screen
                           if (_showLyrics && _playerStateService.currentTrackName != null && _playerStateService.currentTrackArtist != null) {
                             final currentItem = _queueService.currentItem;
+                            final dur = _playerStateService.audioPlayer.duration;
                             _lyricsService.fetchLyrics(
                               _playerStateService.currentTrackName!,
                               _playerStateService.currentTrackArtist ?? '',
                               albumName: currentItem?.album,
-                              duration: null,
+                              duration: dur.inSeconds > 0 ? dur.inSeconds : null,
                             );
                           }
                         });
@@ -1431,11 +1434,12 @@ class _HomeScreenState extends State<HomeScreen> {
     // If lyrics screen is open, fetch lyrics for the new track
     if (_showLyrics && _playerStateService.currentTrackName != null && _playerStateService.currentTrackArtist != null) {
       final currentItem = _queueService.currentItem;
+      final dur = _playerStateService.audioPlayer.duration;
       _lyricsService.fetchLyrics(
         _playerStateService.currentTrackName!,
         _playerStateService.currentTrackArtist ?? '',
         albumName: currentItem?.album,
-        duration: null,
+        duration: dur.inSeconds > 0 ? dur.inSeconds : null,
       );
     }
   }
