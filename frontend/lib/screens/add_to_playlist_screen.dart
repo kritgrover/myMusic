@@ -112,13 +112,29 @@ class _AddToPlaylistScreenState extends State<AddToPlaylistScreen>
 
   Future<void> _addVideoToPlaylist(VideoInfo video) async {
     try {
-      final track = PlaylistTrack.fromVideoInfo(video);
+      final cleaned = await _apiService.cleanMetadata(
+        title: video.title,
+        uploader: video.uploader,
+        videoId: video.id,
+        videoUrl: video.url,
+      );
+
+      final track = PlaylistTrack(
+        id: video.id,
+        title: cleaned['title'] ?? video.title,
+        artist: cleaned['artist'] ?? video.uploader,
+        album: cleaned['album'],
+        filename: '',
+        url: video.url,
+        thumbnail: video.thumbnail,
+        duration: video.duration,
+      );
       await widget.playlistService.addTrackToPlaylist(widget.playlistId, track);
       
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Added "${video.title}" to playlist'),
+            content: Text('Added "${cleaned['title'] ?? video.title}" to playlist'),
             behavior: SnackBarBehavior.floating,
           ),
         );

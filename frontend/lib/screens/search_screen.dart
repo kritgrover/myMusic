@@ -175,14 +175,19 @@ class _SearchScreenState extends State<SearchScreen> {
     }
 
     try {
-      // Get streaming URL from backend - this is fast, no need for loading dialog
-      final result = await _apiService.getStreamingUrl(
-        url: video.url,
+      final cleaned = await _apiService.cleanMetadata(
         title: video.title,
-        artist: video.uploader,
+        uploader: video.uploader,
+        videoId: video.id,
+        videoUrl: video.url,
       );
 
-      // Start streaming immediately - just_audio will handle buffering
+      final result = await _apiService.getStreamingUrl(
+        url: video.url,
+        title: cleaned['title']!,
+        artist: cleaned['artist']!,
+      );
+
       await widget.playerStateService!.streamTrack(
         result.streamingUrl,
         trackName: result.title,
@@ -212,10 +217,18 @@ class _SearchScreenState extends State<SearchScreen> {
         ),
       );
 
+      final cleaned = await _apiService.cleanMetadata(
+        title: video.title,
+        uploader: video.uploader,
+        videoId: video.id,
+        videoUrl: video.url,
+      );
+
       final result = await _apiService.downloadAudio(
         url: video.url,
-        title: video.title,
-        artist: video.uploader,
+        title: cleaned['title']!,
+        artist: cleaned['artist']!,
+        album: cleaned['album'] ?? '',
         outputFormat: 'm4a',
         embedThumbnail: true,
       );
@@ -247,9 +260,26 @@ class _SearchScreenState extends State<SearchScreen> {
   }
 
   Future<void> _showAddToPlaylistDialog(VideoInfo video) async {
-    // Convert VideoInfo to PlaylistTrack
-    final track = PlaylistTrack.fromVideoInfo(video);
-    
+    final cleaned = await _apiService.cleanMetadata(
+      title: video.title,
+      uploader: video.uploader,
+      videoId: video.id,
+      videoUrl: video.url,
+    );
+
+    final track = PlaylistTrack(
+      id: video.id,
+      title: cleaned['title'] ?? video.title,
+      artist: cleaned['artist'] ?? video.uploader,
+      album: cleaned['album'],
+      filename: '',
+      url: video.url,
+      thumbnail: video.thumbnail,
+      duration: video.duration,
+    );
+
+    if (!mounted) return;
+
     await showDialog(
       context: context,
       builder: (context) => PlaylistSelectionDialog(
@@ -266,6 +296,8 @@ class _SearchScreenState extends State<SearchScreen> {
       final cleaned = await _apiService.cleanMetadata(
         title: video.title,
         uploader: video.uploader,
+        videoId: video.id,
+        videoUrl: video.url,
       );
 
       final result = await _apiService.getStreamingUrl(

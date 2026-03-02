@@ -971,113 +971,125 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _streamVideo(VideoInfo video) async {
     try {
-      final result = await _apiService.getStreamingUrl(
-        url: video.url,
-        title: video.title,
-        artist: video.uploader,
-      );
-
-      await _playerStateService.streamTrack(
-        result.streamingUrl,
-        trackName: result.title,
-        trackArtist: result.artist,
-        url: video.url,
-      );
-      // Tracking is now done in PlayerStateService when song starts
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Stream failed: $e'),
-            backgroundColor: Colors.red,
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-      }
-    }
-  }
-
-  // For recommended songs (from Spotify), search YouTube first
-  Future<void> _streamRecommendedVideo(VideoInfo video) async {
-    try {
-      // Search YouTube for this track first
-      final searchResults = await _apiService.searchYoutube(
-        '${video.title} ${video.uploader}',
-      );
-
-      if (searchResults.isEmpty) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Could not find "${video.title}" on YouTube'),
-              backgroundColor: Colors.red,
-              behavior: SnackBarBehavior.floating,
-            ),
-          );
-        }
-        return;
-      }
-
-      // Get streaming URL for the first result
-      final result = await _apiService.getStreamingUrl(
-        url: searchResults.first.url,
-        title: video.title,
-        artist: video.uploader,
-      );
-
-      await _playerStateService.streamTrack(
-        result.streamingUrl,
-        trackName: result.title,
-        trackArtist: result.artist,
-        url: searchResults.first.url,
-      );
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Stream failed: $e'),
-            backgroundColor: Colors.red,
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-      }
-    }
-  }
-
-  // For recommended songs (from Spotify), search YouTube first
-  Future<void> _addRecommendedToQueue(VideoInfo video) async {
-    try {
-      // Search YouTube for this track first
-      final searchResults = await _apiService.searchYoutube(
-        '${video.title} ${video.uploader}',
-      );
-
-      if (searchResults.isEmpty) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Could not find "${video.title}" on YouTube'),
-              backgroundColor: Colors.red,
-              behavior: SnackBarBehavior.floating,
-            ),
-          );
-        }
-        return;
-      }
-
       final cleaned = await _apiService.cleanMetadata(
         title: video.title,
         uploader: video.uploader,
+        videoId: video.id,
+        videoUrl: video.url,
       );
 
       final result = await _apiService.getStreamingUrl(
-        url: searchResults.first.url,
+        url: video.url,
+        title: cleaned['title']!,
+        artist: cleaned['artist']!,
+      );
+
+      await _playerStateService.streamTrack(
+        result.streamingUrl,
+        trackName: result.title,
+        trackArtist: result.artist,
+        url: video.url,
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Stream failed: $e'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _streamRecommendedVideo(VideoInfo video) async {
+    try {
+      final searchResults = await _apiService.searchYoutube(
+        '${video.title} ${video.uploader}',
+      );
+
+      if (searchResults.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Could not find "${video.title}" on YouTube'),
+              backgroundColor: Colors.red,
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+        return;
+      }
+
+      final ytVideo = searchResults.first;
+      final cleaned = await _apiService.cleanMetadata(
+        title: ytVideo.title,
+        uploader: ytVideo.uploader,
+        videoId: ytVideo.id,
+        videoUrl: ytVideo.url,
+      );
+
+      final result = await _apiService.getStreamingUrl(
+        url: ytVideo.url,
+        title: cleaned['title']!,
+        artist: cleaned['artist']!,
+      );
+
+      await _playerStateService.streamTrack(
+        result.streamingUrl,
+        trackName: result.title,
+        trackArtist: result.artist,
+        url: ytVideo.url,
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Stream failed: $e'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _addRecommendedToQueue(VideoInfo video) async {
+    try {
+      final searchResults = await _apiService.searchYoutube(
+        '${video.title} ${video.uploader}',
+      );
+
+      if (searchResults.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Could not find "${video.title}" on YouTube'),
+              backgroundColor: Colors.red,
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+        return;
+      }
+
+      final ytVideo = searchResults.first;
+      final cleaned = await _apiService.cleanMetadata(
+        title: ytVideo.title,
+        uploader: ytVideo.uploader,
+        videoId: ytVideo.id,
+        videoUrl: ytVideo.url,
+      );
+
+      final result = await _apiService.getStreamingUrl(
+        url: ytVideo.url,
         title: cleaned['title']!,
         artist: cleaned['artist']!,
       );
 
       final queueItem = QueueItem.fromVideoInfo(
-        videoId: searchResults.first.id,
+        videoId: ytVideo.id,
         title: result.title,
         artist: result.artist,
         streamingUrl: result.streamingUrl,
@@ -1108,10 +1120,18 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       );
 
+      final cleaned = await _apiService.cleanMetadata(
+        title: video.title,
+        uploader: video.uploader,
+        videoId: video.id,
+        videoUrl: video.url,
+      );
+
       final result = await _apiService.downloadAudio(
         url: video.url,
-        title: video.title,
-        artist: video.uploader,
+        title: cleaned['title']!,
+        artist: cleaned['artist']!,
+        album: cleaned['album'] ?? '',
         outputFormat: 'm4a',
         embedThumbnail: true,
       );
@@ -1143,8 +1163,26 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _showAddToPlaylistDialog(VideoInfo video) async {
-    final track = PlaylistTrack.fromVideoInfo(video);
-    
+    final cleaned = await _apiService.cleanMetadata(
+      title: video.title,
+      uploader: video.uploader,
+      videoId: video.id,
+      videoUrl: video.url,
+    );
+
+    final track = PlaylistTrack(
+      id: video.id,
+      title: cleaned['title'] ?? video.title,
+      artist: cleaned['artist'] ?? video.uploader,
+      album: cleaned['album'],
+      filename: '',
+      url: video.url,
+      thumbnail: video.thumbnail,
+      duration: video.duration,
+    );
+
+    if (!mounted) return;
+
     await showDialog(
       context: context,
       builder: (context) => PlaylistSelectionDialog(
@@ -1159,6 +1197,8 @@ class _HomeScreenState extends State<HomeScreen> {
       final cleaned = await _apiService.cleanMetadata(
         title: video.title,
         uploader: video.uploader,
+        videoId: video.id,
+        videoUrl: video.url,
       );
 
       final result = await _apiService.getStreamingUrl(

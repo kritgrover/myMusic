@@ -128,6 +128,8 @@ class _GenreScreenState extends State<GenreScreen> {
       final cleaned = await _apiService.cleanMetadata(
         title: searchResults.first.title,
         uploader: searchResults.first.uploader,
+        videoId: searchResults.first.id,
+        videoUrl: searchResults.first.url,
       );
 
       final result = await _apiService.getStreamingUrl(

@@ -55,15 +55,20 @@ class ApiService {
     }
   }
 
-  /// Parse YouTube title + uploader into clean song title and artist via backend.
+  /// Resolve song metadata from YouTube title via the backend's multi-layered
+  /// strategy (yt-dlp structured metadata, Spotify validation, regex fallback).
   Future<Map<String, String>> cleanMetadata({
     required String title,
     String uploader = '',
+    String videoId = '',
+    String videoUrl = '',
   }) async {
     try {
       final uri = Uri.parse('$baseUrl/clean-metadata').replace(queryParameters: {
         'title': title,
         if (uploader.isNotEmpty) 'uploader': uploader,
+        if (videoId.isNotEmpty) 'video_id': videoId,
+        if (videoUrl.isNotEmpty) 'video_url': videoUrl,
       });
       final response = await _client.get(uri);
       if (response.statusCode == 200) {
@@ -71,6 +76,10 @@ class ApiService {
         return {
           'title': data['title'] as String? ?? title,
           'artist': data['artist'] as String? ?? uploader,
+          'album': data['album'] as String? ?? '',
+          'spotify_id': data['spotify_id'] as String? ?? '',
+          'thumbnail': data['thumbnail'] as String? ?? '',
+          'source': data['source'] as String? ?? '',
         };
       }
     } catch (_) {}
