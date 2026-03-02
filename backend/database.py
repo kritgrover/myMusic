@@ -12,6 +12,8 @@ class Database:
         self.init_db()
         # Clean up expired cache entries on startup
         self.cleanup_expired_cache()
+        # Clear album cover cache on startup (removes stale wrong results from prior versions)
+        self.clear_album_cover_cache()
 
     def get_connection(self):
         # check_same_thread=False allows the connection to be used across threads
@@ -115,6 +117,16 @@ class Database:
         )
         ''')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_playlist_songs_playlist_id ON playlist_songs(playlist_id)')
+
+        # Album cover cache (iTunes lookup results)
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS album_cover_cache (
+            cache_key TEXT PRIMARY KEY,
+            artwork_url TEXT,
+            match_score INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        ''')
         
         conn.commit()
         conn.close()
@@ -368,6 +380,55 @@ class Database:
             print(f"Cleaned up {count} expired cache entries")
         
         return count
+
+    def get_album_cover_cache(self, cache_key: str, max_age_days: int = 30):
+        """Get album cover from cache if present and not expired.
+        
+        Args:
+            cache_key: Normalized key (e.g., title|artist|album)
+            max_age_days: Maximum age in days (default 30)
+            
+        Returns:
+            dict with artwork_url and match_score, or None if not found/expired
+        """
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        from datetime import datetime, timedelta
+        cutoff = (datetime.now() - timedelta(days=max_age_days)).isoformat()
+        cursor.execute(
+            'SELECT artwork_url, match_score FROM album_cover_cache WHERE cache_key = ? AND created_at >= ?',
+            (cache_key, cutoff),
+        )
+        row = cursor.fetchone()
+        conn.close()
+        if row:
+            return {
+                "artwork_url": row["artwork_url"],
+                "match_score": row["match_score"] or 0,
+            }
+        return None
+
+    def set_album_cover_cache(self, cache_key: str, artwork_url: str | None, match_score: int = 0):
+        """Store album cover result in cache."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            '''
+            INSERT OR REPLACE INTO album_cover_cache (cache_key, artwork_url, match_score, created_at)
+            VALUES (?, ?, ?, ?)
+            ''',
+            (cache_key, artwork_url, match_score, datetime.now().isoformat()),
+        )
+        conn.commit()
+        conn.close()
+
+    def clear_album_cover_cache(self):
+        """Clear all album cover cache entries. Called on startup to clear stale wrong results."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('DELETE FROM album_cover_cache')
+        conn.commit()
+        conn.close()
 
     def get_cache_stats(self):
         """Get statistics about the cache.

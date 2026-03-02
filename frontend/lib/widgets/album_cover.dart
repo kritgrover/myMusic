@@ -1,10 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
-import '../services/api_service.dart';
-import '../services/album_cover_cache.dart';
+import '../services/album_cover_service.dart';
 
 /// Widget that fetches and displays album covers for tracks
-/// Tries: 1) Embedded artwork from file, 2) iTunes API, 3) Placeholder
+/// Tries: 1) Pre-resolved URL, 2) Embedded artwork from file, 3) iTunes API, 4) Placeholder
 class AlbumCover extends StatefulWidget {
   final String? filename; // For downloaded files
   final String? title;
@@ -36,8 +34,7 @@ class AlbumCover extends StatefulWidget {
 }
 
 class _AlbumCoverState extends State<AlbumCover> {
-  final ApiService _apiService = ApiService();
-  final AlbumCoverCache _cache = AlbumCoverCache();
+  final AlbumCoverService _service = AlbumCoverService();
   String? _artworkUrl;
   bool _isLoading = true;
   bool _hasError = false;
@@ -51,7 +48,6 @@ class _AlbumCoverState extends State<AlbumCover> {
   @override
   void didUpdateWidget(AlbumCover oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // Reload if key properties changed
     if (oldWidget.filename != widget.filename ||
         oldWidget.title != widget.title ||
         oldWidget.artist != widget.artist ||
@@ -62,100 +58,31 @@ class _AlbumCoverState extends State<AlbumCover> {
   }
 
   Future<void> _loadAlbumCover() async {
-    // If artworkUrl is provided directly, use it (highest priority)
-    if (widget.artworkUrl != null && widget.artworkUrl!.isNotEmpty) {
+    final needsFetch = widget.artworkUrl == null || widget.artworkUrl!.isEmpty;
+    if (needsFetch) {
       setState(() {
-        _artworkUrl = widget.artworkUrl;
-        _isLoading = false;
+        _isLoading = true;
         _hasError = false;
+        _artworkUrl = null;
       });
-      return;
     }
 
-    // Generate cache key
-    final cacheKey = AlbumCoverCache.generateKey(
+    final artworkUrl = await _service.resolveArtwork(
       filename: widget.filename,
       title: widget.title,
       artist: widget.artist,
       album: widget.album,
+      existingUrl: widget.artworkUrl,
     );
 
-    // Check cache first
-    final cachedUrl = _cache.get(cacheKey);
-    if (cachedUrl != null) {
-      // Found in cache (null means we cached that there's no artwork)
-      final artworkUrl = cachedUrl.isEmpty ? null : cachedUrl;
-      setState(() {
-        _artworkUrl = artworkUrl;
-        _isLoading = false;
-        _hasError = cachedUrl.isEmpty;
-      });
-      // Notify callback if provided
-      if (widget.onArtworkResolved != null) {
-        widget.onArtworkResolved!(artworkUrl);
-      }
-      return;
-    }
-
-    // Not in cache, fetch it
+    if (!mounted) return;
     setState(() {
-      _isLoading = true;
-      _hasError = false;
-      _artworkUrl = null;
+      _artworkUrl = artworkUrl;
+      _isLoading = false;
+      _hasError = artworkUrl == null;
     });
 
-    try {
-      String? artworkUrl;
-
-      // Priority 1: Try to get artwork from downloaded file
-      if (widget.filename != null && widget.filename!.isNotEmpty) {
-        try {
-          final fileArtworkUrl = _apiService.getFileArtworkUrl(widget.filename!);
-          // Test if the artwork endpoint returns valid data
-          final response = await http.get(Uri.parse(fileArtworkUrl));
-          if (response.statusCode == 200) {
-            artworkUrl = fileArtworkUrl;
-          }
-        } catch (e) {
-          // File artwork not available, continue to iTunes API
-        }
-      }
-
-      // Priority 2: Try to fetch from iTunes API if file artwork not found
-      if (artworkUrl == null && widget.title != null && widget.title!.isNotEmpty) {
-        artworkUrl = await _apiService.fetchAlbumCover(
-          title: widget.title!,
-          artist: widget.artist ?? '',
-          album: widget.album ?? '',
-        );
-      }
-
-      // Cache the result (even if null, to avoid refetching)
-      _cache.put(cacheKey, artworkUrl ?? '');
-
-      setState(() {
-        _artworkUrl = artworkUrl;
-        _isLoading = false;
-        _hasError = artworkUrl == null;
-      });
-      
-      // Notify callback when artwork is resolved
-      if (widget.onArtworkResolved != null) {
-        widget.onArtworkResolved!(artworkUrl);
-      }
-    } catch (e) {
-      // Cache the failure to avoid repeated attempts
-      _cache.put(cacheKey, '');
-      setState(() {
-        _isLoading = false;
-        _hasError = true;
-      });
-      
-      // Notify callback of failure
-      if (widget.onArtworkResolved != null) {
-        widget.onArtworkResolved!(null);
-      }
-    }
+    widget.onArtworkResolved?.call(artworkUrl);
   }
 
   @override

@@ -28,6 +28,26 @@ String formatDisplayName(String filename) {
   }
 }
 
+/// Strip common YouTube noise from a title (client-side fallback for uncleaned data).
+String _stripYouTubeSuffixes(String text) {
+  final ytNoise = RegExp(
+    r'\s*[(\[]\s*'
+    r'(?:official\s+(?:music\s+)?video|official\s+audio|official\s+lyric\s*video|'
+    r'official\s+visualizer|lyric\s*video|lyrics?\s*(?:video)?|'
+    r'audio|visualizer|music\s+video|'
+    r'hd|hq|4k|remastered(?:\s+\d{4})?|explicit)'
+    r'\s*[)\]]\s*',
+    caseSensitive: false,
+  );
+  var result = text;
+  String prev = '';
+  while (result != prev) {
+    prev = result;
+    result = result.replaceAll(ytNoise, ' ').trim();
+  }
+  return result;
+}
+
 // Gets the display title for a track
 String getDisplayTitle(String? title, String? filename) {
   if (title == null || title.isEmpty) {
@@ -42,7 +62,7 @@ String getDisplayTitle(String? title, String? filename) {
     return formatDisplayName(title);
   }
   
-  return title;
+  return _stripYouTubeSuffixes(title);
 }
 
 // Gets the display artist, returning null if empty

@@ -125,10 +125,15 @@ class _GenreScreenState extends State<GenreScreen> {
         return;
       }
 
+      final cleaned = await _apiService.cleanMetadata(
+        title: searchResults.first.title,
+        uploader: searchResults.first.uploader,
+      );
+
       final result = await _apiService.getStreamingUrl(
         url: searchResults.first.url,
-        title: track.title,
-        artist: track.artist ?? '',
+        title: cleaned['title']!,
+        artist: cleaned['artist']!,
       );
 
       final queueItem = QueueItem(
@@ -143,7 +148,7 @@ class _GenreScreenState extends State<GenreScreen> {
 
       if (mounted && showSnackbar) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Added "${track.title}" to queue')),
+          SnackBar(content: Text('Added "${cleaned['title']}" to queue')),
         );
       }
     } catch (e) {

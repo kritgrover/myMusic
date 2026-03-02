@@ -54,7 +54,29 @@ class ApiService {
       throw Exception('Stream error: $e');
     }
   }
-  
+
+  /// Parse YouTube title + uploader into clean song title and artist via backend.
+  Future<Map<String, String>> cleanMetadata({
+    required String title,
+    String uploader = '',
+  }) async {
+    try {
+      final uri = Uri.parse('$baseUrl/clean-metadata').replace(queryParameters: {
+        'title': title,
+        if (uploader.isNotEmpty) 'uploader': uploader,
+      });
+      final response = await _client.get(uri);
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        return {
+          'title': data['title'] as String? ?? title,
+          'artist': data['artist'] as String? ?? uploader,
+        };
+      }
+    } catch (_) {}
+    return {'title': title, 'artist': uploader};
+  }
+
   Future<DownloadResult> downloadAudio({
     required String url,
     required String title,

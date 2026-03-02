@@ -5,7 +5,7 @@ import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 import 'dart:async';
 import '../services/lyrics_service.dart';
 import '../services/player_state_service.dart';
-import '../services/api_service.dart';
+import '../services/album_cover_service.dart';
 import '../models/lyrics.dart';
 
 class LyricsScreen extends StatefulWidget {
@@ -52,7 +52,7 @@ class _LyricsScreenState extends State<LyricsScreen> {
   List<LrcLine> _syncedLines = [];
   List<String> _plainLines = [];
   String? _artworkUrl;
-  final ApiService _apiService = ApiService();
+  final AlbumCoverService _albumCoverService = AlbumCoverService();
 
   @override
   void initState() {
@@ -107,7 +107,7 @@ class _LyricsScreenState extends State<LyricsScreen> {
   Future<void> _loadArtwork() async {
     if (widget.trackName.isEmpty) return;
     try {
-      final url = await _apiService.fetchAlbumCover(
+      final url = await _albumCoverService.resolveArtwork(
         title: widget.trackName,
         artist: widget.artistName,
         album: widget.albumName ?? '',

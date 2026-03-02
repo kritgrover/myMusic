@@ -1065,10 +1065,15 @@ class _HomeScreenState extends State<HomeScreen> {
         return;
       }
 
+      final cleaned = await _apiService.cleanMetadata(
+        title: video.title,
+        uploader: video.uploader,
+      );
+
       final result = await _apiService.getStreamingUrl(
         url: searchResults.first.url,
-        title: video.title,
-        artist: video.uploader,
+        title: cleaned['title']!,
+        artist: cleaned['artist']!,
       );
 
       final queueItem = QueueItem.fromVideoInfo(
@@ -1151,10 +1156,15 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _addToQueue(VideoInfo video) async {
     try {
+      final cleaned = await _apiService.cleanMetadata(
+        title: video.title,
+        uploader: video.uploader,
+      );
+
       final result = await _apiService.getStreamingUrl(
         url: video.url,
-        title: video.title,
-        artist: video.uploader,
+        title: cleaned['title']!,
+        artist: cleaned['artist']!,
       );
 
       final queueItem = QueueItem.fromVideoInfo(

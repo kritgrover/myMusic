@@ -188,10 +188,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
         return;
       }
 
+      final cleaned = await _apiService.cleanMetadata(
+        title: searchResults.first.title,
+        uploader: searchResults.first.uploader,
+      );
+
       final result = await _apiService.getStreamingUrl(
         url: searchResults.first.url,
-        title: item.title,
-        artist: item.artist,
+        title: cleaned['title']!,
+        artist: cleaned['artist']!,
       );
 
       final queueItem = QueueItem(
@@ -206,7 +211,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
       if (mounted && showSnackbar) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Added "${item.title}" to queue')),
+          SnackBar(content: Text('Added "${cleaned['title']}" to queue')),
         );
       }
     } catch (e) {

@@ -263,14 +263,17 @@ class _SearchScreenState extends State<SearchScreen> {
     if (widget.queueService == null) return;
 
     try {
-      // Get streaming URL
-      final result = await _apiService.getStreamingUrl(
-        url: video.url,
+      final cleaned = await _apiService.cleanMetadata(
         title: video.title,
-        artist: video.uploader,
+        uploader: video.uploader,
       );
 
-      // Create queue item
+      final result = await _apiService.getStreamingUrl(
+        url: video.url,
+        title: cleaned['title']!,
+        artist: cleaned['artist']!,
+      );
+
       final queueItem = QueueItem.fromVideoInfo(
         videoId: video.id,
         title: result.title,
@@ -279,7 +282,6 @@ class _SearchScreenState extends State<SearchScreen> {
         thumbnail: video.thumbnail,
       );
 
-      // Add to queue
       widget.queueService!.addToQueue(queueItem);
     } catch (e) {
       if (mounted) {
