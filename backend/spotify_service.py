@@ -70,6 +70,75 @@ class SpotifyService:
             print(f"Spotify search error: {e}")
             return None
 
+    def _search_spotify_raw(self, query: str):
+        """Run a single Spotify search and return the formatted result or None."""
+        if not self.sp:
+            return None
+        try:
+            results = self.sp.search(q=query, type='track', limit=1)
+            items = results.get('tracks', {}).get('items', [])
+            if items:
+                track = items[0]
+                return {
+                    'id': track['id'],
+                    'title': track['name'],
+                    'name': track['name'],
+                    'artist': track['artists'][0]['name'],
+                    'artist_id': track['artists'][0]['id'],
+                    'album': track['album']['name'],
+                    'thumbnail': track['album']['images'][0]['url'] if track['album']['images'] else None,
+                    'image': track['album']['images'][0]['url'] if track['album']['images'] else None,
+                    'preview_url': track.get('preview_url'),
+                    'duration': track.get('duration_ms', 0) / 1000 if track.get('duration_ms') else 0,
+                }
+        except Exception as e:
+            print(f"Spotify raw search error for '{query}': {e}")
+        return None
+
+    def search_track_multi_strategy(self, parsed_title: str, parsed_artist: str,
+                                     cleaned_yt_title: str) -> list[dict | None]:
+        """Try multiple Spotify search strategies and return all results.
+
+        Returns a list of result dicts (or Nones). The caller scores and picks
+        the best match.
+        """
+        if not self.sp:
+            return []
+
+        seen_ids = set()
+        results = []
+
+        def _add(result):
+            if result and result.get("id") not in seen_ids:
+                seen_ids.add(result["id"])
+                results.append(result)
+
+        cache_key = self._get_cache_key("multi", parsed_title, parsed_artist, cleaned_yt_title)
+        cached = db.get_cache(cache_key)
+        if cached:
+            return cached
+
+        # Strategy 1: strict parsed title + artist
+        if parsed_title and parsed_artist:
+            _add(self._search_spotify_raw(f"track:{parsed_title} artist:{parsed_artist}"))
+
+        # Strategy 2: swapped — in case regex got artist/title backwards
+        if parsed_title and parsed_artist and parsed_title != parsed_artist:
+            _add(self._search_spotify_raw(f"track:{parsed_artist} artist:{parsed_title}"))
+
+        # Strategy 3: general search with the full cleaned YouTube title
+        if cleaned_yt_title:
+            _add(self._search_spotify_raw(cleaned_yt_title))
+
+        # Strategy 4: broad search combining parsed fields without Spotify field syntax
+        if parsed_title and parsed_artist:
+            _add(self._search_spotify_raw(f"{parsed_title} {parsed_artist}"))
+
+        if results:
+            db.set_cache(cache_key, results, ttl_seconds=86400 * 7)
+
+        return results
+
     def get_recommendations(self, seed_tracks=None, seed_artists=None, seed_genres=None, limit=20):
         """Get recommendations based on seeds (uses related artists/search fallback since recommendations API deprecated)"""
         if not self.sp: return []

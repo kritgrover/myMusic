@@ -127,6 +127,20 @@ class Database:
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
         ''')
+
+        # Resolved metadata cache (keyed by YouTube video ID)
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS metadata_cache (
+            video_id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            artist TEXT,
+            album TEXT,
+            spotify_id TEXT,
+            thumbnail TEXT,
+            source TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        ''')
         
         conn.commit()
         conn.close()
@@ -427,6 +441,53 @@ class Database:
         conn = self.get_connection()
         cursor = conn.cursor()
         cursor.execute('DELETE FROM album_cover_cache')
+        conn.commit()
+        conn.close()
+
+    # Metadata cache (resolved YouTube video metadata)
+    def get_metadata_cache(self, video_id: str) -> dict | None:
+        """Get cached resolved metadata for a YouTube video ID."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            'SELECT title, artist, album, spotify_id, thumbnail, source '
+            'FROM metadata_cache WHERE video_id = ?',
+            (video_id,),
+        )
+        row = cursor.fetchone()
+        conn.close()
+        if row:
+            return {
+                "title": row["title"],
+                "artist": row["artist"] or "",
+                "album": row["album"] or "",
+                "spotify_id": row["spotify_id"] or "",
+                "thumbnail": row["thumbnail"] or "",
+                "source": row["source"] or "",
+            }
+        return None
+
+    def set_metadata_cache(self, video_id: str, data: dict):
+        """Store resolved metadata for a YouTube video ID."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            '''
+            INSERT OR REPLACE INTO metadata_cache
+                (video_id, title, artist, album, spotify_id, thumbnail, source, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''',
+            (
+                video_id,
+                data.get("title", ""),
+                data.get("artist", ""),
+                data.get("album", ""),
+                data.get("spotify_id", ""),
+                data.get("thumbnail", ""),
+                data.get("source", ""),
+                datetime.now().isoformat(),
+            ),
+        )
         conn.commit()
         conn.close()
 

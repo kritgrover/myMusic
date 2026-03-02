@@ -16,6 +16,7 @@ from download_service import DownloadService
 from database import db
 from spotify_service import spotify_service
 from lyrics_service import lyrics_service
+from metadata_service import MetadataService, _regex_parse as _enhanced_regex_parse
 from auth_utils import create_access_token, decode_access_token
 from mutagen.mp4 import MP4
 from mutagen.easyid3 import EasyID3
@@ -80,6 +81,7 @@ DOWNLOADS_DIR = os.path.join(BASE_DIR, "downloads")
 os.makedirs(DOWNLOADS_DIR, exist_ok=True)
 
 download_service = DownloadService(output_dir=DOWNLOADS_DIR)
+metadata_service = MetadataService(download_service=download_service, spotify_service=spotify_service)
 
 # Global progress tracking for CSV conversions
 csv_progress: Dict[str, Dict] = {}
@@ -849,14 +851,24 @@ def _parse_youtube_metadata(title: str, uploader: str = "") -> dict:
 
 
 @app.get("/clean-metadata")
-async def clean_metadata(title: str, uploader: str = ""):
-    """Parse YouTube title + uploader into clean song title and artist."""
-    return _parse_youtube_metadata(title, uploader)
+async def clean_metadata(title: str, uploader: str = "",
+                         video_id: str = "", video_url: str = ""):
+    """Resolve song metadata from a YouTube title using multi-layered strategy.
+
+    When video_id/video_url are provided, uses yt-dlp structured metadata and
+    Spotify validation for higher accuracy. Falls back to regex parsing.
+    """
+    return metadata_service.resolve(
+        title=title,
+        uploader=uploader,
+        video_id=video_id or None,
+        video_url=video_url or None,
+    )
 
 
 def _build_search_term(title: str, artist: str, album: str, simplified: bool = False) -> str:
     """Build search term for iTunes. If simplified=True, use shorter form for retry."""
-    parsed = _parse_youtube_metadata(title, artist or "")
+    parsed = _enhanced_regex_parse(title, artist or "")
     clean_title, clean_artist = parsed["title"], parsed["artist"]
     
     if simplified:
@@ -940,7 +952,7 @@ async def get_album_cover(title: str, artist: str = "", album: str = ""):
         }
     
     try:
-        parsed = _parse_youtube_metadata(title, artist or "")
+        parsed = _enhanced_regex_parse(title, artist or "")
         clean_title, clean_artist = parsed["title"], parsed["artist"]
         clean_album = album or ""
 
