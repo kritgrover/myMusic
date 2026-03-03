@@ -1395,12 +1395,15 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                                             title: track.title,
                                             artist: track.artist,
                                             album: track.album,
+                                            artworkUrl: (track.thumbnail != null && !track.thumbnail!.contains('img.youtube.com'))
+                                            ? track.thumbnail
+                                            : null,
                                             size: 40,
-                                            backgroundColor: isCurrentlyPlaying 
+                                            backgroundColor: isCurrentlyPlaying
                                                 ? primaryColor.withOpacity(0.2)
                                                 : surfaceHover,
-                                            iconColor: isCurrentlyPlaying 
-                                                ? primaryColor 
+                                            iconColor: isCurrentlyPlaying
+                                                ? primaryColor
                                                 : Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
                                           ),
                                           const SizedBox(width: 12),

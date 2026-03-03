@@ -54,7 +54,38 @@ class ApiService {
       throw Exception('Stream error: $e');
     }
   }
-  
+
+  /// Resolve song metadata from YouTube title via the backend's multi-layered
+  /// strategy (yt-dlp structured metadata, Spotify validation, regex fallback).
+  Future<Map<String, String>> cleanMetadata({
+    required String title,
+    String uploader = '',
+    String videoId = '',
+    String videoUrl = '',
+  }) async {
+    try {
+      final uri = Uri.parse('$baseUrl/clean-metadata').replace(queryParameters: {
+        'title': title,
+        if (uploader.isNotEmpty) 'uploader': uploader,
+        if (videoId.isNotEmpty) 'video_id': videoId,
+        if (videoUrl.isNotEmpty) 'video_url': videoUrl,
+      });
+      final response = await _client.get(uri);
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        return {
+          'title': data['title'] as String? ?? title,
+          'artist': data['artist'] as String? ?? uploader,
+          'album': data['album'] as String? ?? '',
+          'spotify_id': data['spotify_id'] as String? ?? '',
+          'thumbnail': data['thumbnail'] as String? ?? '',
+          'source': data['source'] as String? ?? '',
+        };
+      }
+    } catch (_) {}
+    return {'title': title, 'artist': uploader};
+  }
+
   Future<DownloadResult> downloadAudio({
     required String url,
     required String title,

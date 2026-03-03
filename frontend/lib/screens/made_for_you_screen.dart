@@ -86,10 +86,17 @@ class _MadeForYouScreenState extends State<MadeForYouScreen> {
         return;
       }
 
+      final cleaned = await _apiService.cleanMetadata(
+        title: searchResults.first.title,
+        uploader: searchResults.first.uploader,
+        videoId: searchResults.first.id,
+        videoUrl: searchResults.first.url,
+      );
+
       final result = await _apiService.getStreamingUrl(
         url: searchResults.first.url,
-        title: song.title,
-        artist: song.uploader,
+        title: cleaned['title']!,
+        artist: cleaned['artist']!,
       );
 
       final queueItem = QueueItem(
@@ -104,7 +111,7 @@ class _MadeForYouScreenState extends State<MadeForYouScreen> {
 
       if (mounted && showSnackbar) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Added "${song.title}" to queue')),
+          SnackBar(content: Text('Added "${cleaned['title']}" to queue')),
         );
       }
     } catch (e) {

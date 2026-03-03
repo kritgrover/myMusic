@@ -181,11 +181,13 @@ class _HomeScreenState extends State<HomeScreen> {
     // If lyrics is shown, show lyrics screen (applies to all tabs)
     if (_showLyrics && _playerStateService.currentTrackName != null && _playerStateService.currentTrackArtist != null) {
       final currentItem = _queueService.currentItem;
+      final duration = _playerStateService.audioPlayer.duration;
+      final durationSeconds = duration.inSeconds > 0 ? duration.inSeconds : null;
       return LyricsScreen(
         trackName: _playerStateService.currentTrackName!,
         artistName: _playerStateService.currentTrackArtist ?? '',
         albumName: currentItem?.album,
-        duration: null,
+        duration: durationSeconds,
         lyricsService: _lyricsService,
         playerStateService: _playerStateService,
         embedded: true,
@@ -969,10 +971,17 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _streamVideo(VideoInfo video) async {
     try {
+      final cleaned = await _apiService.cleanMetadata(
+        title: video.title,
+        uploader: video.uploader,
+        videoId: video.id,
+        videoUrl: video.url,
+      );
+
       final result = await _apiService.getStreamingUrl(
         url: video.url,
-        title: video.title,
-        artist: video.uploader,
+        title: cleaned['title']!,
+        artist: cleaned['artist']!,
       );
 
       await _playerStateService.streamTrack(
@@ -981,7 +990,6 @@ class _HomeScreenState extends State<HomeScreen> {
         trackArtist: result.artist,
         url: video.url,
       );
-      // Tracking is now done in PlayerStateService when song starts
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -995,10 +1003,8 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  // For recommended songs (from Spotify), search YouTube first
   Future<void> _streamRecommendedVideo(VideoInfo video) async {
     try {
-      // Search YouTube for this track first
       final searchResults = await _apiService.searchYoutube(
         '${video.title} ${video.uploader}',
       );
@@ -1016,18 +1022,25 @@ class _HomeScreenState extends State<HomeScreen> {
         return;
       }
 
-      // Get streaming URL for the first result
+      final ytVideo = searchResults.first;
+      final cleaned = await _apiService.cleanMetadata(
+        title: ytVideo.title,
+        uploader: ytVideo.uploader,
+        videoId: ytVideo.id,
+        videoUrl: ytVideo.url,
+      );
+
       final result = await _apiService.getStreamingUrl(
-        url: searchResults.first.url,
-        title: video.title,
-        artist: video.uploader,
+        url: ytVideo.url,
+        title: cleaned['title']!,
+        artist: cleaned['artist']!,
       );
 
       await _playerStateService.streamTrack(
         result.streamingUrl,
         trackName: result.title,
         trackArtist: result.artist,
-        url: searchResults.first.url,
+        url: ytVideo.url,
       );
     } catch (e) {
       if (mounted) {
@@ -1042,10 +1055,8 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  // For recommended songs (from Spotify), search YouTube first
   Future<void> _addRecommendedToQueue(VideoInfo video) async {
     try {
-      // Search YouTube for this track first
       final searchResults = await _apiService.searchYoutube(
         '${video.title} ${video.uploader}',
       );
@@ -1063,14 +1074,22 @@ class _HomeScreenState extends State<HomeScreen> {
         return;
       }
 
+      final ytVideo = searchResults.first;
+      final cleaned = await _apiService.cleanMetadata(
+        title: ytVideo.title,
+        uploader: ytVideo.uploader,
+        videoId: ytVideo.id,
+        videoUrl: ytVideo.url,
+      );
+
       final result = await _apiService.getStreamingUrl(
-        url: searchResults.first.url,
-        title: video.title,
-        artist: video.uploader,
+        url: ytVideo.url,
+        title: cleaned['title']!,
+        artist: cleaned['artist']!,
       );
 
       final queueItem = QueueItem.fromVideoInfo(
-        videoId: searchResults.first.id,
+        videoId: ytVideo.id,
         title: result.title,
         artist: result.artist,
         streamingUrl: result.streamingUrl,
@@ -1101,10 +1120,18 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       );
 
+      final cleaned = await _apiService.cleanMetadata(
+        title: video.title,
+        uploader: video.uploader,
+        videoId: video.id,
+        videoUrl: video.url,
+      );
+
       final result = await _apiService.downloadAudio(
         url: video.url,
-        title: video.title,
-        artist: video.uploader,
+        title: cleaned['title']!,
+        artist: cleaned['artist']!,
+        album: cleaned['album'] ?? '',
         outputFormat: 'm4a',
         embedThumbnail: true,
       );
@@ -1136,8 +1163,26 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _showAddToPlaylistDialog(VideoInfo video) async {
-    final track = PlaylistTrack.fromVideoInfo(video);
-    
+    final cleaned = await _apiService.cleanMetadata(
+      title: video.title,
+      uploader: video.uploader,
+      videoId: video.id,
+      videoUrl: video.url,
+    );
+
+    final track = PlaylistTrack(
+      id: video.id,
+      title: cleaned['title'] ?? video.title,
+      artist: cleaned['artist'] ?? video.uploader,
+      album: cleaned['album'],
+      filename: '',
+      url: video.url,
+      thumbnail: video.thumbnail,
+      duration: video.duration,
+    );
+
+    if (!mounted) return;
+
     await showDialog(
       context: context,
       builder: (context) => PlaylistSelectionDialog(
@@ -1149,10 +1194,17 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _addToQueue(VideoInfo video) async {
     try {
+      final cleaned = await _apiService.cleanMetadata(
+        title: video.title,
+        uploader: video.uploader,
+        videoId: video.id,
+        videoUrl: video.url,
+      );
+
       final result = await _apiService.getStreamingUrl(
         url: video.url,
-        title: video.title,
-        artist: video.uploader,
+        title: cleaned['title']!,
+        artist: cleaned['artist']!,
       );
 
       final queueItem = QueueItem.fromVideoInfo(
@@ -1391,11 +1443,12 @@ class _HomeScreenState extends State<HomeScreen> {
                           // Fetch lyrics when opening screen
                           if (_showLyrics && _playerStateService.currentTrackName != null && _playerStateService.currentTrackArtist != null) {
                             final currentItem = _queueService.currentItem;
+                            final dur = _playerStateService.audioPlayer.duration;
                             _lyricsService.fetchLyrics(
                               _playerStateService.currentTrackName!,
                               _playerStateService.currentTrackArtist ?? '',
                               albumName: currentItem?.album,
-                              duration: null,
+                              duration: dur.inSeconds > 0 ? dur.inSeconds : null,
                             );
                           }
                         });
@@ -1431,11 +1484,12 @@ class _HomeScreenState extends State<HomeScreen> {
     // If lyrics screen is open, fetch lyrics for the new track
     if (_showLyrics && _playerStateService.currentTrackName != null && _playerStateService.currentTrackArtist != null) {
       final currentItem = _queueService.currentItem;
+      final dur = _playerStateService.audioPlayer.duration;
       _lyricsService.fetchLyrics(
         _playerStateService.currentTrackName!,
         _playerStateService.currentTrackArtist ?? '',
         albumName: currentItem?.album,
-        duration: null,
+        duration: dur.inSeconds > 0 ? dur.inSeconds : null,
       );
     }
   }

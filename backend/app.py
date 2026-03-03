@@ -16,6 +16,7 @@ from download_service import DownloadService
 from database import db
 from spotify_service import spotify_service
 from lyrics_service import lyrics_service
+from metadata_service import MetadataService, _regex_parse as _enhanced_regex_parse
 from auth_utils import create_access_token, decode_access_token
 from mutagen.mp4 import MP4
 from mutagen.easyid3 import EasyID3
@@ -80,6 +81,7 @@ DOWNLOADS_DIR = os.path.join(BASE_DIR, "downloads")
 os.makedirs(DOWNLOADS_DIR, exist_ok=True)
 
 download_service = DownloadService(output_dir=DOWNLOADS_DIR)
+metadata_service = MetadataService(download_service=download_service, spotify_service=spotify_service)
 
 # Global progress tracking for CSV conversions
 csv_progress: Dict[str, Dict] = {}
@@ -726,6 +728,166 @@ def _normalize_for_comparison(text: str) -> str:
     return re.sub(r'[^\w\s]', '', text.lower()).strip()
 
 
+def _album_cover_cache_key(title: str, artist: str, album: str) -> str:
+    """Generate a stable cache key for album cover lookups."""
+    parts = []
+    if title:
+        parts.append(_normalize_for_comparison(title))
+    if artist:
+        parts.append(_normalize_for_comparison(artist))
+    if album:
+        parts.append(_normalize_for_comparison(album))
+    return "|".join(parts) if parts else "unknown"
+
+
+def _parse_youtube_metadata(title: str, uploader: str = "") -> dict:
+    """Parse YouTube title + uploader into clean song title and artist.
+    
+    Handles formats like:
+      - "Artist - Song (Official Music Video)"
+      - "Song - Artist (Lyrics)"
+      - "Artist - Song [Official Audio]"
+      - "Song (feat. X) (Official Video)"
+      - "Artist - Song (Acoustic Version)"
+    
+    Uses the uploader/channel name as a hint to determine which side of
+    the dash is the artist vs. the song title.
+    
+    Returns:
+        {"title": str, "artist": str}
+    """
+    import re
+    
+    raw_title = (title or "").strip()
+    raw_uploader = (uploader or "").strip()
+    
+    # --- Clean uploader ---
+    clean_uploader = raw_uploader
+    # Strip "VEVO" suffix: "BadOmensVEVO" -> "BadOmens" -> insert spaces before caps
+    if clean_uploader.upper().endswith("VEVO"):
+        clean_uploader = clean_uploader[:-4]
+        # Insert spaces before uppercase letters for CamelCase: "BadOmens" -> "Bad Omens"
+        clean_uploader = re.sub(r'(?<=[a-z])(?=[A-Z])', ' ', clean_uploader).strip()
+    # Strip "- Topic" suffix (YouTube Music auto-generated channels)
+    clean_uploader = re.sub(r'\s*-\s*topic\s*$', '', clean_uploader, flags=re.IGNORECASE).strip()
+    # Strip " Official" suffix from channel names
+    clean_uploader = re.sub(r'\s+official\s*$', '', clean_uploader, flags=re.IGNORECASE).strip()
+    
+    # --- Strip YouTube suffixes from title (run repeatedly for stacked suffixes) ---
+    yt_noise = re.compile(
+        r'\s*[(\[]\s*'
+        r'(?:official\s+(?:music\s+)?video|official\s+audio|official\s+lyric\s*video|'
+        r'official\s+visualizer|lyric\s*video|lyrics?\s*(?:video)?|'
+        r'audio|visualizer|music\s+video|'
+        r'hd|hq|4k|remastered(?:\s+\d{4})?|'
+        r'explicit|clean\s+version|deluxe(?:\s+edition)?|bonus\s+track)'
+        r'\s*[)\]]\s*',
+        re.IGNORECASE,
+    )
+    cleaned = raw_title
+    prev = None
+    while cleaned != prev:
+        prev = cleaned
+        cleaned = yt_noise.sub(' ', cleaned).strip()
+    
+    # Also strip trailing standalone labels not in parens/brackets
+    cleaned = re.sub(
+        r'\s*[-|]\s*(?:official\s+(?:music\s+)?video|official\s+audio|'
+        r'lyric\s*video|lyrics?|audio|visualizer|music\s+video)\s*$',
+        '', cleaned, flags=re.IGNORECASE
+    ).strip()
+    
+    # Strip trailing pipes/dashes left over
+    cleaned = re.sub(r'\s*[-|]+\s*$', '', cleaned).strip()
+    
+    # --- Split artist and song ---
+    song_title = cleaned
+    artist = ""
+    
+    norm_uploader = _normalize_for_comparison(clean_uploader)
+    
+    if " - " in cleaned:
+        left, right = cleaned.split(" - ", 1)
+        left, right = left.strip(), right.strip()
+        norm_left = _normalize_for_comparison(left)
+        norm_right = _normalize_for_comparison(right)
+        
+        # Use uploader as a hint to figure out which side is the artist
+        left_matches_uploader = (
+            norm_uploader and (
+                norm_left == norm_uploader or
+                norm_uploader in norm_left or
+                norm_left in norm_uploader
+            )
+        )
+        right_matches_uploader = (
+            norm_uploader and (
+                norm_right == norm_uploader or
+                norm_uploader in norm_right or
+                norm_right in norm_uploader
+            )
+        )
+        
+        if left_matches_uploader and not right_matches_uploader:
+            artist = left
+            song_title = right
+        elif right_matches_uploader and not left_matches_uploader:
+            artist = right
+            song_title = left
+        else:
+            # Standard YouTube convention: "Artist - Song"
+            artist = left
+            song_title = right
+    elif norm_uploader:
+        # No dash separator; uploader is artist, title is song
+        artist = clean_uploader
+        song_title = cleaned
+    
+    # Final cleanup of song title: strip leftover leading/trailing dashes
+    song_title = re.sub(r'^[-–—]\s*', '', song_title).strip()
+    song_title = re.sub(r'\s*[-–—]$', '', song_title).strip()
+    
+    return {"title": song_title, "artist": artist}
+
+
+@app.get("/clean-metadata")
+async def clean_metadata(title: str, uploader: str = "",
+                         video_id: str = "", video_url: str = ""):
+    """Resolve song metadata from a YouTube title using multi-layered strategy.
+
+    When video_id/video_url are provided, uses yt-dlp structured metadata and
+    Spotify validation for higher accuracy. Falls back to regex parsing.
+    """
+    return metadata_service.resolve(
+        title=title,
+        uploader=uploader,
+        video_id=video_id or None,
+        video_url=video_url or None,
+    )
+
+
+def _build_search_term(title: str, artist: str, album: str, simplified: bool = False) -> str:
+    """Build search term for iTunes. If simplified=True, use shorter form for retry."""
+    parsed = _enhanced_regex_parse(title, artist or "")
+    clean_title, clean_artist = parsed["title"], parsed["artist"]
+    
+    if simplified:
+        # Aggressive simplification: artist + first 2-3 significant words of title
+        words = clean_title.split()[:3] if clean_title else []
+        title_part = " ".join(w for w in words if len(w) > 1)
+        if clean_artist and title_part:
+            return f"{clean_artist} {title_part}"
+        if clean_artist:
+            return clean_artist
+        return title_part or clean_title or title
+    
+    if album and clean_artist:
+        return f"{album} {clean_artist}"
+    if clean_artist:
+        return f"{clean_title} {clean_artist}"
+    return clean_title or title
+
+
 def _score_itunes_result(result: dict, title: str, artist: str, album: str) -> int:
     """Score an iTunes result based on how well it matches the requested track.
     
@@ -776,68 +938,75 @@ async def get_album_cover(title: str, artist: str = "", album: str = ""):
     """Fetch album cover from iTunes API based on track metadata.
     
     Improved version that fetches multiple results and scores them to find
-    the best matching album cover.
+    the best matching album cover. Results are cached for 30 days.
     """
+    cache_key = _album_cover_cache_key(title, artist or "", album or "")
+    
+    # Check cache first
+    cached = db.get_album_cover_cache(cache_key)
+    if cached is not None:
+        return {
+            "artwork_url": cached["artwork_url"],
+            "match_score": cached.get("match_score", 0),
+            "cached": True,
+        }
+    
     try:
-        # Build search query - prefer album if available, otherwise use title + artist
-        if album and artist:
-            search_term = f"{album} {artist}"
-        elif artist:
-            search_term = f"{title} {artist}"
-        else:
-            search_term = title
-        
-        # Search iTunes API with more results for better matching
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.get(
-                "https://itunes.apple.com/search",
-                params={
-                    "term": search_term,
-                    "media": "music",
-                    "limit": 10,  # Get more results for better matching
-                }
-            )
-            
-            if response.status_code == 200:
+        parsed = _enhanced_regex_parse(title, artist or "")
+        clean_title, clean_artist = parsed["title"], parsed["artist"]
+        clean_album = album or ""
+
+        async def _do_search(search_term: str):
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.get(
+                    "https://itunes.apple.com/search",
+                    params={"term": search_term, "media": "music", "limit": 10},
+                )
+                if response.status_code != 200:
+                    return None, [], 0
                 data = response.json()
                 results = data.get("results", [])
-                
-                if results:
-                    # Score each result and find the best match
-                    scored_results = []
-                    for result in results:
-                        artwork_url = result.get("artworkUrl100", "")
-                        if artwork_url:
-                            score = _score_itunes_result(result, title, artist, album)
-                            scored_results.append((score, artwork_url, result))
-                    
-                    if scored_results:
-                        # Sort by score (highest first) and get best match
-                        scored_results.sort(key=lambda x: x[0], reverse=True)
-                        best_score, best_artwork_url, best_result = scored_results[0]
-                        
-                        # Only use result if it has a reasonable score (at least 20)
-                        if best_score >= 20:
-                            # Replace with higher resolution (600x600 is max)
-                            artwork_url = best_artwork_url.replace("100x100", "600x600")
-                            return {
-                                "artwork_url": artwork_url,
-                                "match_score": best_score,
-                                "matched_artist": best_result.get("artistName"),
-                                "matched_track": best_result.get("trackName"),
-                            }
-                        
-                        # If no good match, still return the first result but with low confidence
-                        artwork_url = results[0].get("artworkUrl100", "").replace("100x100", "600x600")
-                        if artwork_url:
-                            return {
-                                "artwork_url": artwork_url,
-                                "match_score": best_score,
-                                "low_confidence": True
-                            }
-            
-            # If no results, return None
-            return {"artwork_url": None}
+                scored_results = []
+                for result in results:
+                    artwork_url = result.get("artworkUrl100", "")
+                    if artwork_url:
+                        score = _score_itunes_result(result, clean_title, clean_artist, clean_album)
+                        scored_results.append((score, artwork_url, result))
+                scored_results.sort(key=lambda x: x[0], reverse=True)
+                best_score = scored_results[0][0] if scored_results else 0
+                return search_term, scored_results, best_score
+        
+        # First attempt with cleaned search term
+        search_term = _build_search_term(title, artist or "", album or "", simplified=False)
+        _, scored_results, best_score = await _do_search(search_term)
+        
+        # Retry with simplified term if no results or no good match (score < 20)
+        if (not scored_results or best_score < 20):
+            retry_term = _build_search_term(title, artist or "", album or "", simplified=True)
+            if retry_term != search_term:
+                _, scored_results, best_score = await _do_search(retry_term)
+        
+        if scored_results:
+            best_score, best_artwork_url, best_result = scored_results[0]
+            if best_score >= 20:
+                artwork_url = best_artwork_url.replace("100x100", "600x600")
+                db.set_album_cover_cache(cache_key, artwork_url, best_score)
+                return {
+                    "artwork_url": artwork_url,
+                    "match_score": best_score,
+                    "matched_artist": best_result.get("artistName"),
+                    "matched_track": best_result.get("trackName"),
+                }
+            # Low confidence fallback: return result but don't cache (wrong track likely)
+            artwork_url = scored_results[0][1].replace("100x100", "600x600")
+            return {
+                "artwork_url": artwork_url,
+                "match_score": best_score,
+                "low_confidence": True,
+            }
+        
+        db.set_album_cover_cache(cache_key, None, 0)
+        return {"artwork_url": None}
     except Exception as e:
         print(f"Error fetching album cover: {e}")
         return {"artwork_url": None}

@@ -1,8 +1,11 @@
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 import 'dart:async';
 import '../services/lyrics_service.dart';
 import '../services/player_state_service.dart';
+import '../services/album_cover_service.dart';
 import '../models/lyrics.dart';
 
 class LyricsScreen extends StatefulWidget {
@@ -42,20 +45,24 @@ class LrcLine {
 class _LyricsScreenState extends State<LyricsScreen> {
   StreamSubscription<Duration>? _positionSubscription;
   Duration _currentPosition = Duration.zero;
-  final ScrollController _scrollController = ScrollController();
+  final ItemScrollController _itemScrollController = ItemScrollController();
+  final ItemPositionsListener _itemPositionsListener = ItemPositionsListener.create();
   int _highlightedLineIndex = -1;
   int _hoveredLineIndex = -1; // Track which line is being hovered
   List<LrcLine> _syncedLines = [];
   List<String> _plainLines = [];
+  String? _artworkUrl;
+  final AlbumCoverService _albumCoverService = AlbumCoverService();
 
   @override
   void initState() {
     super.initState();
-    // Fetch lyrics when screen opens
+    // Fetch lyrics and artwork when screen opens
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _fetchLyrics();
+      _loadArtwork();
     });
-    
+
     // Listen to position stream if player service is available
     if (widget.playerStateService != null) {
       _positionSubscription = widget.playerStateService!.audioPlayer.positionStream.listen((position) {
@@ -82,11 +89,31 @@ class _LyricsScreenState extends State<LyricsScreen> {
   }
 
   @override
+  void didUpdateWidget(covariant LyricsScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.trackName != widget.trackName ||
+        oldWidget.artistName != widget.artistName) {
+      _loadArtwork();
+    }
+  }
+
+  @override
   void dispose() {
     _positionSubscription?.cancel();
     widget.lyricsService.removeListener(_onLyricsChanged);
-    _scrollController.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadArtwork() async {
+    if (widget.trackName.isEmpty) return;
+    try {
+      final url = await _albumCoverService.resolveArtwork(
+        title: widget.trackName,
+        artist: widget.artistName,
+        album: widget.albumName ?? '',
+      );
+      if (mounted) setState(() => _artworkUrl = url);
+    } catch (_) {}
   }
 
   Future<void> _fetchLyrics() async {
@@ -188,35 +215,80 @@ class _LyricsScreenState extends State<LyricsScreen> {
   }
 
   void _scrollToLine(int lineIndex) {
-    if (!_scrollController.hasClients) return;
-    
-    // Calculate line height more accurately
-    // Font size: 16 * 1.5 = 24, line height: 24 * 1.8 = 43.2
-    // Vertical padding per item: 8.0 * 2 = 16.0
-    // Total per line item: ~59 pixels
-    const itemHeight = 59.0;
-    const listTopPadding = 24.0; // Top vertical padding from ListView
-    
-    // Calculate the center position of the target line item
-    // Position = top padding + (index * item height) + (item height / 2)
-    final targetLineCenter = listTopPadding + (lineIndex * itemHeight) + (itemHeight / 2);
-    
-    final maxScroll = _scrollController.position.maxScrollExtent;
-    final viewportHeight = _scrollController.position.viewportDimension;
-    final currentOffset = _scrollController.offset;
-    
-    // Calculate where the line center should be relative to viewport
-    final desiredOffset = targetLineCenter - viewportHeight / 2;
-    final centeredOffset = desiredOffset.clamp(0.0, maxScroll);
-    
-    // Only scroll if the line is not already reasonably centered (within 20 pixels)
-    if ((centeredOffset - currentOffset).abs() > 20.0) {
-      _scrollController.animateTo(
-        centeredOffset,
-        duration: const Duration(milliseconds: 300),
-        curve: Curves.easeInOut,
-      );
-    }
+    // +1 because index 0 is the top spacer
+    _itemScrollController.scrollTo(
+      index: lineIndex + 1,
+      alignment: 0.4, // Slightly above center for better context
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeInOut,
+    );
+  }
+
+  Widget _buildPlaceholderArtwork(BuildContext context) {
+    return Container(
+      width: 48,
+      height: 48,
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceVariant,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Icon(
+        Icons.music_note,
+        color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+        size: 24,
+      ),
+    );
+  }
+
+  Widget _buildBackground(BuildContext context) {
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        if (_artworkUrl != null && _artworkUrl!.isNotEmpty)
+          Positioned.fill(
+            child: ImageFiltered(
+              imageFilter: ImageFilter.blur(sigmaX: 60, sigmaY: 60),
+              child: Transform.scale(
+                scale: 1.2,
+                child: Image.network(
+                  _artworkUrl!,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => const SizedBox.expand(),
+                ),
+              ),
+            ),
+          )
+        else
+          Container(
+            decoration: BoxDecoration(
+              gradient: RadialGradient(
+                center: Alignment.center,
+                radius: 1.2,
+                colors: [
+                  Theme.of(context).colorScheme.secondary.withOpacity(0.15),
+                  Theme.of(context).colorScheme.surface,
+                ],
+              ),
+            ),
+          ),
+        // Dark gradient overlay for readability (lighter to show artwork through)
+        Positioned.fill(
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  Colors.black.withOpacity(0.55),
+                  Colors.black.withOpacity(0.65),
+                  Colors.black.withOpacity(0.75),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
   }
 
   Widget _buildContent() {
@@ -305,39 +377,72 @@ class _LyricsScreenState extends State<LyricsScreen> {
           return Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Track info header
-              Container(
-                width: double.infinity,
+              // Track info header with album art
+              Padding(
                 padding: const EdgeInsets.all(24.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
-                    Text(
-                      lyrics.trackName,
-                      style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                            fontWeight: FontWeight.bold,
-                          ),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: _artworkUrl != null && _artworkUrl!.isNotEmpty
+                          ? Image.network(
+                              _artworkUrl!,
+                              width: 48,
+                              height: 48,
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, __, ___) => _buildPlaceholderArtwork(context),
+                            )
+                          : _buildPlaceholderArtwork(context),
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      lyrics.artistName,
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            lyrics.trackName,
+                            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                                  fontWeight: FontWeight.bold,
+                                ),
                           ),
-                    ),
-                    if (lyrics.albumName != null && lyrics.albumName!.isNotEmpty) ...[
-                      const SizedBox(height: 4),
-                      Text(
-                        lyrics.albumName!,
-                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                              color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+                          const SizedBox(height: 4),
+                          Text(
+                            lyrics.artistName,
+                            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                                  color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
+                                ),
+                          ),
+                          if (lyrics.albumName != null && lyrics.albumName!.isNotEmpty) ...[
+                            const SizedBox(height: 4),
+                            Text(
+                              lyrics.albumName!,
+                              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                    color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+                                  ),
                             ),
+                          ],
+                        ],
                       ),
-                    ],
+                    ),
+                    if (_syncedLines.isNotEmpty)
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: Theme.of(context).colorScheme.secondary.withOpacity(0.3),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Text(
+                          'Synced',
+                          style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                                color: Theme.of(context).colorScheme.secondary,
+                                fontWeight: FontWeight.w600,
+                              ),
+                        ),
+                      ),
                   ],
                 ),
               ),
-              const Divider(height: 1),
               // Lyrics content
               Expanded(
                 child: _buildLyricsContent(context),
@@ -349,82 +454,106 @@ class _LyricsScreenState extends State<LyricsScreen> {
   }
 
   Widget _buildLyricsContent(BuildContext context) {
-    // Use synced lyrics if available, otherwise use plain lyrics
     final hasSynced = _syncedLines.isNotEmpty;
     final itemCount = hasSynced ? _syncedLines.length : _plainLines.length;
-    
+
     if (itemCount == 0) {
       return const Center(
         child: Text('No lyrics to display'),
       );
     }
 
-    // Faint purple color for highlighting (secondaryAccent with low opacity)
-    final highlightColor = Theme.of(context).colorScheme.secondary.withOpacity(0.35);
-    final baseTextStyle = Theme.of(context).textTheme.bodyLarge?.copyWith(
-      fontSize: (Theme.of(context).textTheme.bodyLarge?.fontSize ?? 16) * 1.5,
-      height: 1.8,
-      letterSpacing: 0.3,
-    );
+    final baseFontSize = (Theme.of(context).textTheme.bodyLarge?.fontSize ?? 16) * 1.5;
+    final viewportHeight = MediaQuery.of(context).size.height;
+    final spacerHeight = viewportHeight * 0.4;
 
-    // Faint purple color for hover (same as highlight but slightly different)
-    final hoverColor = Theme.of(context).colorScheme.secondary.withOpacity(0.5);
-    
-    return ListView.builder(
-      controller: _scrollController,
-      padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 24.0),
-      itemCount: itemCount,
+    // Spacer items at start and end so first/last lines can scroll to center
+    const spacerCount = 2;
+    final totalItemCount = spacerCount + itemCount;
+
+    return ScrollablePositionedList.builder(
+      itemScrollController: _itemScrollController,
+      itemPositionsListener: _itemPositionsListener,
+      padding: const EdgeInsets.symmetric(horizontal: 24.0),
+      itemCount: totalItemCount,
       itemBuilder: (context, index) {
-        final isHighlighted = index == _highlightedLineIndex;
-        final isHovered = index == _hoveredLineIndex;
-        final text = hasSynced ? _syncedLines[index].text : _plainLines[index];
-        final timestamp = hasSynced ? _syncedLines[index].timestamp : null;
-        
-        // Make lyrics clickable only if synced lyrics are available and player service exists
-        final isClickable = hasSynced && timestamp != null && widget.playerStateService != null;
-        
-        // Determine text color: highlighted > hovered > normal
-        Color textColor;
-        if (isHighlighted) {
-          textColor = highlightColor;
-        } else if (isHovered && isClickable) {
-          textColor = hoverColor;
-        } else {
-          textColor = Theme.of(context).colorScheme.onSurface.withOpacity(0.9);
+        if (index == 0 || index == totalItemCount - 1) {
+          return SizedBox(height: spacerHeight);
         }
-        
-        Widget textWidget = isClickable
-            ? Text(
-                text,
-                style: baseTextStyle?.copyWith(
-                  color: textColor,
-                  fontWeight: isHighlighted ? FontWeight.w500 : FontWeight.normal,
-                ),
-                textAlign: TextAlign.left,
-              )
-            : SelectableText(
-                text,
-                style: baseTextStyle?.copyWith(
-                  color: textColor,
-                  fontWeight: isHighlighted ? FontWeight.w500 : FontWeight.normal,
-                ),
-                textAlign: TextAlign.left,
-              );
-        
-        // Wrap in InkWell if clickable for better tap handling
+
+        final lineIndex = index - 1;
+        final isHighlighted = lineIndex == _highlightedLineIndex;
+        final isHovered = lineIndex == _hoveredLineIndex;
+        final text = hasSynced ? _syncedLines[lineIndex].text : _plainLines[lineIndex];
+        final timestamp = hasSynced ? _syncedLines[lineIndex].timestamp : null;
+        final isClickable =
+            hasSynced && timestamp != null && widget.playerStateService != null;
+
+        // Progressive opacity: active full, adjacent 70%, distant 35%
+        double opacity;
+        double fontSize;
+        FontWeight fontWeight;
+        List<Shadow>? shadows;
+        if (hasSynced && _highlightedLineIndex >= 0) {
+          final distance = (lineIndex - _highlightedLineIndex).abs();
+          if (distance == 0) {
+            opacity = 1.0;
+            fontSize = baseFontSize * 1.2;
+            fontWeight = FontWeight.w700;
+            shadows = [
+              Shadow(
+                color: Theme.of(context).colorScheme.secondary.withOpacity(0.6),
+                blurRadius: 20,
+                offset: Offset.zero,
+              ),
+            ];
+          } else if (distance <= 2) {
+            opacity = 0.7;
+            fontSize = baseFontSize;
+            fontWeight = FontWeight.normal;
+            shadows = null;
+          } else {
+            opacity = 0.35;
+            fontSize = baseFontSize;
+            fontWeight = FontWeight.normal;
+            shadows = null;
+          }
+        } else {
+          opacity = 0.9;
+          fontSize = baseFontSize;
+          fontWeight = FontWeight.normal;
+          shadows = null;
+        }
+
+        if (isHovered && isClickable) {
+          opacity = 0.85;
+        }
+
+        final textStyle = TextStyle(
+          fontSize: fontSize,
+          height: 1.8,
+          letterSpacing: 0.3,
+          color: Colors.white.withOpacity(opacity),
+          fontWeight: fontWeight,
+          shadows: shadows,
+        );
+
+        Widget textWidget = AnimatedDefaultTextStyle(
+          duration: const Duration(milliseconds: 250),
+          curve: Curves.easeOut,
+          style: textStyle,
+          child: isClickable
+              ? Text(text, textAlign: TextAlign.center)
+              : SelectableText(text, textAlign: TextAlign.center),
+        );
+
         if (isClickable) {
           textWidget = InkWell(
             onTap: () async {
-              // Seek to the timestamp of this lyric line
               if (widget.playerStateService != null && timestamp != null) {
                 try {
-                  // Use the seek method directly, same as bottom player
                   await widget.playerStateService!.audioPlayer.seek(timestamp);
-                  print('Seeking to: ${timestamp.inSeconds}s');
-                } catch (e) {
-                  // Log seek errors for debugging
-                  print('Seek error: $e');
-                }
+                } catch (_) {}
               }
             },
             splashColor: Colors.transparent,
@@ -432,26 +561,18 @@ class _LyricsScreenState extends State<LyricsScreen> {
             hoverColor: Colors.transparent,
             child: MouseRegion(
               cursor: SystemMouseCursors.click,
-              onEnter: (_) {
-                setState(() {
-                  _hoveredLineIndex = index;
-                });
-              },
-              onExit: (_) {
-                setState(() {
-                  _hoveredLineIndex = -1;
-                });
-              },
+              onEnter: (_) => setState(() => _hoveredLineIndex = lineIndex),
+              onExit: (_) => setState(() => _hoveredLineIndex = -1),
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 4.0, vertical: 2.0),
+                padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 12.0),
                 child: textWidget,
               ),
             ),
           );
         }
-        
+
         return Padding(
-          padding: const EdgeInsets.symmetric(vertical: 8.0),
+          padding: const EdgeInsets.symmetric(vertical: 4.0),
           child: textWidget,
         );
       },
@@ -460,34 +581,45 @@ class _LyricsScreenState extends State<LyricsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    if (widget.embedded) {
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Header with back button
-          Padding(
-            padding: const EdgeInsets.all(24.0),
-            child: Row(
-              children: [
-                IconButton(
-                  icon: const Icon(Icons.arrow_back),
-                  onPressed: widget.onBack ?? () => Navigator.of(context).pop(),
-                  tooltip: 'Back',
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
+    final content = widget.embedded
+        ? Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(24.0),
+                child: Row(
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.arrow_back),
+                      onPressed: widget.onBack ?? () => Navigator.of(context).pop(),
+                      tooltip: 'Back',
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
                         'Lyrics',
                         style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                               fontWeight: FontWeight.w700,
                             ),
                       ),
-                    ],
-                  ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.refresh),
+                      onPressed: _fetchLyrics,
+                      tooltip: 'Refresh lyrics',
+                    ),
+                  ],
                 ),
+              ),
+              Expanded(child: _buildContent()),
+            ],
+          )
+        : Scaffold(
+            appBar: AppBar(
+              title: const Text('Lyrics'),
+              backgroundColor: Colors.transparent,
+              elevation: 0,
+              actions: [
                 IconButton(
                   icon: const Icon(Icons.refresh),
                   onPressed: _fetchLyrics,
@@ -495,24 +627,26 @@ class _LyricsScreenState extends State<LyricsScreen> {
                 ),
               ],
             ),
-          ),
-          Expanded(child: _buildContent()),
-        ],
+            extendBodyBehindAppBar: true,
+            body: Stack(
+              children: [
+                Positioned.fill(child: _buildBackground(context)),
+                SafeArea(child: _buildContent()),
+              ],
+            ),
+          );
+
+    if (widget.embedded) {
+      return ClipRect(
+        child: Stack(
+          children: [
+            Positioned.fill(child: _buildBackground(context)),
+            content,
+          ],
+        ),
       );
     }
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Lyrics'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: _fetchLyrics,
-            tooltip: 'Refresh lyrics',
-          ),
-        ],
-      ),
-      body: _buildContent(),
-    );
+    return content;
   }
 }
