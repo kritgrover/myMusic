@@ -1360,7 +1360,9 @@ class _HomeScreenState extends State<HomeScreen> {
             child: NavigationRail(
               selectedIndex: _currentIndex,
               onDestinationSelected: (index) {
+                FocusScope.of(context).unfocus();  // Dismiss keyboard when switching tabs (e.g. from search)
                 setState(() {
+                  _showLyrics = false;   // Dismiss lyrics when switching tabs (only overlay that blocks all tabs)
                   _currentIndex = index;
                 });
               },
