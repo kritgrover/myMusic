@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../utils/responsive_utils.dart';
 import '../services/api_service.dart'; // For VideoInfo
 import 'video_card.dart';
 
@@ -30,7 +31,12 @@ class HorizontalSongList extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 8.0),
+          padding: EdgeInsets.only(
+            left: ResponsiveUtils.responsiveValue<double>(context, compact: 12, medium: 20, expanded: 24),
+            right: ResponsiveUtils.responsiveValue<double>(context, compact: 12, medium: 20, expanded: 24),
+            top: 8,
+            bottom: 8,
+          ),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -66,16 +72,19 @@ class HorizontalSongList extends StatelessWidget {
           ),
         ),
         SizedBox(
-          height: 230, // Height for square card (160) + spacing (8) + title/subtitle (~52)
+          height: ResponsiveUtils.responsiveHorizontalListHeight(context),
           child: ListView.separated(
-            padding: const EdgeInsets.symmetric(horizontal: 24.0),
+            padding: ResponsiveUtils.responsiveHorizontalPadding(context),
             scrollDirection: Axis.horizontal,
             itemCount: displayedSongs.length,
-            separatorBuilder: (context, index) => const SizedBox(width: 24),
+            separatorBuilder: (context, index) => SizedBox(
+              width: ResponsiveUtils.responsiveValue<double>(context, compact: 16, medium: 20, expanded: 24),
+            ),
             itemBuilder: (context, index) {
               final song = displayedSongs[index];
+              final cardWidth = ResponsiveUtils.responsiveHorizontalCardWidth(context);
               return SizedBox(
-                width: 160,
+                width: cardWidth,
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -87,13 +96,13 @@ class HorizontalSongList extends StatelessWidget {
                           borderRadius: BorderRadius.circular(8),
                           child: Image.network(
                             song.thumbnail,
-                            width: 160,
-                            height: 160,
+                            width: cardWidth,
+                            height: cardWidth,
                             fit: BoxFit.cover,
                             errorBuilder: (context, error, stackTrace) {
                               return Container(
-                                width: 160,
-                                height: 160,
+                                width: cardWidth,
+                                height: cardWidth,
                                 color: Colors.grey[800],
                                 child: const Icon(Icons.music_note, size: 48),
                               );

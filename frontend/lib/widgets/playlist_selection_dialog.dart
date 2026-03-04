@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../utils/responsive_utils.dart';
 import '../models/playlist.dart';
 import '../services/playlist_service.dart';
 
@@ -135,8 +136,10 @@ class _PlaylistSelectionDialogState extends State<PlaylistSelectionDialog> {
         borderRadius: BorderRadius.circular(16),
       ),
       child: Container(
-        width: MediaQuery.of(context).size.width * 0.5,
-        constraints: const BoxConstraints(maxHeight: 500),
+        width: ResponsiveUtils.responsiveDialogWidth(context),
+        constraints: BoxConstraints(
+          maxHeight: ResponsiveUtils.responsiveDialogHeight(context),
+        ),
         decoration: BoxDecoration(
           color: surfaceColor,
           borderRadius: BorderRadius.circular(16),

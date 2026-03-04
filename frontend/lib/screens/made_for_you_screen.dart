@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../utils/responsive_utils.dart';
 import '../services/player_state_service.dart';
 import '../services/queue_service.dart';
 import '../services/recently_played_service.dart';
@@ -185,7 +186,7 @@ class _MadeForYouScreenState extends State<MadeForYouScreen> {
       children: [
         // Header with back button
         Padding(
-          padding: const EdgeInsets.all(24.0),
+          padding: ResponsiveUtils.responsivePadding(context),
           child: Row(
             children: [
               IconButton(
@@ -232,7 +233,12 @@ class _MadeForYouScreenState extends State<MadeForYouScreen> {
               children: [
                 // Play All button
                 Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 8.0),
+                  padding: EdgeInsets.only(
+                    left: ResponsiveUtils.responsiveValue<double>(context, compact: 12, medium: 20, expanded: 24),
+                    right: ResponsiveUtils.responsiveValue<double>(context, compact: 12, medium: 20, expanded: 24),
+                    top: 8,
+                    bottom: 8,
+                  ),
                   child: Row(
                     children: [
                       ElevatedButton.icon(
@@ -257,7 +263,7 @@ class _MadeForYouScreenState extends State<MadeForYouScreen> {
                 // Track list
                 Expanded(
                   child: ListView.builder(
-                    padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                    padding: ResponsiveUtils.responsiveHorizontalPadding(context),
                     itemCount: widget.songs.length,
                     itemBuilder: (context, index) {
                       final song = widget.songs[index];
@@ -269,19 +275,22 @@ class _MadeForYouScreenState extends State<MadeForYouScreen> {
                             child: song.thumbnail.isNotEmpty
                                 ? Image.network(
                                     song.thumbnail,
-                                    width: 48,
-                                    height: 48,
+                                    width: ResponsiveUtils.responsiveIconSize(context, base: 48),
+                                    height: ResponsiveUtils.responsiveIconSize(context, base: 48),
                                     fit: BoxFit.cover,
-                                    errorBuilder: (_, __, ___) => Container(
-                                      width: 48,
-                                      height: 48,
-                                      color: Theme.of(context).colorScheme.surfaceVariant,
-                                      child: const Icon(Icons.music_note),
-                                    ),
+                                    errorBuilder: (_, __, ___) {
+                                      final size = ResponsiveUtils.responsiveIconSize(context, base: 48);
+                                      return Container(
+                                        width: size,
+                                        height: size,
+                                        color: Theme.of(context).colorScheme.surfaceVariant,
+                                        child: const Icon(Icons.music_note),
+                                      );
+                                    },
                                   )
                                 : Container(
-                                    width: 48,
-                                    height: 48,
+                                    width: ResponsiveUtils.responsiveIconSize(context, base: 48),
+                                    height: ResponsiveUtils.responsiveIconSize(context, base: 48),
                                     color: Theme.of(context).colorScheme.surfaceVariant,
                                     child: const Icon(Icons.music_note),
                                   ),

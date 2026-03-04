@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
+import '../utils/responsive_utils.dart';
 import '../services/audio_player_service.dart';
 import '../services/queue_service.dart';
 import '../services/player_state_service.dart';
@@ -255,7 +256,7 @@ class _BottomPlayerState extends State<BottomPlayer> {
               ),
             // Player controls
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 12.0),
+              padding: ResponsiveUtils.responsiveSymmetricPadding(context, horizontal: ResponsiveUtils.responsiveValue<double>(context, compact: 12, medium: 20, expanded: 24), vertical: 12),
               child: Row(
                 children: [
                   // Track info
@@ -267,7 +268,7 @@ class _BottomPlayerState extends State<BottomPlayer> {
                           title: title,
                           artist: artist,
                           artworkUrl: artworkUrl,
-                          size: 56,
+                          size: ResponsiveUtils.responsiveIconSize(context, base: 56),
                           backgroundColor: primaryColor.withOpacity(0.15),
                           iconColor: primaryColor,
                           onArtworkResolved: widget.queueService != null && widget.queueService!.currentItem != null
@@ -538,7 +539,7 @@ class _BottomPlayerState extends State<BottomPlayer> {
                       ),
                       const SizedBox(width: 8),
                       SizedBox(
-                        width: 100,
+                        width: ResponsiveUtils.responsiveVolumeSliderWidth(context),
                         child: Slider(
                           value: _isDraggingVolume ? _dragVolumeValue : _volume,
                           min: 0.0,

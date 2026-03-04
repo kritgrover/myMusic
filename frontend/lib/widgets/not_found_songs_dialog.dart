@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../utils/responsive_utils.dart';
 import '../services/api_service.dart';
 import '../services/playlist_service.dart';
 import '../widgets/video_card.dart';
@@ -194,9 +195,11 @@ class _NotFoundSongsDialogState extends State<NotFoundSongsDialog> {
 
     return Dialog(
       child: Container(
-        width: 800,
-        height: 600,
-        padding: const EdgeInsets.all(24),
+        width: ResponsiveUtils.responsiveDialogWidth(context),
+        constraints: BoxConstraints(
+          maxHeight: ResponsiveUtils.responsiveDialogHeight(context),
+        ),
+        padding: ResponsiveUtils.responsivePadding(context),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
+import '../utils/responsive_utils.dart';
 import '../services/audio_player_service.dart';
 
 const Color neonBlue = Color(0xFF00D9FF);
@@ -62,35 +63,42 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final iconSize = ResponsiveUtils.responsiveLargeIconSize(context, base: 120);
+    final controlIconSize = ResponsiveUtils.responsiveValue<double>(context, compact: 40, medium: 48, expanded: 56);
+    final playIconSize = ResponsiveUtils.responsiveValue<double>(context, compact: 48, medium: 56, expanded: 64);
     return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(
-            Icons.music_note,
-            size: 120,
-            color: neonBlue,
-          ),
-          const SizedBox(height: 32),
-          Text(
-            _playerService.currentUrl ?? 'No track selected',
-            style: Theme.of(context).textTheme.titleLarge,
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 32),
-          Slider(
-            value: _duration.inMilliseconds > 0
-                ? _position.inMilliseconds.toDouble()
-                : 0.0,
-            max: _duration.inMilliseconds > 0
-                ? _duration.inMilliseconds.toDouble()
-                : 1.0,
-            onChanged: (value) {
-              _seekTo(Duration(milliseconds: value.toInt()));
-            },
-          ),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxWidth: ResponsiveUtils.responsiveValue<double>(context, compact: 400, medium: 500, expanded: 600),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.music_note,
+              size: iconSize,
+              color: neonBlue,
+            ),
+            const SizedBox(height: 32),
+            Text(
+              _playerService.currentUrl ?? 'No track selected',
+              style: Theme.of(context).textTheme.titleLarge,
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 32),
+            Slider(
+              value: _duration.inMilliseconds > 0
+                  ? _position.inMilliseconds.toDouble()
+                  : 0.0,
+              max: _duration.inMilliseconds > 0
+                  ? _duration.inMilliseconds.toDouble()
+                  : 1.0,
+              onChanged: (value) {
+                _seekTo(Duration(milliseconds: value.toInt()));
+              },
+            ),
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16.0),
+            padding: ResponsiveUtils.responsiveHorizontalPadding(context),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
@@ -105,14 +113,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
             children: [
               IconButton(
                 icon: const Icon(Icons.skip_previous),
-                iconSize: 48,
+                iconSize: controlIconSize,
                 onPressed: () {
                   // Previous track functionality
                 },
               ),
               IconButton(
                 icon: Icon(_isPlaying ? Icons.pause : Icons.play_arrow),
-                iconSize: 64,
+                iconSize: playIconSize,
                 onPressed: () async {
                   if (_isPlaying) {
                     await _playerService.pause();
@@ -123,7 +131,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
               ),
               IconButton(
                 icon: const Icon(Icons.skip_next),
-                iconSize: 48,
+                iconSize: controlIconSize,
                 onPressed: () {
                   // Next track functionality
                 },
@@ -131,6 +139,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
             ],
           ),
         ],
+        ),
       ),
     );
   }

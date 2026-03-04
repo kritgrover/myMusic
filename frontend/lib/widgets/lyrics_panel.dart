@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../utils/responsive_utils.dart';
 import '../services/lyrics_service.dart';
 import '../models/lyrics.dart';
 
@@ -24,7 +25,7 @@ class LyricsPanel extends StatelessWidget {
     final dividerColor = Theme.of(context).dividerColor;
 
     return Container(
-      width: 400,
+      width: ResponsiveUtils.responsivePanelWidth(context),
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.surface,
         border: Border(

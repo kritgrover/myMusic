@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../utils/responsive_utils.dart';
 import '../services/playlist_service.dart';
 import '../models/playlist.dart';
 import '../services/player_state_service.dart';
@@ -294,7 +295,7 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
     return Column(
       children: [
         Padding(
-          padding: const EdgeInsets.all(24.0),
+          padding: ResponsiveUtils.responsivePadding(context),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -346,7 +347,7 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
                       : RefreshIndicator(
                           onRefresh: _loadPlaylists,
                           child: ListView.separated(
-                            padding: const EdgeInsets.symmetric(horizontal: 24),
+                            padding: ResponsiveUtils.responsiveHorizontalPadding(context),
                             itemCount: filteredPlaylists.length,
                             separatorBuilder: (context, index) => const SizedBox(height: 12),
                             itemBuilder: (context, index) {
@@ -423,64 +424,69 @@ class _PlaylistCardState extends State<_PlaylistCard> {
             borderRadius: BorderRadius.circular(12),
             hoverColor: widget.surfaceHover.withOpacity(0.5),
             child: Padding(
-              padding: const EdgeInsets.all(16.0),
+              padding: ResponsiveUtils.responsivePadding(context),
               child: Row(
                 children: [
                   Stack(
                     clipBehavior: Clip.none,
                     children: [
-                      Container(
-                        width: 64,
-                        height: 64,
-                        decoration: BoxDecoration(
+                      Builder(
+                        builder: (context) {
+                          final coverSize = ResponsiveUtils.responsiveIconSize(context, base: 64);
+                          return Container(
+                            width: coverSize,
+                            height: coverSize,
+                            decoration: BoxDecoration(
                           color: widget.primaryColor.withOpacity(0.15),
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: widget.coverImageUrl != null
-                            ? ClipRRect(
-                                borderRadius: BorderRadius.circular(10),
-                                child: Stack(
-                                  fit: StackFit.expand,
-                                  children: [
-                                    Image.network(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: widget.coverImageUrl != null
+                                ? ClipRRect(
+                                    borderRadius: BorderRadius.circular(10),
+                                    child: Stack(
+                                      fit: StackFit.expand,
+                                      children: [
+                                        Image.network(
                                       widget.coverImageUrl!,
-                                      width: 64,
-                                      height: 64,
-                                      fit: BoxFit.cover,
-                                      errorBuilder: (context, error, stackTrace) {
-                                        return Icon(
-                                          Icons.playlist_play,
-                                          size: 32,
-                                          color: widget.primaryColor,
-                                        );
-                                      },
-                                    ),
-                                    Positioned(
-                                      left: 0,
-                                      right: 0,
-                                      bottom: 0,
-                                      child: Container(
-                                        height: 20,
-                                        decoration: BoxDecoration(
-                                          gradient: LinearGradient(
-                                            begin: Alignment.topCenter,
-                                            end: Alignment.bottomCenter,
-                                            colors: [
-                                              Colors.transparent,
-                                              Colors.black.withOpacity(0.3),
-                                            ],
+                                          width: coverSize,
+                                          height: coverSize,
+                                          fit: BoxFit.cover,
+                                          errorBuilder: (context, error, stackTrace) {
+                                            return Icon(
+                                              Icons.playlist_play,
+                                              size: 32,
+                                              color: widget.primaryColor,
+                                            );
+                                          },
+                                        ),
+                                        Positioned(
+                                          left: 0,
+                                          right: 0,
+                                          bottom: 0,
+                                          child: Container(
+                                            height: 20,
+                                            decoration: BoxDecoration(
+                                              gradient: LinearGradient(
+                                                begin: Alignment.topCenter,
+                                                end: Alignment.bottomCenter,
+                                                colors: [
+                                                  Colors.transparent,
+                                                  Colors.black.withOpacity(0.3),
+                                                ],
+                                              ),
+                                            ),
                                           ),
                                         ),
-                                      ),
+                                      ],
                                     ),
-                                  ],
-                                ),
-                              )
-                            : Icon(
-                                Icons.playlist_play,
-                                size: 32,
-                                color: widget.primaryColor,
-                              ),
+                                  )
+                                : Icon(
+                                    Icons.playlist_play,
+                                    size: 32,
+                                    color: widget.primaryColor,
+                                  ),
+                          );
+                        },
                       ),
                     ],
                   ),

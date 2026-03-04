@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../utils/responsive_utils.dart';
 
 /// Reusable empty state with icon, title, subtitle, optional action,
 /// and soft gradient background. Used in Downloads, Playlists, Profile.
@@ -25,14 +26,14 @@ class EmptyStateWidget extends StatelessWidget {
 
     return Center(
       child: Padding(
-        padding: const EdgeInsets.all(32.0),
+        padding: ResponsiveUtils.responsivePadding(context),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             // Gradient circle background for icon
             Container(
-              width: 120,
-              height: 120,
+              width: ResponsiveUtils.responsiveValue<double>(context, compact: 100, medium: 110, expanded: 120),
+              height: ResponsiveUtils.responsiveValue<double>(context, compact: 100, medium: 110, expanded: 120),
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 gradient: RadialGradient(
@@ -48,7 +49,7 @@ class EmptyStateWidget extends StatelessWidget {
               ),
               child: Icon(
                 icon,
-                size: 56,
+                size: ResponsiveUtils.responsiveIconSize(context, base: 56),
                 color: onSurface.withOpacity(0.5),
               ),
             ),

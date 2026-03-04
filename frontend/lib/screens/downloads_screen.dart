@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../utils/responsive_utils.dart';
 import '../services/api_service.dart';
 import '../services/player_state_service.dart';
 import '../services/queue_service.dart';
@@ -201,7 +202,7 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
     return Column(
       children: [
         Padding(
-          padding: const EdgeInsets.all(24.0),
+          padding: ResponsiveUtils.responsivePadding(context),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -246,7 +247,7 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
                             subtitle: 'Try a different search term.',
                           )
                         : ListView.separated(
-                            padding: const EdgeInsets.symmetric(horizontal: 24),
+                            padding: ResponsiveUtils.responsiveHorizontalPadding(context),
                             itemCount: filteredDownloads.length,
                             separatorBuilder: (context, index) => const SizedBox(height: 8),
                             itemBuilder: (context, index) {
@@ -292,7 +293,7 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
                                             filename: file.filename,
                                             title: file.title,
                                             artist: file.artist,
-                                            size: 48,
+                                            size: ResponsiveUtils.responsiveIconSize(context, base: 48),
                                           ),
                                         ),
                                         const SizedBox(width: 16),

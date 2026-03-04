@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../utils/responsive_utils.dart';
 
 import '../services/auth_service.dart';
 import '../services/profile_service.dart';
@@ -289,7 +290,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final surfaceColor = Theme.of(context).colorScheme.surface;
 
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(24),
+      padding: ResponsiveUtils.responsivePadding(context),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -311,7 +312,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 left: -40,
                 right: -40,
                 child: Container(
-                  height: 180,
+                  height: ResponsiveUtils.responsiveValue<double>(context, compact: 140, medium: 160, expanded: 180),
                   decoration: BoxDecoration(
                     gradient: RadialGradient(
                       center: Alignment.topCenter,
@@ -542,7 +543,7 @@ class _StatCardState extends State<_StatCard> {
       onEnter: (_) => setState(() => _isHovered = true),
       onExit: (_) => setState(() => _isHovered = false),
       child: SizedBox(
-        width: 170,
+        width: ResponsiveUtils.responsiveValue<double>(context, compact: 140, medium: 155, expanded: 170),
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 200),
           decoration: BoxDecoration(

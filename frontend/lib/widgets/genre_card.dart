@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../utils/responsive_utils.dart';
 
 class GenreCard extends StatefulWidget {
   final String genre;
@@ -61,8 +62,8 @@ class _GenreCardState extends State<GenreCard> {
                     top: -20,
                     right: -20,
                     child: Container(
-                      width: 80,
-                      height: 80,
+                      width: ResponsiveUtils.responsiveMediumIconSize(context, base: 80),
+                      height: ResponsiveUtils.responsiveMediumIconSize(context, base: 80),
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
                         color: Colors.white.withOpacity(0.1),
@@ -73,8 +74,8 @@ class _GenreCardState extends State<GenreCard> {
                     bottom: -30,
                     left: -30,
                     child: Container(
-                      width: 100,
-                      height: 100,
+                      width: ResponsiveUtils.responsiveValue<double>(context, compact: 80, medium: 90, expanded: 100),
+                      height: ResponsiveUtils.responsiveValue<double>(context, compact: 80, medium: 90, expanded: 100),
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
                         color: Colors.white.withOpacity(0.08),
@@ -94,10 +95,9 @@ class _GenreCardState extends State<GenreCard> {
                         const SizedBox(height: 8),
                         Text(
                           widget.genre,
-                          style: TextStyle(
+                          style: Theme.of(context).textTheme.titleMedium?.copyWith(
                             color: Colors.white,
                             fontWeight: FontWeight.w700,
-                            fontSize: 18,
                             letterSpacing: 0.5,
                             shadows: [
                               Shadow(
