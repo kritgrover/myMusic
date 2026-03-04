@@ -163,11 +163,45 @@ class _GenreScreenState extends State<GenreScreen> {
   }
 
   Future<void> _showAddToPlaylistDialog(PlaylistTrack track) async {
+    // Resolve Spotify/non-YouTube URLs to YouTube so the playlist stores the correct URL
+    final youtubeUrl = await _apiService.resolveToYouTubeUrl(
+      track.url,
+      track.title,
+      track.artist,
+    );
+
+    final needsYoutube = track.url == null ||
+        track.url!.isEmpty ||
+        (!track.url!.contains('youtube.com') && !track.url!.contains('youtu.be'));
+    if (needsYoutube && youtubeUrl == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Could not find "${track.title}" on YouTube'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+      return;
+    }
+
+    final resolvedTrack = PlaylistTrack(
+      id: track.id,
+      title: track.title,
+      artist: track.artist,
+      album: track.album,
+      filename: track.filename,
+      url: youtubeUrl ?? track.url,
+      thumbnail: track.thumbnail,
+      duration: track.duration,
+    );
+
+    if (!mounted) return;
     await showDialog(
       context: context,
       builder: (context) => PlaylistSelectionDialog(
         playlistService: _playlistService,
-        track: track,
+        track: resolvedTrack,
       ),
     );
   }

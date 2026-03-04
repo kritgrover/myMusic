@@ -124,7 +124,39 @@ class _MadeForYouScreenState extends State<MadeForYouScreen> {
   }
 
   Future<void> _showAddToPlaylistDialog(VideoInfo song) async {
-    final track = PlaylistTrack.fromVideoInfo(song);
+    // Resolve Spotify/non-YouTube URLs to YouTube so the playlist stores the correct URL
+    final youtubeUrl = await _apiService.resolveToYouTubeUrl(
+      song.url,
+      song.title,
+      song.uploader,
+    );
+
+    final needsYoutube = song.url == null ||
+        song.url!.isEmpty ||
+        (!song.url!.contains('youtube.com') && !song.url!.contains('youtu.be'));
+    if (needsYoutube && youtubeUrl == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Could not find "${song.title}" on YouTube'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+      return;
+    }
+
+    final track = PlaylistTrack(
+      id: song.id,
+      title: song.title,
+      artist: song.uploader,
+      filename: '',
+      url: youtubeUrl ?? song.url,
+      thumbnail: song.thumbnail,
+      duration: song.duration is double ? song.duration : (song.duration?.toDouble()),
+    );
+
+    if (!mounted) return;
     await showDialog(
       context: context,
       builder: (context) => PlaylistSelectionDialog(
