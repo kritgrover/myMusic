@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
+import '../utils/responsive_utils.dart';
 
 class VideoCard extends StatelessWidget {
   final VideoInfo video;
@@ -35,20 +36,21 @@ class VideoCard extends StatelessWidget {
           borderRadius: BorderRadius.circular(12),
           hoverColor: surfaceHover,
           child: Padding(
-            padding: const EdgeInsets.all(16.0),
+            padding: ResponsiveUtils.responsivePadding(context),
             child: Row(
               children: [
                 ClipRRect(
                   borderRadius: BorderRadius.circular(10),
                   child: Image.network(
                     video.thumbnail,
-                    width: 80,
-                    height: 80,
+                    width: ResponsiveUtils.responsiveMediumIconSize(context, base: 80),
+                    height: ResponsiveUtils.responsiveMediumIconSize(context, base: 80),
                     fit: BoxFit.cover,
                     errorBuilder: (context, error, stackTrace) {
+                      final size = ResponsiveUtils.responsiveMediumIconSize(context, base: 80);
                       return Container(
-                        width: 80,
-                        height: 80,
+                        width: size,
+                        height: size,
                         color: surfaceHover,
                         child: Icon(
                           Icons.music_note,

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'dart:html' as html;
+import '../utils/responsive_utils.dart';
 import 'dart:typed_data';
 import '../services/api_service.dart';
 import '../services/playlist_service.dart';
@@ -175,7 +176,7 @@ class _CsvUploadScreenState extends State<CsvUploadScreen> {
     return Column(
       children: [
         Padding(
-          padding: const EdgeInsets.all(24.0),
+          padding: ResponsiveUtils.responsivePadding(context),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -310,7 +311,7 @@ class _CsvUploadScreenState extends State<CsvUploadScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Padding(
-                  padding: const EdgeInsets.all(24.0),
+                  padding: ResponsiveUtils.responsivePadding(context),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [

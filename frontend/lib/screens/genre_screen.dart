@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../utils/responsive_utils.dart';
 import '../services/recommendation_service.dart';
 import '../services/player_state_service.dart';
 import '../services/queue_service.dart';
@@ -163,11 +164,45 @@ class _GenreScreenState extends State<GenreScreen> {
   }
 
   Future<void> _showAddToPlaylistDialog(PlaylistTrack track) async {
+    // Resolve Spotify/non-YouTube URLs to YouTube so the playlist stores the correct URL
+    final youtubeUrl = await _apiService.resolveToYouTubeUrl(
+      track.url,
+      track.title,
+      track.artist,
+    );
+
+    final needsYoutube = track.url == null ||
+        track.url!.isEmpty ||
+        (!track.url!.contains('youtube.com') && !track.url!.contains('youtu.be'));
+    if (needsYoutube && youtubeUrl == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Could not find "${track.title}" on YouTube'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+      return;
+    }
+
+    final resolvedTrack = PlaylistTrack(
+      id: track.id,
+      title: track.title,
+      artist: track.artist,
+      album: track.album,
+      filename: track.filename,
+      url: youtubeUrl ?? track.url,
+      thumbnail: track.thumbnail,
+      duration: track.duration,
+    );
+
+    if (!mounted) return;
     await showDialog(
       context: context,
       builder: (context) => PlaylistSelectionDialog(
         playlistService: _playlistService,
-        track: track,
+        track: resolvedTrack,
       ),
     );
   }
@@ -223,7 +258,12 @@ class _GenreScreenState extends State<GenreScreen> {
         children: [
           // Play All button
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 8.0),
+            padding: EdgeInsets.only(
+              left: ResponsiveUtils.responsiveValue<double>(context, compact: 12, medium: 20, expanded: 24),
+              right: ResponsiveUtils.responsiveValue<double>(context, compact: 12, medium: 20, expanded: 24),
+              top: 8,
+              bottom: 8,
+            ),
             child: Row(
               children: [
                 ElevatedButton.icon(
@@ -248,7 +288,7 @@ class _GenreScreenState extends State<GenreScreen> {
           // Track list
           Expanded(
             child: ListView.builder(
-              padding: const EdgeInsets.symmetric(horizontal: 16.0),
+              padding: ResponsiveUtils.responsiveHorizontalPadding(context),
               itemCount: _tracks.length,
               itemBuilder: (context, index) {
                 final track = _tracks[index];
@@ -260,21 +300,29 @@ class _GenreScreenState extends State<GenreScreen> {
                       child: track.thumbnail != null
                           ? Image.network(
                               track.thumbnail!,
-                              width: 48,
-                              height: 48,
+                              width: ResponsiveUtils.responsiveIconSize(context, base: 48),
+                              height: ResponsiveUtils.responsiveIconSize(context, base: 48),
                               fit: BoxFit.cover,
-                              errorBuilder: (_, __, ___) => Container(
-                                width: 48,
-                                height: 48,
+                              errorBuilder: (_, __, ___) {
+                                final size = ResponsiveUtils.responsiveIconSize(context, base: 48);
+                                return Container(
+                                  width: size,
+                                  height: size,
                                 color: Theme.of(context).colorScheme.surfaceVariant,
-                                child: const Icon(Icons.music_note),
-                              ),
+                                  child: const Icon(Icons.music_note),
+                                );
+                              },
                             )
-                          : Container(
-                              width: 48,
-                              height: 48,
-                              color: Theme.of(context).colorScheme.surfaceVariant,
-                              child: const Icon(Icons.music_note),
+                          : Builder(
+                              builder: (ctx) {
+                                final size = ResponsiveUtils.responsiveIconSize(ctx, base: 48);
+                                return Container(
+                                  width: size,
+                                  height: size,
+                                  color: Theme.of(context).colorScheme.surfaceVariant,
+                                  child: const Icon(Icons.music_note),
+                                );
+                              },
                             ),
                     ),
                     title: Text(
@@ -329,7 +377,7 @@ class _GenreScreenState extends State<GenreScreen> {
         children: [
           // Header with back button
           Padding(
-            padding: const EdgeInsets.all(24.0),
+            padding: ResponsiveUtils.responsivePadding(context),
             child: Row(
               children: [
                 IconButton(

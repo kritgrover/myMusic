@@ -1,5 +1,6 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import '../utils/responsive_utils.dart';
 import 'package:flutter/services.dart';
 import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 import 'dart:async';
@@ -304,7 +305,7 @@ class _LyricsScreenState extends State<LyricsScreen> {
           if (widget.lyricsService.error != null) {
             return Center(
               child: Padding(
-                padding: const EdgeInsets.all(24.0),
+                padding: ResponsiveUtils.responsivePadding(context),
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
@@ -337,7 +338,7 @@ class _LyricsScreenState extends State<LyricsScreen> {
           if (lyrics == null || !lyrics.hasLyrics) {
             return Center(
               child: Padding(
-                padding: const EdgeInsets.all(24.0),
+                padding: ResponsiveUtils.responsivePadding(context),
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
@@ -379,7 +380,7 @@ class _LyricsScreenState extends State<LyricsScreen> {
             children: [
               // Track info header with album art
               Padding(
-                padding: const EdgeInsets.all(24.0),
+                padding: ResponsiveUtils.responsivePadding(context),
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
@@ -474,7 +475,7 @@ class _LyricsScreenState extends State<LyricsScreen> {
     return ScrollablePositionedList.builder(
       itemScrollController: _itemScrollController,
       itemPositionsListener: _itemPositionsListener,
-      padding: const EdgeInsets.symmetric(horizontal: 24.0),
+      padding: ResponsiveUtils.responsiveHorizontalPadding(context),
       itemCount: totalItemCount,
       itemBuilder: (context, index) {
         if (index == 0 || index == totalItemCount - 1) {
@@ -586,7 +587,7 @@ class _LyricsScreenState extends State<LyricsScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Padding(
-                padding: const EdgeInsets.all(24.0),
+                padding: ResponsiveUtils.responsivePadding(context),
                 child: Row(
                   children: [
                     IconButton(

@@ -1,10 +1,14 @@
 import 'package:flutter/material.dart';
+import '../utils/responsive_utils.dart';
 import '../services/api_service.dart';
 import '../services/player_state_service.dart';
 import '../services/queue_service.dart';
 import '../services/recently_played_service.dart';
 import '../models/queue_item.dart';
 import '../utils/song_display_utils.dart';
+import '../widgets/album_cover.dart';
+import '../widgets/empty_state_widget.dart';
+import '../widgets/gradient_section_header.dart';
 
 class DownloadsScreen extends StatefulWidget {
   final PlayerStateService playerStateService;
@@ -194,19 +198,17 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
     final hasFilteredResults = filteredDownloads.isNotEmpty;
     final primaryColor = Theme.of(context).colorScheme.primary;
     final surfaceHover = Theme.of(context).colorScheme.surfaceVariant;
-    
+
     return Column(
       children: [
         Padding(
-          padding: const EdgeInsets.all(24.0),
+          padding: ResponsiveUtils.responsivePadding(context),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                'My Library',
-                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                  fontWeight: FontWeight.w700,
-                ),
+              GradientSectionHeader(
+                title: 'My Library',
+                showGradientBar: true,
               ),
               const SizedBox(height: 20),
               TextField(
@@ -233,89 +235,65 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
             child: _isLoading
                 ? const Center(child: CircularProgressIndicator())
                 : !hasDownloads
-                    ? Center(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(
-                              Icons.library_music_outlined,
-                              size: 64,
-                              color: Theme.of(context).colorScheme.onSurface.withOpacity(0.3),
-                            ),
-                            const SizedBox(height: 16),
-                            Text(
-                              'No downloads yet',
-                              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              'Search and download music to see it here',
-                              style: Theme.of(context).textTheme.bodySmall,
-                            ),
-                          ],
-                        ),
+                    ? EmptyStateWidget(
+                        icon: Icons.library_music_outlined,
+                        title: 'No downloads yet',
+                        subtitle: 'Search and download music to see it here.',
                       )
                     : !hasFilteredResults
-                        ? Center(
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(
-                                  Icons.search_off,
-                                  size: 64,
-                                  color: Theme.of(context).colorScheme.onSurface.withOpacity(0.3),
-                                ),
-                                const SizedBox(height: 16),
-                                Text(
-                                  'No results found',
-                                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                                    color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
-                                  ),
-                                ),
-                                const SizedBox(height: 8),
-                                Text(
-                                  'Try a different search term',
-                                  style: Theme.of(context).textTheme.bodySmall,
-                                ),
-                              ],
-                            ),
+                        ? EmptyStateWidget(
+                            icon: Icons.search_off,
+                            title: 'No results found',
+                            subtitle: 'Try a different search term.',
                           )
                         : ListView.separated(
-                            padding: const EdgeInsets.symmetric(horizontal: 24),
+                            padding: ResponsiveUtils.responsiveHorizontalPadding(context),
                             itemCount: filteredDownloads.length,
-                            separatorBuilder: (context, index) => const Divider(height: 1),
+                            separatorBuilder: (context, index) => const SizedBox(height: 8),
                             itemBuilder: (context, index) {
                               final file = filteredDownloads[index];
                               final isCurrentlyPlaying = widget.playerStateService.currentTrackUrl?.contains(file.filename) ?? false;
-                    
+                              final trackName = getDisplayTitle(file.title, file.filename);
+
                               return Material(
-                                color: isCurrentlyPlaying 
-                                    ? primaryColor.withOpacity(0.1) 
-                                    : Colors.transparent,
-                                borderRadius: BorderRadius.circular(8),
+                                color: Colors.transparent,
                                 child: InkWell(
                                   onTap: () => _playFile(file),
-                                  borderRadius: BorderRadius.circular(8),
-                                  hoverColor: surfaceHover,
-                                  child: Padding(
-                                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                  borderRadius: BorderRadius.circular(12),
+                                  hoverColor: surfaceHover.withOpacity(0.5),
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                                    decoration: BoxDecoration(
+                                      borderRadius: BorderRadius.circular(12),
+                                      gradient: isCurrentlyPlaying
+                                          ? LinearGradient(
+                                              begin: Alignment.centerLeft,
+                                              end: Alignment.centerRight,
+                                              colors: [
+                                                primaryColor.withOpacity(0.15),
+                                                primaryColor.withOpacity(0.06),
+                                              ],
+                                            )
+                                          : null,
+                                      color: isCurrentlyPlaying ? null : Theme.of(context).colorScheme.surface,
+                                      border: isCurrentlyPlaying
+                                          ? Border(
+                                              left: BorderSide(color: primaryColor, width: 3),
+                                            )
+                                          : Border.all(
+                                              color: Theme.of(context).colorScheme.surfaceVariant.withOpacity(0.5),
+                                              width: 1,
+                                            ),
+                                    ),
                                     child: Row(
                                       children: [
-                                        Container(
-                                          width: 48,
-                                          height: 48,
-                                          decoration: BoxDecoration(
-                                            color: isCurrentlyPlaying 
-                                                ? primaryColor.withOpacity(0.2)
-                                                : surfaceHover,
-                                            borderRadius: BorderRadius.circular(8),
-                                          ),
-                                          child: Icon(
-                                            Icons.music_note,
-                                            color: isCurrentlyPlaying ? primaryColor : Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
-                                            size: 24,
+                                        ClipRRect(
+                                          borderRadius: BorderRadius.circular(8),
+                                          child: AlbumCover(
+                                            filename: file.filename,
+                                            title: file.title,
+                                            artist: file.artist,
+                                            size: ResponsiveUtils.responsiveIconSize(context, base: 48),
                                           ),
                                         ),
                                         const SizedBox(width: 16),
@@ -324,7 +302,7 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
                                             crossAxisAlignment: CrossAxisAlignment.start,
                                             children: [
                                               Text(
-                                                getDisplayTitle(file.title, file.filename),
+                                                trackName,
                                                 style: Theme.of(context).textTheme.bodyLarge?.copyWith(
                                                   color: isCurrentlyPlaying ? primaryColor : null,
                                                   fontWeight: isCurrentlyPlaying ? FontWeight.w600 : FontWeight.w400,

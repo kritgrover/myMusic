@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
+import '../utils/responsive_utils.dart';
 import 'downloads_screen.dart';
 import 'playlists_screen.dart';
 import 'csv_upload_screen.dart';
@@ -325,7 +326,7 @@ class _HomeScreenState extends State<HomeScreen> {
       children: [
         // Search section
         Padding(
-          padding: const EdgeInsets.all(24.0),
+          padding: ResponsiveUtils.responsivePadding(context),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -366,7 +367,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ? const Center(child: CircularProgressIndicator())
               : _searchResults.isNotEmpty
                   ? ListView.separated(
-                      padding: const EdgeInsets.symmetric(horizontal: 24),
+                      padding: ResponsiveUtils.responsiveHorizontalPadding(context),
                       itemCount: _searchResults.length,
                       separatorBuilder: (context, index) => const SizedBox(height: 12),
                       itemBuilder: (context, index) {
@@ -428,7 +429,12 @@ class _HomeScreenState extends State<HomeScreen> {
                                       crossAxisAlignment: CrossAxisAlignment.start,
                                       children: [
                                         Padding(
-                                          padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 16.0),
+                                          padding: EdgeInsets.only(
+                                            left: ResponsiveUtils.responsiveValue<double>(context, compact: 12, medium: 20, expanded: 24),
+                                            right: ResponsiveUtils.responsiveValue<double>(context, compact: 12, medium: 20, expanded: 24),
+                                            top: 16,
+                                            bottom: 16,
+                                          ),
                                           child: Text(
                                             'Recently Played',
                                             style: Theme.of(context).textTheme.titleLarge?.copyWith(
@@ -437,20 +443,28 @@ class _HomeScreenState extends State<HomeScreen> {
                                           ),
                                         ),
                                         Padding(
-                                          padding: const EdgeInsets.symmetric(horizontal: 24.0),
+                                          padding: ResponsiveUtils.responsiveHorizontalPadding(context),
                                           child: LayoutBuilder(
                                             builder: (context, constraints) {
-                                              final cardWidth = (constraints.maxWidth - 16) / 2;
-                                              final cardHeight = 112.0;
+                                              final crossAxisCount = ResponsiveUtils.responsiveValue<int>(
+                                                context,
+                                                compact: 1,
+                                                medium: 2,
+                                                expanded: 3,
+                                              );
+                                              final spacing = ResponsiveUtils.responsiveValue<double>(context, compact: 12, medium: 14, expanded: 16);
+                                              final totalSpacing = spacing * (crossAxisCount - 1);
+                                              final cardWidth = (constraints.maxWidth - totalSpacing) / crossAxisCount;
+                                              final cardHeight = ResponsiveUtils.responsiveCardHeight(context);
                                               final aspectRatio = cardWidth / cardHeight;
-                                              
+
                                               return GridView.builder(
                                                 shrinkWrap: true,
                                                 physics: const NeverScrollableScrollPhysics(),
                                                 gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                                                  crossAxisCount: 2,
-                                                  crossAxisSpacing: 16,
-                                                  mainAxisSpacing: 16,
+                                                  crossAxisCount: crossAxisCount,
+                                                  crossAxisSpacing: spacing,
+                                                  mainAxisSpacing: spacing,
                                                   childAspectRatio: aspectRatio,
                                                 ),
                                                 itemCount: _recentlyPlayedService.items.length,
@@ -488,7 +502,12 @@ class _HomeScreenState extends State<HomeScreen> {
 
                                 // Genres
                                 Padding(
-                                  padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 16.0),
+                                  padding: EdgeInsets.only(
+                                    left: ResponsiveUtils.responsiveValue<double>(context, compact: 12, medium: 20, expanded: 24),
+                                    right: ResponsiveUtils.responsiveValue<double>(context, compact: 12, medium: 20, expanded: 24),
+                                    top: 16,
+                                    bottom: 16,
+                                  ),
                                   child: Text(
                                     'Browse by Genre',
                                     style: Theme.of(context).textTheme.titleLarge?.copyWith(
@@ -497,20 +516,28 @@ class _HomeScreenState extends State<HomeScreen> {
                                   ),
                                 ),
                                 Padding(
-                                  padding: const EdgeInsets.symmetric(horizontal: 24.0),
+                                  padding: ResponsiveUtils.responsiveHorizontalPadding(context),
                                   child: LayoutBuilder(
                                     builder: (context, constraints) {
-                                      final cardWidth = (constraints.maxWidth - 48) / 4; // 4 columns with 3 gaps of 16px
-                                      final cardHeight = 112.0;
+                                      final crossAxisCount = ResponsiveUtils.responsiveValue<int>(
+                                        context,
+                                        compact: 2,
+                                        medium: 3,
+                                        expanded: 4,
+                                      );
+                                      final spacing = ResponsiveUtils.responsiveValue<double>(context, compact: 12, medium: 14, expanded: 16);
+                                      final totalSpacing = spacing * (crossAxisCount - 1);
+                                      final cardWidth = (constraints.maxWidth - totalSpacing) / crossAxisCount;
+                                      final cardHeight = ResponsiveUtils.responsiveCardHeight(context);
                                       final aspectRatio = cardWidth / cardHeight;
-                                      
+
                                       return GridView.builder(
                                         shrinkWrap: true,
                                         physics: const NeverScrollableScrollPhysics(),
                                         gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                                          crossAxisCount: 4,
-                                          crossAxisSpacing: 16,
-                                          mainAxisSpacing: 16,
+                                          crossAxisCount: crossAxisCount,
+                                          crossAxisSpacing: spacing,
+                                          mainAxisSpacing: spacing,
                                           childAspectRatio: aspectRatio,
                                         ),
                                         itemCount: _genres.length,
@@ -528,7 +555,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                     },
                                   ),
                                 ),
-                                const SizedBox(height: 120), // Bottom padding for player
+                                SizedBox(height: ResponsiveUtils.responsivePlayerBottomPadding(context)),
                               ],
                             ),
                           ),
@@ -550,9 +577,9 @@ class _HomeScreenState extends State<HomeScreen> {
           borderRadius: BorderRadius.circular(12),
           hoverColor: surfaceHover,
           child: SizedBox(
-            height: 112, // Match VideoCard height: 80 (image) + 32 (padding)
+            height: ResponsiveUtils.responsiveCardHeight(context),
             child: Padding(
-              padding: const EdgeInsets.all(16.0),
+              padding: ResponsiveUtils.responsivePadding(context),
               child: Row(
                 children: [
                   // Thumbnail/Album Cover on the left
@@ -562,13 +589,14 @@ class _HomeScreenState extends State<HomeScreen> {
                         ? item.thumbnail != null && item.thumbnail!.isNotEmpty
                             ? Image.network(
                                 item.thumbnail!,
-                                width: 80,
-                                height: 80,
+                                width: ResponsiveUtils.responsiveMediumIconSize(context, base: 80),
+                                height: ResponsiveUtils.responsiveMediumIconSize(context, base: 80),
                                 fit: BoxFit.cover,
                                 errorBuilder: (context, error, stackTrace) {
+                                  final size = ResponsiveUtils.responsiveMediumIconSize(context, base: 80);
                                   return Container(
-                                    width: 80,
-                                    height: 80,
+                                    width: size,
+                                    height: size,
                                     color: surfaceHover,
                                     child: Icon(
                                       Icons.playlist_play,
@@ -578,29 +606,33 @@ class _HomeScreenState extends State<HomeScreen> {
                                   );
                                 },
                               )
-                            : Container(
-                                width: 80,
-                                height: 80,
-                                color: surfaceHover,
-                                child: Icon(
-                                  Icons.playlist_play,
-                                  size: 32,
-                                  color: primaryColor,
-                                ),
+                            : Builder(
+                                builder: (context) {
+                                  final size = ResponsiveUtils.responsiveMediumIconSize(context, base: 80);
+                                  return Container(
+                                    width: size,
+                                    height: size,
+                                    color: surfaceHover,
+                                    child: Icon(
+                                      Icons.playlist_play,
+                                      size: 32,
+                                      color: primaryColor,
+                                    ),
+                                  );
+                                },
                               )
                         : item.thumbnail != null
                             ? Image.network(
                                 item.thumbnail!,
-                                width: 80,
-                                height: 80,
+                                width: ResponsiveUtils.responsiveMediumIconSize(context, base: 80),
+                                height: ResponsiveUtils.responsiveMediumIconSize(context, base: 80),
                                 fit: BoxFit.cover,
                                 errorBuilder: (context, error, stackTrace) {
-                                  // Fallback to AlbumCover if thumbnail fails
                                   return AlbumCover(
                                     filename: item.filename,
                                     title: item.title,
                                     artist: item.artist,
-                                    size: 80,
+                                    size: ResponsiveUtils.responsiveMediumIconSize(context, base: 80),
                                   );
                                 },
                               )
@@ -608,7 +640,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                 filename: item.filename,
                                 title: item.title,
                                 artist: item.artist,
-                                size: 80,
+                                size: ResponsiveUtils.responsiveMediumIconSize(context, base: 80),
                               ),
                   ),
                   const SizedBox(width: 16),
@@ -617,6 +649,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       mainAxisAlignment: MainAxisAlignment.center,
+                      mainAxisSize: MainAxisSize.min,
                       children: [
                         Row(
                           children: [
@@ -635,14 +668,14 @@ class _HomeScreenState extends State<HomeScreen> {
                                 style: Theme.of(context).textTheme.bodyLarge?.copyWith(
                                   fontWeight: FontWeight.w500,
                                 ),
-                                maxLines: 2,
+                                maxLines: ResponsiveUtils.responsiveValue<int>(context, compact: 1, medium: 2, expanded: 2),
                                 overflow: TextOverflow.ellipsis,
                               ),
                             ),
                           ],
                         ),
                         if (item.artist != null && item.artist!.isNotEmpty) ...[
-                          const SizedBox(height: 6),
+                          SizedBox(height: ResponsiveUtils.responsiveValue<double>(context, compact: 2, medium: 6, expanded: 6)),
                           Text(
                             item.artist!,
                             style: Theme.of(context).textTheme.bodySmall,
@@ -1332,8 +1365,46 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  static const List<NavigationDestination> _navDestinations = [
+    NavigationDestination(
+      icon: Icon(Icons.home_outlined),
+      selectedIcon: Icon(Icons.home),
+      label: 'Home',
+    ),
+    NavigationDestination(
+      icon: Icon(Icons.download_outlined),
+      selectedIcon: Icon(Icons.download),
+      label: 'Downloads',
+    ),
+    NavigationDestination(
+      icon: Icon(Icons.playlist_play_outlined),
+      selectedIcon: Icon(Icons.playlist_play),
+      label: 'Playlists',
+    ),
+    NavigationDestination(
+      icon: Icon(Icons.upload_file_outlined),
+      selectedIcon: Icon(Icons.upload_file),
+      label: 'CSV',
+    ),
+    NavigationDestination(
+      icon: Icon(Icons.person_outline),
+      selectedIcon: Icon(Icons.person),
+      label: 'User',
+    ),
+  ];
+
+  void _onNavDestinationSelected(int index) {
+    FocusScope.of(context).unfocus();
+    setState(() {
+      _showLyrics = false;
+      _currentIndex = index;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
+    final useBottomNav = ResponsiveUtils.isCompact(context);
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('myMusic'),
@@ -1349,54 +1420,51 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       body: Row(
         children: [
-          // Side Navigation
-          Container(
-            width: 80,
-            decoration: const BoxDecoration(
-              border: Border(
-                right: BorderSide(color: Color(0xFF262626), width: 1),
+          // Side Navigation (medium/expanded only)
+          if (!useBottomNav)
+            Container(
+              width: 80,
+              decoration: const BoxDecoration(
+                border: Border(
+                  right: BorderSide(color: Color(0xFF262626), width: 1),
+                ),
+              ),
+              child: NavigationRail(
+                selectedIndex: _currentIndex,
+                onDestinationSelected: _onNavDestinationSelected,
+                labelType: NavigationRailLabelType.all,
+                useIndicator: true,
+                extended: false,
+                minExtendedWidth: 80,
+                destinations: [
+                  NavigationRailDestination(
+                    icon: const Icon(Icons.home_outlined),
+                    selectedIcon: const Icon(Icons.home),
+                    label: const Text('Home'),
+                  ),
+                  NavigationRailDestination(
+                    icon: const Icon(Icons.download_outlined),
+                    selectedIcon: const Icon(Icons.download),
+                    label: const Text('Downloads'),
+                  ),
+                  NavigationRailDestination(
+                    icon: const Icon(Icons.playlist_play_outlined),
+                    selectedIcon: const Icon(Icons.playlist_play),
+                    label: const Text('Playlists'),
+                  ),
+                  NavigationRailDestination(
+                    icon: const Icon(Icons.upload_file_outlined),
+                    selectedIcon: const Icon(Icons.upload_file),
+                    label: const Text('CSV'),
+                  ),
+                  NavigationRailDestination(
+                    icon: const Icon(Icons.person_outline),
+                    selectedIcon: const Icon(Icons.person),
+                    label: const Text('User'),
+                  ),
+                ],
               ),
             ),
-            child: NavigationRail(
-              selectedIndex: _currentIndex,
-              onDestinationSelected: (index) {
-                setState(() {
-                  _currentIndex = index;
-                });
-              },
-              labelType: NavigationRailLabelType.all,
-              useIndicator: true,
-              extended: false,
-              minExtendedWidth: 80,
-              destinations: [
-                NavigationRailDestination(
-                  icon: const Icon(Icons.home_outlined),
-                  selectedIcon: const Icon(Icons.home),
-                  label: const Text('Home'),
-                ),
-                NavigationRailDestination(
-                  icon: const Icon(Icons.download_outlined),
-                  selectedIcon: const Icon(Icons.download),
-                  label: const Text('Downloads'),
-                ),
-                NavigationRailDestination(
-                  icon: const Icon(Icons.playlist_play_outlined),
-                  selectedIcon: const Icon(Icons.playlist_play),
-                  label: const Text('Playlists'),
-                ),
-                NavigationRailDestination(
-                  icon: const Icon(Icons.upload_file_outlined),
-                  selectedIcon: const Icon(Icons.upload_file),
-                  label: const Text('CSV'),
-                ),
-                NavigationRailDestination(
-                  icon: const Icon(Icons.person_outline),
-                  selectedIcon: const Icon(Icons.person),
-                  label: const Text('User'),
-                ),
-              ],
-            ),
-          ),
           // Main content
           Expanded(
             child: Column(
@@ -1477,6 +1545,14 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
         ],
       ),
+      bottomNavigationBar: useBottomNav
+          ? NavigationBar(
+              selectedIndex: _currentIndex,
+              onDestinationSelected: _onNavDestinationSelected,
+              destinations: _navDestinations,
+              labelBehavior: NavigationDestinationLabelBehavior.onlyShowSelected,
+            )
+          : null,
     );
   }
 

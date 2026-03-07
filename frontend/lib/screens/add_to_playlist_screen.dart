@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../utils/responsive_utils.dart';
 import '../services/playlist_service.dart';
 import '../services/api_service.dart';
 import '../models/playlist.dart';
@@ -246,7 +247,7 @@ class _AddToPlaylistScreenState extends State<AddToPlaylistScreen>
               Column(
                 children: [
                   Padding(
-                    padding: const EdgeInsets.all(24.0),
+                    padding: ResponsiveUtils.responsivePadding(context),
                     child: TextField(
                       controller: _searchController,
                       decoration: InputDecoration(
@@ -290,8 +291,8 @@ class _AddToPlaylistScreenState extends State<AddToPlaylistScreen>
                                           child: ListTile(
                                             contentPadding: EdgeInsets.zero,
                                             leading: Container(
-                                              width: 40,
-                                              height: 40,
+                                              width: ResponsiveUtils.responsiveIconSize(context, base: 40),
+                                              height: ResponsiveUtils.responsiveIconSize(context, base: 40),
                                               decoration: BoxDecoration(
                                                 color: primaryColor.withOpacity(0.1),
                                                 borderRadius: BorderRadius.circular(8),

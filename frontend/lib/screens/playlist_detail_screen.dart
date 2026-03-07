@@ -1,6 +1,7 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import '../utils/responsive_utils.dart';
 import '../services/playlist_service.dart';
 import '../services/api_service.dart';
 import '../services/queue_service.dart';
@@ -1150,7 +1151,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
             children: [
               // Playlist header
               Container(
-                padding: const EdgeInsets.all(24.0),
+                padding: ResponsiveUtils.responsivePadding(context),
                 decoration: BoxDecoration(
                   color: Theme.of(context).colorScheme.surface,
                   border: Border(
@@ -1175,7 +1176,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                       primaryColor: primaryColor,
                       onTap: _editPlaylistCover,
                     ),
-                    const SizedBox(width: 20),
+                    SizedBox(width: ResponsiveUtils.responsiveValue<double>(context, compact: 12, medium: 16, expanded: 20)),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1398,7 +1399,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                                             artworkUrl: (track.thumbnail != null && !track.thumbnail!.contains('img.youtube.com'))
                                             ? track.thumbnail
                                             : null,
-                                            size: 40,
+                                            size: ResponsiveUtils.responsiveIconSize(context, base: 40),
                                             backgroundColor: isCurrentlyPlaying
                                                 ? primaryColor.withOpacity(0.2)
                                                 : surfaceHover,
@@ -1502,6 +1503,7 @@ class _PlaylistCoverWidgetState extends State<_PlaylistCoverWidget> {
 
   @override
   Widget build(BuildContext context) {
+    final coverSize = ResponsiveUtils.responsiveLargeIconSize(context, base: 160);
     return MouseRegion(
       cursor: SystemMouseCursors.click,
       onEnter: (_) => setState(() => _isHovered = true),
@@ -1509,8 +1511,8 @@ class _PlaylistCoverWidgetState extends State<_PlaylistCoverWidget> {
       child: GestureDetector(
         onTap: widget.onTap,
         child: Container(
-          width: 160,
-          height: 160,
+          width: coverSize,
+          height: coverSize,
           decoration: BoxDecoration(
             color: widget.primaryColor.withOpacity(0.15),
             borderRadius: BorderRadius.circular(12),
@@ -1522,13 +1524,13 @@ class _PlaylistCoverWidgetState extends State<_PlaylistCoverWidget> {
                     children: [
                       Image.network(
                         widget.coverImageUrl!,
-                        width: 160,
-                        height: 160,
+                        width: coverSize,
+                        height: coverSize,
                         fit: BoxFit.cover,
                         errorBuilder: (context, error, stackTrace) {
                           return Icon(
                             Icons.playlist_play,
-                            size: 80,
+                            size: coverSize * 0.5,
                             color: widget.primaryColor,
                           );
                         },
@@ -1536,8 +1538,8 @@ class _PlaylistCoverWidgetState extends State<_PlaylistCoverWidget> {
                       // Dark overlay on hover
                       if (_isHovered)
                         Container(
-                          width: 160,
-                          height: 160,
+                          width: coverSize,
+                          height: coverSize,
                           color: Colors.black.withOpacity(0.4),
                           child: const Center(
                             child: Icon(
@@ -1552,7 +1554,7 @@ class _PlaylistCoverWidgetState extends State<_PlaylistCoverWidget> {
                 )
               : Icon(
                   Icons.playlist_play,
-                  size: 80,
+                  size: coverSize * 0.5,
                   color: widget.primaryColor,
                 ),
         ),

@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
+import '../utils/responsive_utils.dart';
 import '../services/playlist_service.dart';
 import '../models/playlist.dart';
 import '../services/player_state_service.dart';
 import '../services/queue_service.dart';
 import '../services/recently_played_service.dart';
 import '../config.dart';
+import '../widgets/empty_state_widget.dart';
+import '../widgets/gradient_section_header.dart';
 import 'playlist_detail_screen.dart';
 
 class PlaylistsScreen extends StatefulWidget {
@@ -102,10 +105,13 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
 
   Future<void> _createPlaylist() async {
     final nameController = TextEditingController();
-    
+
     final result = await showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+        ),
         title: const Text('Create New Playlist'),
         content: TextField(
           controller: nameController,
@@ -289,25 +295,18 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
     return Column(
       children: [
         Padding(
-          padding: const EdgeInsets.all(24.0),
+          padding: ResponsiveUtils.responsivePadding(context),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    'Playlists',
-                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  ElevatedButton.icon(
-                    onPressed: _createPlaylist,
-                    icon: const Icon(Icons.add, size: 18),
-                    label: const Text('New Playlist'),
-                  ),
-                ],
+              GradientSectionHeader(
+                title: 'Playlists',
+                showGradientBar: true,
+                trailing: ElevatedButton.icon(
+                  onPressed: _createPlaylist,
+                  icon: const Icon(Icons.add, size: 18),
+                  label: const Text('New Playlist'),
+                ),
               ),
               const SizedBox(height: 20),
               TextField(
@@ -332,159 +331,207 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
           child: _isLoading
               ? const Center(child: CircularProgressIndicator())
               : !hasPlaylists
-                  ? Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(
-                            Icons.playlist_add_outlined,
-                            size: 64,
-                            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.3),
-                          ),
-                          const SizedBox(height: 16),
-                          Text(
-                            'No playlists yet',
-                            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                              color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            'Create a playlist to organize your music',
-                            style: Theme.of(context).textTheme.bodySmall,
-                          ),
-                          const SizedBox(height: 24),
-                          ElevatedButton.icon(
-                            onPressed: _createPlaylist,
-                            icon: const Icon(Icons.add),
-                            label: const Text('Create Your First Playlist'),
-                          ),
-                        ],
-                      ),
+                  ? EmptyStateWidget(
+                      icon: Icons.playlist_add_outlined,
+                      title: 'No playlists yet',
+                      subtitle: 'Create a playlist to organize your music.',
+                      onAction: _createPlaylist,
+                      actionLabel: 'Create Your First Playlist',
                     )
                   : !hasFilteredResults
-                      ? Center(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(
-                                Icons.search_off,
-                                size: 64,
-                                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.3),
-                              ),
-                              const SizedBox(height: 16),
-                              Text(
-                                'No results found',
-                                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                                  color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
-                                ),
-                              ),
-                              const SizedBox(height: 8),
-                              Text(
-                                'Try a different search term',
-                                style: Theme.of(context).textTheme.bodySmall,
-                              ),
-                            ],
-                          ),
+                      ? EmptyStateWidget(
+                          icon: Icons.search_off,
+                          title: 'No results found',
+                          subtitle: 'Try a different search term.',
                         )
                       : RefreshIndicator(
                           onRefresh: _loadPlaylists,
                           child: ListView.separated(
-                            padding: const EdgeInsets.symmetric(horizontal: 24),
+                            padding: ResponsiveUtils.responsiveHorizontalPadding(context),
                             itemCount: filteredPlaylists.length,
                             separatorBuilder: (context, index) => const SizedBox(height: 12),
                             itemBuilder: (context, index) {
                               final playlist = filteredPlaylists[index];
-                              return Card(
-                                child: Material(
-                                  color: Colors.transparent,
-                                  child: InkWell(
-                                    onTap: () {
-                                      _showPlaylistDetail(playlist);
-                                    },
-                                    borderRadius: BorderRadius.circular(12),
-                                    hoverColor: surfaceHover,
-                                    child: Padding(
-                                      padding: const EdgeInsets.all(16.0),
-                                      child: Row(
-                                        children: [
-                                          Container(
-                                            width: 64,
-                                            height: 64,
-                                            decoration: BoxDecoration(
-                                              color: primaryColor.withOpacity(0.15),
-                                              borderRadius: BorderRadius.circular(10),
-                                            ),
-                                            child: _getCoverImageUrl(playlist) != null
-                                                ? ClipRRect(
-                                                    borderRadius: BorderRadius.circular(10),
-                                                    child: Image.network(
-                                                      _getCoverImageUrl(playlist)!,
-                                                      width: 64,
-                                                      height: 64,
-                                                      fit: BoxFit.cover,
-                                                      errorBuilder: (context, error, stackTrace) {
-                                                        return Icon(
-                                                          Icons.playlist_play,
-                                                          size: 32,
-                                                          color: primaryColor,
-                                                        );
-                                                      },
-                                                    ),
-                                                  )
-                                                : Icon(
-                                                    Icons.playlist_play,
-                                                    size: 32,
-                                                    color: primaryColor,
-                                                  ),
-                                          ),
-                                          const SizedBox(width: 16),
-                                          Expanded(
-                                            child: Column(
-                                              crossAxisAlignment: CrossAxisAlignment.start,
-                                              children: [
-                                                Text(
-                                                  playlist.name,
-                                                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                                                    fontWeight: FontWeight.w600,
-                                                  ),
-                                                  maxLines: 1,
-                                                  overflow: TextOverflow.ellipsis,
-                                                ),
-                                                const SizedBox(height: 6),
-                                                Row(
-                                                  children: [
-                                                    Icon(
-                                                      Icons.music_note,
-                                                      size: 14,
-                                                      color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
-                                                    ),
-                                                    const SizedBox(width: 4),
-                                                    Text(
-                                                      '${playlist.tracks.length} ${playlist.tracks.length == 1 ? 'track' : 'tracks'}',
-                                                      style: Theme.of(context).textTheme.bodySmall,
-                                                    ),
-                                                  ],
-                                                ),
-                                              ],
-                                            ),
-                                          ),
-                                          IconButton(
-                                            icon: const Icon(Icons.delete_outline, size: 20),
-                                            onPressed: () => _deletePlaylist(playlist),
-                                            tooltip: 'Delete playlist',
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ),
-                                ),
+                              return _PlaylistCard(
+                                playlist: playlist,
+                                coverImageUrl: _getCoverImageUrl(playlist),
+                                primaryColor: primaryColor,
+                                surfaceHover: surfaceHover,
+                                onTap: () => _showPlaylistDetail(playlist),
+                                onDelete: () => _deletePlaylist(playlist),
                               );
                             },
                           ),
                         ),
         ),
       ],
+    );
+  }
+}
+
+class _PlaylistCard extends StatefulWidget {
+  final Playlist playlist;
+  final String? coverImageUrl;
+  final Color primaryColor;
+  final Color surfaceHover;
+  final VoidCallback onTap;
+  final VoidCallback onDelete;
+
+  const _PlaylistCard({
+    required this.playlist,
+    required this.coverImageUrl,
+    required this.primaryColor,
+    required this.surfaceHover,
+    required this.onTap,
+    required this.onDelete,
+  });
+
+  @override
+  State<_PlaylistCard> createState() => _PlaylistCardState();
+}
+
+class _PlaylistCardState extends State<_PlaylistCard> {
+  bool _isHovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      onEnter: (_) => setState(() => _isHovered = true),
+      onExit: (_) => setState(() => _isHovered = false),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: widget.primaryColor.withOpacity(_isHovered ? 0.15 : 0.06),
+            width: 1,
+          ),
+          boxShadow: _isHovered
+              ? [
+                  BoxShadow(
+                    color: widget.primaryColor.withOpacity(0.08),
+                    blurRadius: 16,
+                    offset: const Offset(0, 4),
+                  ),
+                ]
+              : null,
+        ),
+        child: Material(
+          color: Theme.of(context).colorScheme.surface,
+          borderRadius: BorderRadius.circular(12),
+          child: InkWell(
+            onTap: widget.onTap,
+            borderRadius: BorderRadius.circular(12),
+            hoverColor: widget.surfaceHover.withOpacity(0.5),
+            child: Padding(
+              padding: ResponsiveUtils.responsivePadding(context),
+              child: Row(
+                children: [
+                  Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      Builder(
+                        builder: (context) {
+                          final coverSize = ResponsiveUtils.responsiveIconSize(context, base: 64);
+                          return Container(
+                            width: coverSize,
+                            height: coverSize,
+                            decoration: BoxDecoration(
+                          color: widget.primaryColor.withOpacity(0.15),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: widget.coverImageUrl != null
+                                ? ClipRRect(
+                                    borderRadius: BorderRadius.circular(10),
+                                    child: Stack(
+                                      fit: StackFit.expand,
+                                      children: [
+                                        Image.network(
+                                      widget.coverImageUrl!,
+                                          width: coverSize,
+                                          height: coverSize,
+                                          fit: BoxFit.cover,
+                                          errorBuilder: (context, error, stackTrace) {
+                                            return Icon(
+                                              Icons.playlist_play,
+                                              size: 32,
+                                              color: widget.primaryColor,
+                                            );
+                                          },
+                                        ),
+                                        Positioned(
+                                          left: 0,
+                                          right: 0,
+                                          bottom: 0,
+                                          child: Container(
+                                            height: 20,
+                                            decoration: BoxDecoration(
+                                              gradient: LinearGradient(
+                                                begin: Alignment.topCenter,
+                                                end: Alignment.bottomCenter,
+                                                colors: [
+                                                  Colors.transparent,
+                                                  Colors.black.withOpacity(0.3),
+                                                ],
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  )
+                                : Icon(
+                                    Icons.playlist_play,
+                                    size: 32,
+                                    color: widget.primaryColor,
+                                  ),
+                          );
+                        },
+                      ),
+                    ],
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          widget.playlist.name,
+                          style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.w600,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 6),
+                        Row(
+                          children: [
+                            Icon(
+                              Icons.music_note,
+                              size: 14,
+                              color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              '${widget.playlist.tracks.length} ${widget.playlist.tracks.length == 1 ? 'track' : 'tracks'}',
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.delete_outline, size: 20),
+                    onPressed: widget.onDelete,
+                    tooltip: 'Delete playlist',
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

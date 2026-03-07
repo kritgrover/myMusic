@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-
+import '../utils/responsive_utils.dart';
 import '../services/auth_service.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -41,9 +41,9 @@ class _LoginScreenState extends State<LoginScreen> {
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 420),
           child: Card(
-            margin: const EdgeInsets.all(24),
+            margin: ResponsiveUtils.responsivePadding(context),
             child: Padding(
-              padding: const EdgeInsets.all(24),
+              padding: ResponsiveUtils.responsivePadding(context),
               child: Form(
                 key: _formKey,
                 child: Column(

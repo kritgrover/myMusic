@@ -1,5 +1,6 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
+import '../utils/responsive_utils.dart';
 import '../services/recommendation_service.dart';
 import '../services/player_state_service.dart';
 import '../services/api_service.dart';
@@ -683,7 +684,7 @@ class _SpotifyPlaylistScreenState extends State<SpotifyPlaylistScreen> {
             children: [
               // Playlist header
               Container(
-                padding: const EdgeInsets.all(24.0),
+                padding: ResponsiveUtils.responsivePadding(context),
                 decoration: BoxDecoration(
                   color: Theme.of(context).colorScheme.surface,
                   border: Border(
@@ -707,7 +708,7 @@ class _SpotifyPlaylistScreenState extends State<SpotifyPlaylistScreen> {
                       coverImageUrl: widget.coverUrl,
                       primaryColor: primaryColor,
                     ),
-                    const SizedBox(width: 20),
+                    SizedBox(width: ResponsiveUtils.responsiveValue<double>(context, compact: 12, medium: 16, expanded: 20)),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -909,7 +910,7 @@ class _SpotifyPlaylistScreenState extends State<SpotifyPlaylistScreen> {
                                           artworkUrl: (track.thumbnail != null && !track.thumbnail!.contains('img.youtube.com'))
                                         ? track.thumbnail
                                         : null,
-                                          size: 40,
+                                          size: ResponsiveUtils.responsiveIconSize(context, base: 40),
                                           backgroundColor: isCurrentlyPlaying
                                               ? primaryColor.withOpacity(0.2)
                                               : surfaceHover,
@@ -1012,9 +1013,10 @@ class _PlaylistCoverWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final coverSize = ResponsiveUtils.responsiveLargeIconSize(context, base: 160);
     return Container(
-      width: 160,
-      height: 160,
+      width: coverSize,
+      height: coverSize,
       decoration: BoxDecoration(
         color: primaryColor.withOpacity(0.15),
         borderRadius: BorderRadius.circular(12),
@@ -1024,13 +1026,13 @@ class _PlaylistCoverWidget extends StatelessWidget {
               borderRadius: BorderRadius.circular(12),
               child: Image.network(
                 coverImageUrl!,
-                width: 160,
-                height: 160,
+                width: coverSize,
+                height: coverSize,
                 fit: BoxFit.cover,
                 errorBuilder: (context, error, stackTrace) {
                   return Icon(
                     Icons.playlist_play,
-                    size: 80,
+                    size: coverSize * 0.5,
                     color: primaryColor,
                   );
                 },
@@ -1038,7 +1040,7 @@ class _PlaylistCoverWidget extends StatelessWidget {
             )
           : Icon(
               Icons.playlist_play,
-              size: 80,
+              size: coverSize * 0.5,
               color: primaryColor,
             ),
     );
