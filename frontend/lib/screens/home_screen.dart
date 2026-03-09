@@ -28,6 +28,7 @@ import '../widgets/genre_card.dart';
 import 'genre_screen.dart';
 import 'spotify_playlist_screen.dart';
 import 'made_for_you_screen.dart';
+import 'new_releases_screen.dart';
 import 'profile_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -74,6 +75,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   // Recommendations
   List<VideoInfo> _dailyMix = [];
+  List<Map<String, dynamic>> _newReleases = [];
   bool _isLoadingRecommendations = false;
   final List<String> _genres = ['Pop', 'Rock', 'Hip Hop', 'Electronic', 'Jazz', 'Classical', 'Indie', 'Metal'];
   
@@ -82,6 +84,9 @@ class _HomeScreenState extends State<HomeScreen> {
   
   // Made for You navigation
   bool _showMadeForYou = false;
+
+  // New Releases navigation
+  bool _showNewReleases = false;
 
   // Search state
   final TextEditingController _searchController = TextEditingController();
@@ -146,9 +151,14 @@ class _HomeScreenState extends State<HomeScreen> {
     });
 
     try {
-      final dailyMixTracks = await _recommendationService.getDailyMix();
+      final results = await Future.wait([
+        _recommendationService.getDailyMix(),
+        _recommendationService.getNewReleases(),
+      ]);
 
       if (mounted) {
+        final dailyMixTracks = results[0] as List<PlaylistTrack>;
+        final newReleases = results[1] as List<Map<String, dynamic>>;
         setState(() {
           _dailyMix = dailyMixTracks.map((t) => VideoInfo(
             id: t.url ?? '',
@@ -158,7 +168,7 @@ class _HomeScreenState extends State<HomeScreen> {
             url: t.url ?? '',
             thumbnail: t.thumbnail ?? '',
           )).toList();
-          
+          _newReleases = newReleases;
           _isLoadingRecommendations = false;
         });
       }
@@ -202,6 +212,20 @@ class _HomeScreenState extends State<HomeScreen> {
 
     switch (_currentIndex) {
       case 0:
+        // If New Releases is selected, show that screen
+        if (_showNewReleases) {
+          return NewReleasesScreen(
+            releases: _newReleases,
+            playerStateService: _playerStateService,
+            queueService: _queueService,
+            recommendationService: _recommendationService,
+            onBack: () {
+              setState(() {
+                _showNewReleases = false;
+              });
+            },
+          );
+        }
         // If Made for You is selected, show that screen
         if (_showMadeForYou) {
           return MadeForYouScreen(
@@ -498,6 +522,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                       });
                                     },
                                   ),
+                                  _buildNewReleasesSection(),
                                 ],
 
                                 // Genres
@@ -563,6 +588,217 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       ],
     );
+  }
+
+  Widget _buildNewReleasesSection() {
+    if (_newReleases.isEmpty) return const SizedBox.shrink();
+
+    const maxItems = 8;
+    final displayed = _newReleases.length > maxItems
+        ? _newReleases.sublist(0, maxItems)
+        : _newReleases;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: EdgeInsets.only(
+            left: ResponsiveUtils.responsiveValue<double>(context, compact: 12, medium: 20, expanded: 24),
+            right: ResponsiveUtils.responsiveValue<double>(context, compact: 12, medium: 20, expanded: 24),
+            top: 16,
+            bottom: 8,
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'New Releases',
+                style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              if (_newReleases.length > maxItems)
+                TextButton(
+                  onPressed: () {
+                    setState(() {
+                      _showNewReleases = true;
+                    });
+                  },
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        'See All',
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.primary,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      Icon(
+                        Icons.arrow_forward,
+                        size: 16,
+                        color: Theme.of(context).colorScheme.primary,
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        ),
+        SizedBox(
+          height: ResponsiveUtils.responsiveHorizontalListHeight(context),
+          child: ListView.separated(
+            padding: ResponsiveUtils.responsiveHorizontalPadding(context),
+            scrollDirection: Axis.horizontal,
+            itemCount: displayed.length,
+            separatorBuilder: (context, index) => SizedBox(
+              width: ResponsiveUtils.responsiveValue<double>(context, compact: 16, medium: 20, expanded: 24),
+            ),
+            itemBuilder: (context, index) {
+              final release = displayed[index];
+              final cardWidth = ResponsiveUtils.responsiveHorizontalCardWidth(context);
+              final name = release['name'] as String? ?? '';
+              final artist = release['artist'] as String? ?? '';
+              final type = release['type'] as String? ?? 'album';
+              final releaseDate = release['release_date'] as String? ?? '';
+              final thumbnail = release['thumbnail'] as String?;
+              final albumId = release['id'] as String? ?? '';
+
+              return SizedBox(
+                width: cardWidth,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(8),
+                          child: thumbnail != null && thumbnail.isNotEmpty
+                              ? Image.network(
+                                  thumbnail,
+                                  width: cardWidth,
+                                  height: cardWidth,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (context, error, stackTrace) {
+                                    return _buildAlbumPlaceholder(cardWidth);
+                                  },
+                                )
+                              : _buildAlbumPlaceholder(cardWidth),
+                        ),
+                        Material(
+                          color: Colors.transparent,
+                          child: InkWell(
+                            onTap: () => _playAlbumFirstTrack(albumId, name, artist),
+                            borderRadius: BorderRadius.circular(8),
+                            child: Container(
+                              padding: const EdgeInsets.all(8),
+                              decoration: BoxDecoration(
+                                color: Colors.black.withOpacity(0.4),
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Icon(
+                                Icons.play_arrow,
+                                color: Colors.white,
+                                size: 24,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    Text(
+                      artist,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                    if (releaseDate.isNotEmpty) ...[
+                      const SizedBox(height: 2),
+                      Row(
+                        children: [
+                          Text(
+                            type == 'single' ? 'Single' : 'Album',
+                            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                              color: Theme.of(context).colorScheme.primary,
+                            ),
+                          ),
+                          Text(
+                            ' • $releaseDate',
+                            style: Theme.of(context).textTheme.labelSmall,
+                          ),
+                        ],
+                      ),
+                    ],
+                  ],
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildAlbumPlaceholder(double size) {
+    return Container(
+      width: size,
+      height: size,
+      color: Theme.of(context).colorScheme.surfaceVariant,
+      child: Icon(
+        Icons.album,
+        size: 48,
+        color: Theme.of(context).colorScheme.onSurfaceVariant,
+      ),
+    );
+  }
+
+  Future<void> _playAlbumFirstTrack(String albumId, String albumName, String artist) async {
+    try {
+      final tracks = await _recommendationService.getAlbumTracks(albumId);
+      if (tracks.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('No tracks found for "$albumName"'),
+              backgroundColor: Colors.orange,
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+        return;
+      }
+      final firstTrack = tracks.first;
+      final videoInfo = VideoInfo(
+        id: firstTrack.url ?? '',
+        title: firstTrack.title,
+        uploader: firstTrack.artist ?? 'Unknown',
+        duration: firstTrack.duration ?? 0,
+        url: firstTrack.url ?? '',
+        thumbnail: firstTrack.thumbnail ?? '',
+      );
+      await _streamRecommendedVideo(videoInfo);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Could not play album: $e'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    }
   }
 
   Widget _buildRecentlyPlayedCard(RecentlyPlayedItem item) {

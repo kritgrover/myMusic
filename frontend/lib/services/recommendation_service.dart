@@ -57,12 +57,14 @@ class RecommendationService {
     }
   }
 
-  Future<List<dynamic>> getNewReleases() async {
+  Future<List<Map<String, dynamic>>> getNewReleases() async {
     try {
       final response = await _client.get(Uri.parse('$baseUrl/recommendations/new-releases'));
       
       if (response.statusCode == 200) {
-        return jsonDecode(response.body);
+        return List<Map<String, dynamic>>.from(
+          (jsonDecode(response.body) as List).map((e) => e as Map<String, dynamic>),
+        );
       }
       return [];
     } catch (e) {
@@ -159,6 +161,31 @@ class RecommendationService {
       return [];
     } catch (e) {
       print('Error getting browse new releases: $e');
+      return [];
+    }
+  }
+
+  Future<List<PlaylistTrack>> getAlbumTracks(String albumId) async {
+    try {
+      final response = await _client.get(
+        Uri.parse('$baseUrl/recommendations/album/$albumId/tracks'),
+      );
+      if (response.statusCode == 200) {
+        final List<dynamic> data = jsonDecode(response.body);
+        return data.map((json) => PlaylistTrack(
+          id: json['id'] ?? '',
+          title: json['title'] ?? '',
+          artist: json['artist'],
+          album: json['album'],
+          filename: '',
+          url: json['url'],
+          thumbnail: json['thumbnail'],
+          duration: (json['duration'] as num?)?.toDouble() ?? 0,
+        )).toList();
+      }
+      return [];
+    } catch (e) {
+      print('Error getting album tracks: $e');
       return [];
     }
   }

@@ -385,6 +385,26 @@ class SpotifyService:
             "techno", "trance", "trip-hop", "turkish", "work-out", "world-music"
         ]
 
+    def get_album_tracks(self, album_id, limit=50):
+        """Get tracks from an album for playback."""
+        if not self.sp:
+            return []
+        cache_key = self._get_cache_key("album_tracks", album_id, limit)
+        cached = db.get_cache(cache_key)
+        if cached:
+            return cached
+        try:
+            results = self.sp.album_tracks(album_id, limit=limit)
+            tracks = []
+            for item in results.get("items", []):
+                tracks.append(self._format_track(item))
+            if tracks:
+                db.set_cache(cache_key, tracks, ttl_seconds=3600)
+            return tracks
+        except Exception as e:
+            print(f"Error getting album tracks: {e}")
+            return []
+
     def get_new_releases(self, country='US', limit=20):
         """Get new album releases from Spotify"""
         if not self.sp: return []
