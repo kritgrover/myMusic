@@ -216,14 +216,12 @@ class _HomeScreenState extends State<HomeScreen> {
         if (_showNewReleases) {
           return NewReleasesScreen(
             releases: _newReleases,
-            playerStateService: _playerStateService,
-            queueService: _queueService,
-            recommendationService: _recommendationService,
             onBack: () {
               setState(() {
                 _showNewReleases = false;
               });
             },
+            onPlayAlbum: _playAlbumFirstTrack,
           );
         }
         // If Made for You is selected, show that screen
@@ -766,7 +764,8 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _playAlbumFirstTrack(String albumId, String albumName, String artist) async {
     try {
       final tracks = await _recommendationService.getAlbumTracks(albumId);
-      if (tracks.isEmpty) {
+      final tracksWithUrl = tracks.where((t) => t.url != null && t.url!.isNotEmpty).toList();
+      if (tracksWithUrl.isEmpty) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -778,16 +777,26 @@ class _HomeScreenState extends State<HomeScreen> {
         }
         return;
       }
-      final firstTrack = tracks.first;
-      final videoInfo = VideoInfo(
-        id: firstTrack.url ?? '',
-        title: firstTrack.title,
-        uploader: firstTrack.artist ?? 'Unknown',
-        duration: firstTrack.duration ?? 0,
-        url: firstTrack.url ?? '',
-        thumbnail: firstTrack.thumbnail ?? '',
+      final queueItems = tracksWithUrl.map((track) => QueueItem.fromPlaylistTrackLazy(
+        trackId: track.id,
+        title: track.title,
+        artist: track.artist,
+        originalUrl: track.url!,
+        album: track.album,
+        thumbnail: track.thumbnail,
+      )).toList();
+
+      _queueService.clearQueue();
+      _queueService.addAllToQueue(
+        queueItems,
+        isPlaylistQueue: true,
+        loadStreamingUrl: _loadStreamingUrlForAlbumItem,
       );
-      await _streamRecommendedVideo(videoInfo);
+      await _queueService.playItem(
+        0,
+        _playerStateService,
+        loadStreamingUrl: _loadStreamingUrlForAlbumItem,
+      );
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -798,6 +807,33 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         );
       }
+    }
+  }
+
+  Future<String?> _loadStreamingUrlForAlbumItem(QueueItem item) async {
+    final originalUrl = item.originalUrl;
+    if (originalUrl == null) return null;
+
+    try {
+      String youtubeUrl = originalUrl;
+
+      if (!youtubeUrl.contains('youtube.com') && !youtubeUrl.contains('youtu.be')) {
+        final query = '${item.title} ${item.artist}';
+        final results = await _apiService.searchYoutube(query);
+        if (results.isEmpty) return null;
+        final foundUrl = results.first.url;
+        if (foundUrl == null || foundUrl.isEmpty) return null;
+        youtubeUrl = foundUrl;
+      }
+
+      final result = await _apiService.getStreamingUrl(
+        url: youtubeUrl,
+        title: item.title ?? '',
+        artist: item.artist ?? '',
+      );
+      return result.streamingUrl;
+    } catch (e) {
+      return null;
     }
   }
 

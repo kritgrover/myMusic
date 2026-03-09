@@ -1,85 +1,17 @@
 import 'package:flutter/material.dart';
 import '../utils/responsive_utils.dart';
-import '../services/player_state_service.dart';
-import '../services/queue_service.dart';
-import '../services/api_service.dart';
-import '../services/recommendation_service.dart';
 
 class NewReleasesScreen extends StatelessWidget {
   final List<Map<String, dynamic>> releases;
-  final PlayerStateService playerStateService;
-  final QueueService queueService;
-  final RecommendationService recommendationService;
   final VoidCallback? onBack;
+  final Future<void> Function(String albumId, String albumName, String artist)? onPlayAlbum;
 
   const NewReleasesScreen({
     super.key,
     required this.releases,
-    required this.playerStateService,
-    required this.queueService,
-    required this.recommendationService,
     this.onBack,
+    this.onPlayAlbum,
   });
-
-  Future<void> _playAlbumFirstTrack(
-    BuildContext context,
-    String albumId,
-    String albumName,
-    String artist,
-  ) async {
-    try {
-      final tracks = await recommendationService.getAlbumTracks(albumId);
-      if (tracks.isEmpty) {
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('No tracks found for "$albumName"'),
-              backgroundColor: Colors.orange,
-              behavior: SnackBarBehavior.floating,
-            ),
-          );
-        }
-        return;
-      }
-      final firstTrack = tracks.first;
-      final searchResults = await ApiService().searchYoutube(
-        '${firstTrack.title} ${firstTrack.artist ?? artist}',
-      );
-      if (searchResults.isEmpty) {
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Could not find "${firstTrack.title}" on YouTube'),
-              backgroundColor: Colors.red,
-              behavior: SnackBarBehavior.floating,
-            ),
-          );
-        }
-        return;
-      }
-      final result = await ApiService().getStreamingUrl(
-        url: searchResults.first.url,
-        title: firstTrack.title,
-        artist: firstTrack.artist ?? artist,
-      );
-      await playerStateService.streamTrack(
-        result.streamingUrl,
-        trackName: result.title,
-        trackArtist: result.artist,
-        url: searchResults.first.url,
-      );
-    } catch (e) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Could not play album: $e'),
-            backgroundColor: Colors.red,
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-      }
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -173,7 +105,7 @@ class NewReleasesScreen extends StatelessWidget {
                   builder: (context, constraints) {
                     final cardSize = constraints.maxWidth;
                     return GestureDetector(
-                  onTap: () => _playAlbumFirstTrack(context, albumId, name, artist),
+                  onTap: () => onPlayAlbum?.call(albumId, name, artist),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
