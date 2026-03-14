@@ -513,6 +513,8 @@ class _HomeScreenState extends State<HomeScreen> {
                                     songs: _dailyMix,
                                     onPlay: _streamRecommendedVideo,
                                     onAddToQueue: _addRecommendedToQueue,
+                                    onDownload: _downloadRecommendedVideo,
+                                    onAddToPlaylist: _addRecommendedToPlaylist,
                                     maxItems: 8,
                                     onShowAll: () {
                                       setState(() {
@@ -1341,12 +1343,17 @@ class _HomeScreenState extends State<HomeScreen> {
         artist: cleaned['artist']!,
       );
 
-      await _playerStateService.streamTrack(
-        result.streamingUrl,
-        trackName: result.title,
-        trackArtist: result.artist,
-        url: ytVideo.url,
+      // Add to queue so bottom player add-to-playlist/download work
+      final queueItem = QueueItem(
+        id: 'video_${ytVideo.id}',
+        title: result.title,
+        artist: result.artist,
+        url: result.streamingUrl,
+        originalUrl: ytVideo.url,
+        thumbnail: video.thumbnail,
       );
+      _queueService.clearQueue();
+      await _queueService.addAndPlay(queueItem, _playerStateService);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1358,6 +1365,226 @@ class _HomeScreenState extends State<HomeScreen> {
         );
       }
     }
+  }
+
+  Future<void> _downloadCurrentTrack() async {
+    final currentItem = _queueService.currentItem;
+    if (currentItem == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('No track to download'),
+            backgroundColor: Colors.orange,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+      return;
+    }
+
+    try {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => const Center(
+          child: CircularProgressIndicator(),
+        ),
+      );
+
+      String youtubeUrl = currentItem.originalUrl ?? currentItem.url ?? '';
+      if (youtubeUrl.isEmpty ||
+          (!youtubeUrl.contains('youtube.com') && !youtubeUrl.contains('youtu.be'))) {
+        final searchResults = await _apiService.searchYoutube(
+          '${currentItem.title} ${currentItem.artist}',
+        );
+        if (searchResults.isEmpty) {
+          if (mounted) {
+            Navigator.of(context).pop();
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Could not find "${currentItem.title}" on YouTube'),
+                backgroundColor: Colors.red,
+                behavior: SnackBarBehavior.floating,
+              ),
+            );
+          }
+          return;
+        }
+        youtubeUrl = searchResults.first.url;
+      }
+
+      final cleaned = await _apiService.cleanMetadata(
+        title: currentItem.title ?? '',
+        uploader: currentItem.artist ?? '',
+        videoId: '',
+        videoUrl: youtubeUrl,
+      );
+
+      final result = await _apiService.downloadAudio(
+        url: youtubeUrl,
+        title: cleaned['title']!,
+        artist: cleaned['artist']!,
+        album: cleaned['album'] ?? '',
+        outputFormat: 'm4a',
+        embedThumbnail: true,
+      );
+
+      if (mounted) {
+        Navigator.of(context).pop();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Downloaded: ${result.filename}'),
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        Navigator.of(context).pop();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Download failed: $e'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _addCurrentTrackToPlaylist() async {
+    final currentItem = _queueService.currentItem;
+    if (currentItem == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('No track to add to playlist'),
+            backgroundColor: Colors.orange,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+      return;
+    }
+
+    try {
+      String? urlToStore = currentItem.originalUrl ?? currentItem.url;
+      if (urlToStore != null &&
+          urlToStore.isNotEmpty &&
+          !urlToStore.contains('youtube.com') &&
+          !urlToStore.contains('youtu.be')) {
+        final youtubeUrl = await _apiService.resolveToYouTubeUrl(
+          urlToStore,
+          currentItem.title ?? '',
+          currentItem.artist,
+        );
+        urlToStore = youtubeUrl;
+      }
+      if (urlToStore == null || urlToStore.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Could not find "${currentItem.title}" on YouTube'),
+              backgroundColor: Colors.orange,
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+        return;
+      }
+
+      final track = PlaylistTrack(
+        id: currentItem.id,
+        title: currentItem.title ?? 'Unknown',
+        artist: currentItem.artist,
+        album: currentItem.album,
+        filename: currentItem.filename ?? '',
+        url: urlToStore,
+        thumbnail: currentItem.thumbnail,
+        duration: null,
+      );
+
+      if (!mounted) return;
+      await showDialog(
+        context: context,
+        builder: (context) => PlaylistSelectionDialog(
+          playlistService: _playlistService,
+          track: track,
+        ),
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to add to playlist: $e'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<VideoInfo?> _resolveToYouTubeVideo(VideoInfo video) async {
+    if (video.url.isNotEmpty &&
+        (video.url.contains('youtube.com') || video.url.contains('youtu.be'))) {
+      return video;
+    }
+    try {
+      final youtubeUrl = await _apiService.resolveToYouTubeUrl(
+        video.url.isNotEmpty ? video.url : null,
+        video.title,
+        video.uploader,
+      );
+      if (youtubeUrl == null || youtubeUrl.isEmpty) return null;
+      return VideoInfo(
+        id: video.id,
+        title: video.title,
+        uploader: video.uploader,
+        duration: video.duration,
+        url: youtubeUrl,
+        thumbnail: video.thumbnail,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _downloadRecommendedVideo(VideoInfo video) async {
+    final resolved = await _resolveToYouTubeVideo(video);
+    if (resolved == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Could not find "${video.title}" on YouTube'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+      return;
+    }
+    await _downloadVideo(resolved);
+  }
+
+  Future<void> _addRecommendedToPlaylist(VideoInfo video) async {
+    final resolved = await _resolveToYouTubeVideo(video);
+    if (resolved == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Could not find "${video.title}" on YouTube'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+      return;
+    }
+    await _showAddToPlaylistDialog(resolved);
   }
 
   Future<void> _addRecommendedToQueue(VideoInfo video) async {
@@ -1793,6 +2020,8 @@ class _HomeScreenState extends State<HomeScreen> {
                           }
                         });
                       },
+                      onDownload: _downloadCurrentTrack,
+                      onAddToPlaylist: _addCurrentTrackToPlaylist,
                     );
                   },
                 ),

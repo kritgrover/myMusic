@@ -16,6 +16,8 @@ class BottomPlayer extends StatefulWidget {
   final PlayerStateService? playerStateService;
   final VoidCallback? onQueueToggle;
   final VoidCallback? onLyricsToggle;
+  final VoidCallback? onDownload;
+  final VoidCallback? onAddToPlaylist;
 
   const BottomPlayer({
     super.key,
@@ -26,6 +28,8 @@ class BottomPlayer extends StatefulWidget {
     this.playerStateService,
     this.onQueueToggle,
     this.onLyricsToggle,
+    this.onDownload,
+    this.onAddToPlaylist,
   });
 
   @override
@@ -213,6 +217,10 @@ class _BottomPlayerState extends State<BottomPlayer> {
       // Try to extract filename from URL
       filename = _extractFilenameFromUrl(widget.playerService.currentUrl);
     }
+
+    final isDownloaded = (filename != null && filename.isNotEmpty) ||
+        (widget.playerService.currentUrl != null &&
+            widget.playerService.currentUrl!.contains('/downloads/'));
 
     return Container(
       decoration: BoxDecoration(
@@ -464,6 +472,28 @@ class _BottomPlayerState extends State<BottomPlayer> {
                               ],
                             );
                           },
+                        ),
+                      // Download button (only when track is not downloaded)
+                      if (hasTrack && !isDownloaded && widget.onDownload != null)
+                        IconButton(
+                          icon: const Icon(Icons.download, size: 20),
+                          onPressed: widget.onDownload,
+                          tooltip: 'Download',
+                          constraints: const BoxConstraints(
+                            minWidth: 48,
+                            minHeight: 48,
+                          ),
+                        ),
+                      // Add to playlist button
+                      if (hasTrack && widget.onAddToPlaylist != null)
+                        IconButton(
+                          icon: const Icon(Icons.playlist_add, size: 20),
+                          onPressed: widget.onAddToPlaylist,
+                          tooltip: 'Add to playlist',
+                          constraints: const BoxConstraints(
+                            minWidth: 48,
+                            minHeight: 48,
+                          ),
                         ),
                       // Lyrics button (mic icon)
                       if (hasTrack && widget.onLyricsToggle != null)
