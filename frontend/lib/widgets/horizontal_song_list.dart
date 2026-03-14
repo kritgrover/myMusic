@@ -8,6 +8,8 @@ class HorizontalSongList extends StatelessWidget {
   final List<VideoInfo> songs;
   final Function(VideoInfo) onPlay;
   final Function(VideoInfo) onAddToQueue;
+  final Function(VideoInfo)? onDownload;
+  final Function(VideoInfo)? onAddToPlaylist;
   final VoidCallback? onShowAll;
   final int maxItems;
 
@@ -17,6 +19,8 @@ class HorizontalSongList extends StatelessWidget {
     required this.songs,
     required this.onPlay,
     required this.onAddToQueue,
+    this.onDownload,
+    this.onAddToPlaylist,
     this.onShowAll,
     this.maxItems = 8,
   });
@@ -83,54 +87,58 @@ class HorizontalSongList extends StatelessWidget {
             itemBuilder: (context, index) {
               final song = displayedSongs[index];
               final cardWidth = ResponsiveUtils.responsiveHorizontalCardWidth(context);
+              final listHeight = ResponsiveUtils.responsiveHorizontalListHeight(context);
+              final hasActions = onDownload != null || onAddToPlaylist != null;
               return SizedBox(
                 width: cardWidth,
+                height: listHeight,
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    // Square thumbnail with play button overlay
-                    Stack(
-                      alignment: Alignment.center,
-                      children: [
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(8),
-                          child: Image.network(
-                            song.thumbnail,
-                            width: cardWidth,
-                            height: cardWidth,
-                            fit: BoxFit.cover,
-                            errorBuilder: (context, error, stackTrace) {
-                              return Container(
-                                width: cardWidth,
-                                height: cardWidth,
-                                color: Colors.grey[800],
-                                child: const Icon(Icons.music_note, size: 48),
-                              );
-                            },
-                          ),
-                        ),
-                        Material(
-                          color: Colors.transparent,
-                          child: InkWell(
-                            onTap: () => onPlay(song),
-                            borderRadius: BorderRadius.circular(8),
-                            child: Container(
-                              padding: const EdgeInsets.all(8),
-                              decoration: BoxDecoration(
-                                color: Colors.black.withOpacity(0.4),
-                                shape: BoxShape.circle,
-                              ),
-                              child: const Icon(
-                                Icons.play_arrow,
-                                color: Colors.white,
-                                size: 24,
-                              ),
+                    Flexible(
+                      child: AspectRatio(
+                        aspectRatio: 1,
+                        child: Stack(
+                              alignment: Alignment.center,
+                              children: [
+                                ClipRRect(
+                                  borderRadius: BorderRadius.circular(8),
+                                  child: Image.network(
+                                    song.thumbnail,
+                                    fit: BoxFit.cover,
+                                    errorBuilder: (context, error, stackTrace) {
+                                      return Container(
+                                        color: Colors.grey[800],
+                                        child: const Icon(Icons.music_note, size: 48),
+                                      );
+                                    },
+                                  ),
+                                ),
+                                Material(
+                                  color: Colors.transparent,
+                                  child: InkWell(
+                                    onTap: () => onPlay(song),
+                                    borderRadius: BorderRadius.circular(8),
+                                    child: Container(
+                                      padding: const EdgeInsets.all(8),
+                                      decoration: BoxDecoration(
+                                        color: Colors.black.withOpacity(0.4),
+                                        shape: BoxShape.circle,
+                                      ),
+                                      child: const Icon(
+                                        Icons.play_arrow,
+                                        color: Colors.white,
+                                        size: 24,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ),
-                          ),
-                        ),
-                      ],
+                      ),
                     ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 6),
                     Text(
                       song.title,
                       maxLines: 1,
@@ -140,11 +148,41 @@ class HorizontalSongList extends StatelessWidget {
                       ),
                     ),
                     Text(
-                      song.uploader, // Artist
+                      song.uploader,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
+                    if (hasActions) ...[
+                      const SizedBox(height: 4),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (onDownload != null)
+                            IconButton(
+                              icon: const Icon(Icons.download, size: 18),
+                              onPressed: () => onDownload!(song),
+                              tooltip: 'Download',
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                              style: IconButton.styleFrom(
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              ),
+                            ),
+                          if (onAddToPlaylist != null)
+                            IconButton(
+                              icon: const Icon(Icons.playlist_add, size: 18),
+                              onPressed: () => onAddToPlaylist!(song),
+                              tooltip: 'Add to playlist',
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                              style: IconButton.styleFrom(
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              ),
+                            ),
+                        ],
+                      ),
+                    ],
                   ],
                 ),
               );

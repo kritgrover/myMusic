@@ -409,6 +409,13 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
     }
   }
 
+  Future<String?> _resolveTrackUrlToYouTube(PlaylistTrack track) async {
+    final url = track.url;
+    if (url == null || url.isEmpty) return null;
+    if (url.contains('youtube.com') || url.contains('youtu.be')) return url;
+    return await _apiService.resolveToYouTubeUrl(url, track.title, track.artist);
+  }
+
   Future<void> _playTrack(PlaylistTrack track) async {
     try {
       if (track.filename.isNotEmpty && widget.playerStateService != null) {
@@ -433,11 +440,32 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
           );
         }
       } else if (track.url != null && track.url!.isNotEmpty) {
-        // This is a YouTube URL - stream it immediately
+        // Resolve to YouTube if URL is Spotify or other non-YouTube
         if (widget.playerStateService != null) {
           try {
+            String youtubeUrl = track.url!;
+            if (!youtubeUrl.contains('youtube.com') && !youtubeUrl.contains('youtu.be')) {
+              final resolved = await _apiService.resolveToYouTubeUrl(
+                youtubeUrl,
+                track.title,
+                track.artist,
+              );
+              if (resolved == null || resolved.isEmpty) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Could not find "${track.title}" on YouTube'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                }
+                return;
+              }
+              youtubeUrl = resolved;
+            }
+
             final result = await _apiService.getStreamingUrl(
-              url: track.url!,
+              url: youtubeUrl,
               title: track.title,
               artist: track.artist ?? '',
             );
@@ -447,7 +475,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
               result.streamingUrl,
               trackName: result.title,
               trackArtist: result.artist,
-              url: track.url,
+              url: youtubeUrl,
             );
             // Tracking is now done in PlayerStateService when song starts
           } catch (e) {
@@ -852,10 +880,15 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
             queueItems.add(queueItem);
             successCount++;
           } else if (track.url != null && track.url!.isNotEmpty) {
-            // Need to get streaming URL
+            // Need to get streaming URL - resolve to YouTube first if Spotify
             try {
+              final youtubeUrl = await _resolveTrackUrlToYouTube(track);
+              if (youtubeUrl == null || youtubeUrl.isEmpty) {
+                failCount++;
+                continue;
+              }
               final result = await _apiService.getStreamingUrl(
-                url: track.url!,
+                url: youtubeUrl,
                 title: track.title,
                 artist: track.artist ?? '',
               );
@@ -988,10 +1021,15 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
             queueItems.add(queueItem);
             successCount++;
           } else if (track.url != null && track.url!.isNotEmpty) {
-            // Need to get streaming URL
+            // Need to get streaming URL - resolve to YouTube first if Spotify
             try {
+              final youtubeUrl = await _resolveTrackUrlToYouTube(track);
+              if (youtubeUrl == null || youtubeUrl.isEmpty) {
+                failCount++;
+                continue;
+              }
               final result = await _apiService.getStreamingUrl(
-                url: track.url!,
+                url: youtubeUrl,
                 title: track.title,
                 artist: track.artist ?? '',
               );
@@ -1075,10 +1113,23 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
           album: track.album,
         );
       } else if (track.url != null && track.url!.isNotEmpty) {
-        // Need to get streaming URL
+        // Need to get streaming URL - resolve to YouTube first if Spotify
         try {
+          final youtubeUrl = await _resolveTrackUrlToYouTube(track);
+          if (youtubeUrl == null || youtubeUrl.isEmpty) {
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('Could not find "${track.title}" on YouTube'),
+                  backgroundColor: Colors.red,
+                  behavior: SnackBarBehavior.floating,
+                ),
+              );
+            }
+            return;
+          }
           final result = await _apiService.getStreamingUrl(
-            url: track.url!,
+            url: youtubeUrl,
             title: track.title,
             artist: track.artist ?? '',
           );

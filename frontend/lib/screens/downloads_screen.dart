@@ -9,6 +9,9 @@ import '../utils/song_display_utils.dart';
 import '../widgets/album_cover.dart';
 import '../widgets/empty_state_widget.dart';
 import '../widgets/gradient_section_header.dart';
+import '../widgets/playlist_selection_dialog.dart';
+import '../services/playlist_service.dart';
+import '../models/playlist.dart';
 
 class DownloadsScreen extends StatefulWidget {
   final PlayerStateService playerStateService;
@@ -28,6 +31,7 @@ class DownloadsScreen extends StatefulWidget {
 
 class _DownloadsScreenState extends State<DownloadsScreen> {
   final ApiService _apiService = ApiService();
+  final PlaylistService _playlistService = PlaylistService();
   final TextEditingController _searchController = TextEditingController();
   List<DownloadedFile> _downloads = [];
   bool _isLoading = true;
@@ -163,6 +167,30 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
             ),
           );
         }
+      }
+    }
+  }
+
+  Future<void> _addToPlaylist(DownloadedFile file) async {
+    try {
+      final track = PlaylistTrack.fromDownloadedFile(file);
+      if (!mounted) return;
+      await showDialog(
+        context: context,
+        builder: (context) => PlaylistSelectionDialog(
+          playlistService: _playlistService,
+          track: track,
+        ),
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to add to playlist: $e'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
       }
     }
   }
@@ -325,6 +353,11 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
                                         Row(
                                           mainAxisSize: MainAxisSize.min,
                                           children: [
+                                            IconButton(
+                                              icon: const Icon(Icons.playlist_add, size: 20),
+                                              onPressed: () => _addToPlaylist(file),
+                                              tooltip: 'Add to playlist',
+                                            ),
                                             if (widget.queueService != null)
                                               IconButton(
                                                 icon: const Icon(Icons.queue_music, size: 20),

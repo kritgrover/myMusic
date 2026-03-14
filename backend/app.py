@@ -1393,6 +1393,7 @@ def add_history(entry: HistoryEntry, request: Request):
         artist_id = None
         
         # If no spotify_id provided, try to find it
+        track_info = None
         if not entry.spotify_id:
             track_info = spotify_service.search_track(entry.song_title, entry.artist)
             if track_info:
@@ -1406,6 +1407,15 @@ def add_history(entry: HistoryEntry, request: Request):
             entry.duration_played, 
             entry.spotify_id
         )
+        
+        # Track artist for new-releases recommendations
+        if track_info:
+            db.upsert_user_artist(
+                current_user["id"],
+                track_info.get("artist", entry.artist),
+                track_info.get("artist_id"),
+                track_info.get("thumbnail"),
+            )
         
         # Track genre preferences for better recommendations
         if artist_id:
@@ -1521,23 +1531,32 @@ def get_personalized_recommendations(request: Request):
 
 @app.get("/recommendations/new-releases")
 def get_new_releases(request: Request):
-    """Get new releases from top artists in history"""
+    """Get new releases from top artists the user listens to (uses user_artists table)"""
     try:
         current_user = _require_current_user(request)
-        top_artists = db.get_top_artists(current_user["id"], limit=5)
+        top_artists = db.get_top_user_artists(current_user["id"], limit=10)
         all_releases = []
-        
+        seen_ids = set()
+
         for artist in top_artists:
-            # Search for artist ID first
-            # We use a trick: search for a track by this artist to get artist ID
-            track_info = spotify_service.search_track("", artist['artist'])
-            if track_info:
-                releases = spotify_service.get_artist_new_releases(track_info['artist_id'], limit=3)
-                all_releases.extend(releases)
-        
-        # Sort by release date descending
-        all_releases.sort(key=lambda x: x['release_date'], reverse=True)
-        return all_releases[:20]
+            if not artist.get("spotify_artist_id"):
+                continue
+            releases = spotify_service.get_artist_new_releases(
+                artist["spotify_artist_id"], limit=5
+            )
+            for release in releases:
+                if release["id"] not in seen_ids:
+                    seen_ids.add(release["id"])
+                    all_releases.append(release)
+
+        all_releases.sort(key=lambda x: x["release_date"], reverse=True)
+        result = all_releases[:20]
+
+        # Fallback to browse new releases if user has no tracked artists yet
+        if not result:
+            result = spotify_service.get_new_releases(country="US", limit=20)
+
+        return result
     except Exception as e:
         print(f"Error getting new releases: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -1591,6 +1610,17 @@ def get_spotify_playlist_tracks(playlist_id: str):
         return tracks
     except Exception as e:
         print(f"Error getting playlist tracks: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/recommendations/album/{album_id}/tracks")
+def get_album_tracks(album_id: str):
+    """Get tracks from a Spotify album"""
+    try:
+        tracks = spotify_service.get_album_tracks(album_id)
+        return tracks
+    except Exception as e:
+        print(f"Error getting album tracks: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
