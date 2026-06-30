@@ -15,6 +15,7 @@ class MadeForYouScreen extends StatefulWidget {
   final QueueService queueService;
   final RecentlyPlayedService? recentlyPlayedService;
   final VoidCallback? onBack;
+  final String title;
 
   const MadeForYouScreen({
     super.key,
@@ -23,6 +24,7 @@ class MadeForYouScreen extends StatefulWidget {
     required this.queueService,
     this.recentlyPlayedService,
     this.onBack,
+    this.title = 'Songs for You',
   });
 
   @override
@@ -273,10 +275,13 @@ class _MadeForYouScreenState extends State<MadeForYouScreen> {
                 tooltip: 'Back',
               ),
               const SizedBox(width: 8),
-              Text(
-                'Songs for You',
-                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                  fontWeight: FontWeight.w700,
+              Expanded(
+                child: Text(
+                  widget.title,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
               ),
             ],

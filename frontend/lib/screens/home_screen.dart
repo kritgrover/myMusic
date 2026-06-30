@@ -23,12 +23,19 @@ import '../models/queue_item.dart';
 import '../models/playlist.dart';
 import '../services/recommendation_service.dart';
 import '../services/auth_service.dart';
+import '../models/discovery.dart';
 import '../widgets/horizontal_song_list.dart';
+import '../widgets/horizontal_card_row.dart';
 import '../widgets/genre_card.dart';
+import '../widgets/playlist_card.dart';
+import '../widgets/artist_card.dart';
 import 'genre_screen.dart';
 import 'spotify_playlist_screen.dart';
 import 'made_for_you_screen.dart';
 import 'new_releases_screen.dart';
+import 'album_detail_screen.dart';
+import 'artist_screen.dart';
+import 'mood_playlists_screen.dart';
 import 'profile_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -77,7 +84,18 @@ class _HomeScreenState extends State<HomeScreen> {
   List<VideoInfo> _dailyMix = [];
   List<Map<String, dynamic>> _newReleases = [];
   bool _isLoadingRecommendations = false;
-  final List<String> _genres = ['Pop', 'Rock', 'Hip Hop', 'Electronic', 'Jazz', 'Classical', 'Indie', 'Metal'];
+  final List<String> _genres = [
+    'Pop', 'Rock', 'Hip Hop', 'Electronic', 'Jazz', 'Classical',
+    'Indie', 'Metal', 'R&B', 'Country', 'K-Pop', 'Latin',
+    'Reggae', 'Blues', 'Soul', 'Folk', 'Punk', 'Dance',
+  ];
+
+  // Spotify-style home shelves (load independently and render progressively)
+  List<HomeMix> _mixes = [];
+  List<BecauseRow> _becauseRows = [];
+  List<SpotifyPlaylistInfo> _curated = [];
+  List<ArtistInfo> _recommendedArtists = [];
+  List<MoodCategory> _moods = [];
   
   // Genre navigation
   String? _selectedGenre;
@@ -143,7 +161,17 @@ class _HomeScreenState extends State<HomeScreen> {
     }
     
     _fetchRecommendations();
+    _fetchDiscoveryShelves();
   }
+
+  VideoInfo _trackToVideo(PlaylistTrack t) => VideoInfo(
+        id: t.url ?? '',
+        title: t.title,
+        uploader: t.artist ?? 'Unknown',
+        duration: t.duration ?? 0,
+        url: t.url ?? '',
+        thumbnail: t.thumbnail ?? '',
+      );
 
   Future<void> _fetchRecommendations() async {
     setState(() {
@@ -160,14 +188,7 @@ class _HomeScreenState extends State<HomeScreen> {
         final dailyMixTracks = results[0] as List<PlaylistTrack>;
         final newReleases = results[1] as List<Map<String, dynamic>>;
         setState(() {
-          _dailyMix = dailyMixTracks.map((t) => VideoInfo(
-            id: t.url ?? '',
-            title: t.title,
-            uploader: t.artist ?? 'Unknown',
-            duration: t.duration ?? 0,
-            url: t.url ?? '',
-            thumbnail: t.thumbnail ?? '',
-          )).toList();
+          _dailyMix = dailyMixTracks.map(_trackToVideo).toList();
           _newReleases = newReleases;
           _isLoadingRecommendations = false;
         });
@@ -180,6 +201,95 @@ class _HomeScreenState extends State<HomeScreen> {
         });
       }
     }
+  }
+
+  /// Fetch the richer discovery shelves independently so each renders as soon as
+  /// it resolves and self-hides when empty (no single slow shelf blocks the page).
+  void _fetchDiscoveryShelves() {
+    _recommendationService.getMixes().then((v) {
+      if (mounted) setState(() => _mixes = v);
+    });
+    _recommendationService.getBecauseYouListened().then((v) {
+      if (mounted) setState(() => _becauseRows = v);
+    });
+    _recommendationService.getCuratedPlaylists().then((v) {
+      if (mounted) setState(() => _curated = v);
+    });
+    _recommendationService.getRecommendedArtists().then((v) {
+      if (mounted) setState(() => _recommendedArtists = v);
+    });
+    _recommendationService.getMoods().then((v) {
+      if (mounted) setState(() => _moods = v);
+    });
+  }
+
+  Future<void> _refreshHome() async {
+    _fetchDiscoveryShelves();
+    await _fetchRecommendations();
+  }
+
+  // Navigation helpers for the new shelves
+
+  void _openAlbumDetail(Map<String, dynamic> release) {
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => AlbumDetailScreen(
+        albumId: release['id'] as String? ?? '',
+        albumName: release['name'] as String? ?? '',
+        artist: release['artist'] as String?,
+        coverUrl: release['thumbnail'] as String?,
+        playerStateService: _playerStateService,
+        queueService: _queueService,
+        recentlyPlayedService: _recentlyPlayedService,
+      ),
+    ));
+  }
+
+  void _openArtist(ArtistInfo artist) {
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => ArtistScreen(
+        artistId: artist.id,
+        artistName: artist.name,
+        playerStateService: _playerStateService,
+        queueService: _queueService,
+        recentlyPlayedService: _recentlyPlayedService,
+      ),
+    ));
+  }
+
+  void _openSpotifyPlaylist(SpotifyPlaylistInfo playlist) {
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => SpotifyPlaylistScreen(
+        playlistId: playlist.id,
+        playlistName: playlist.name,
+        coverUrl: playlist.thumbnail,
+        playerStateService: _playerStateService,
+        queueService: _queueService,
+        recentlyPlayedService: _recentlyPlayedService,
+      ),
+    ));
+  }
+
+  void _openMood(MoodCategory mood) {
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => MoodPlaylistsScreen(
+        mood: mood.mood,
+        playerStateService: _playerStateService,
+        queueService: _queueService,
+        recentlyPlayedService: _recentlyPlayedService,
+      ),
+    ));
+  }
+
+  void _openMixShowAll(HomeMix mix) {
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => MadeForYouScreen(
+        title: mix.title,
+        songs: mix.tracks.map(_trackToVideo).toList(),
+        playerStateService: _playerStateService,
+        queueService: _queueService,
+        recentlyPlayedService: _recentlyPlayedService,
+      ),
+    ));
   }
 
   void _onRecentlyPlayedChanged() {
@@ -436,7 +546,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                         )
                       : RefreshIndicator(
-                          onRefresh: _fetchRecommendations,
+                          onRefresh: _refreshHome,
                           child: SingleChildScrollView(
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
@@ -458,7 +568,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                             bottom: 16,
                                           ),
                                           child: Text(
-                                            'Recently Played',
+                                            'Jump back in',
                                             style: Theme.of(context).textTheme.titleLarge?.copyWith(
                                               fontWeight: FontWeight.w600,
                                             ),
@@ -502,12 +612,16 @@ class _HomeScreenState extends State<HomeScreen> {
                                   },
                                 ),
 
+                                // Made for You mixes (one row per top genre)
+                                ..._buildMadeForYouShelves(),
+
+                                // Songs for You (daily mix)
                                 if (_isLoadingRecommendations)
                                   const Padding(
                                     padding: EdgeInsets.all(32.0),
                                     child: Center(child: CircularProgressIndicator()),
                                   )
-                                else ...[
+                                else
                                   HorizontalSongList(
                                     title: 'Songs for You',
                                     songs: _dailyMix,
@@ -522,8 +636,21 @@ class _HomeScreenState extends State<HomeScreen> {
                                       });
                                     },
                                   ),
-                                  _buildNewReleasesSection(),
-                                ],
+
+                                // Because you listened to {artist}
+                                ..._buildBecauseShelves(),
+
+                                // Curated playlists
+                                _buildCuratedShelf(),
+
+                                // New Releases
+                                if (!_isLoadingRecommendations) _buildNewReleasesSection(),
+
+                                // Recommended artists
+                                _buildRecommendedArtistsShelf(),
+
+                                // Browse Moods
+                                _buildMoodsSection(),
 
                                 // Genres
                                 Padding(
@@ -585,6 +712,118 @@ class _HomeScreenState extends State<HomeScreen> {
                             ),
                           ),
                         ),
+        ),
+      ],
+    );
+  }
+
+  // ---- Discovery shelf builders -------------------------------------------
+
+  List<Widget> _buildMadeForYouShelves() {
+    return _mixes.where((m) => m.tracks.isNotEmpty).map((mix) {
+      return HorizontalSongList(
+        title: mix.title,
+        songs: mix.tracks.map(_trackToVideo).toList(),
+        onPlay: _streamRecommendedVideo,
+        onAddToQueue: _addRecommendedToQueue,
+        onDownload: _downloadRecommendedVideo,
+        onAddToPlaylist: _addRecommendedToPlaylist,
+        maxItems: 10,
+        onShowAll: () => _openMixShowAll(mix),
+      );
+    }).toList();
+  }
+
+  List<Widget> _buildBecauseShelves() {
+    return _becauseRows.where((r) => r.tracks.isNotEmpty).map((row) {
+      return HorizontalSongList(
+        title: row.title,
+        songs: row.tracks.map(_trackToVideo).toList(),
+        onPlay: _streamRecommendedVideo,
+        onAddToQueue: _addRecommendedToQueue,
+        onDownload: _downloadRecommendedVideo,
+        onAddToPlaylist: _addRecommendedToPlaylist,
+        maxItems: 10,
+      );
+    }).toList();
+  }
+
+  Widget _buildCuratedShelf() {
+    if (_curated.isEmpty) return const SizedBox.shrink();
+    return HorizontalCardRow(
+      title: 'Curated playlists',
+      itemCount: _curated.length,
+      itemWidth: ResponsiveUtils.responsiveHorizontalCardWidth(context),
+      labelHeight: 52,
+      itemBuilder: (context, index) => PlaylistCard(
+        playlist: _curated[index],
+        onTap: () => _openSpotifyPlaylist(_curated[index]),
+      ),
+    );
+  }
+
+  Widget _buildRecommendedArtistsShelf() {
+    if (_recommendedArtists.isEmpty) return const SizedBox.shrink();
+    return HorizontalCardRow(
+      title: 'Recommended artists',
+      itemCount: _recommendedArtists.length,
+      itemWidth: ResponsiveUtils.responsiveHorizontalCardWidth(context),
+      labelHeight: 32,
+      itemBuilder: (context, index) => ArtistCard(
+        artist: _recommendedArtists[index],
+        onTap: () => _openArtist(_recommendedArtists[index]),
+      ),
+    );
+  }
+
+  Widget _buildMoodsSection() {
+    if (_moods.isEmpty) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: EdgeInsets.only(
+            left: ResponsiveUtils.responsiveValue<double>(context, compact: 12, medium: 20, expanded: 24),
+            right: ResponsiveUtils.responsiveValue<double>(context, compact: 12, medium: 20, expanded: 24),
+            top: 16,
+            bottom: 16,
+          ),
+          child: Text(
+            'Browse Moods',
+            style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600),
+          ),
+        ),
+        Padding(
+          padding: ResponsiveUtils.responsiveHorizontalPadding(context),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final crossAxisCount = ResponsiveUtils.responsiveValue<int>(context, compact: 2, medium: 3, expanded: 4);
+              final spacing = ResponsiveUtils.responsiveValue<double>(context, compact: 12, medium: 14, expanded: 16);
+              final totalSpacing = spacing * (crossAxisCount - 1);
+              final cardWidth = (constraints.maxWidth - totalSpacing) / crossAxisCount;
+              final cardHeight = ResponsiveUtils.responsiveCardHeight(context);
+              final aspectRatio = cardWidth / cardHeight;
+
+              return GridView.builder(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: crossAxisCount,
+                  crossAxisSpacing: spacing,
+                  mainAxisSpacing: spacing,
+                  childAspectRatio: aspectRatio,
+                ),
+                itemCount: _moods.length,
+                itemBuilder: (context, index) {
+                  final mood = _moods[index];
+                  return GenreCard(
+                    genre: mood.title,
+                    onTap: () => _openMood(mood),
+                  );
+                },
+              );
+            },
+          ),
         ),
       ],
     );
@@ -663,7 +902,6 @@ class _HomeScreenState extends State<HomeScreen> {
               final type = release['type'] as String? ?? 'album';
               final releaseDate = release['release_date'] as String? ?? '';
               final thumbnail = release['thumbnail'] as String?;
-              final albumId = release['id'] as String? ?? '';
 
               return SizedBox(
                 width: cardWidth,
@@ -690,7 +928,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         Material(
                           color: Colors.transparent,
                           child: InkWell(
-                            onTap: () => _playAlbumFirstTrack(albumId, name, artist),
+                            onTap: () => _openAlbumDetail(release),
                             borderRadius: BorderRadius.circular(8),
                             child: Container(
                               padding: const EdgeInsets.all(8),
@@ -699,7 +937,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                 shape: BoxShape.circle,
                               ),
                               child: const Icon(
-                                Icons.play_arrow,
+                                Icons.album,
                                 color: Colors.white,
                                 size: 24,
                               ),
