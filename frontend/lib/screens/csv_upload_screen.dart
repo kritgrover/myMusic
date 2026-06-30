@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'dart:html' as html;
+import 'package:file_picker/file_picker.dart';
 import '../utils/responsive_utils.dart';
 import 'dart:typed_data';
 import '../services/api_service.dart';
@@ -71,46 +71,31 @@ class _CsvUploadScreenState extends State<CsvUploadScreen> {
   }
 
   Future<void> _pickFile() async {
-    final input = html.FileUploadInputElement()..accept = '.csv';
-    input.click();
-
-    input.onChange.listen((e) async {
-      final files = input.files;
-      if (files != null && files.isNotEmpty) {
-        final file = files[0];
-        await _uploadFile(file);
-      }
-    });
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['csv'],
+      withData: true, // load bytes into memory on all platforms
+    );
+    if (result == null || result.files.isEmpty) return;
+    final picked = result.files.first;
+    final bytes = picked.bytes;
+    if (bytes == null) return;
+    await _uploadFile(bytes, picked.name);
   }
 
-  Future<void> _uploadFile(html.File file) async {
+  Future<void> _uploadFile(Uint8List fileBytes, String fileName) async {
     try {
       if (mounted) {
         setState(() {
           _isConverting = true;
           _conversionComplete = false;
-          _uploadedFilename = file.name;
-          _playlistName = file.name.replaceAll('.csv', '');
+          _uploadedFilename = fileName;
+          _playlistName = fileName.replaceAll('.csv', '');
         });
       }
 
-      // Read file as bytes
-      final reader = html.FileReader();
-      reader.readAsArrayBuffer(file);
-      await reader.onLoad.first;
-      
-      // Handle both ByteBuffer and Uint8List cases
-      Uint8List fileBytes;
-      if (reader.result is Uint8List) {
-        fileBytes = reader.result as Uint8List;
-      } else if (reader.result is ByteBuffer) {
-        fileBytes = (reader.result as ByteBuffer).asUint8List();
-      } else {
-        throw Exception('Unexpected file reader result type');
-      }
-      
       // Upload file using API service
-      final uploadResult = await _apiService.uploadCsvBytes(fileBytes, file.name);
+      final uploadResult = await _apiService.uploadCsvBytes(fileBytes, fileName);
       
       // Notify parent that conversion started
       widget.onConversionStart?.call(uploadResult.filename);

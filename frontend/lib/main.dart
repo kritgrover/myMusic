@@ -1,4 +1,7 @@
+import 'dart:io' show Platform;
+
 import 'package:flutter/material.dart';
+import 'package:just_audio_media_kit/just_audio_media_kit.dart';
 import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
 import 'services/auth_http_client.dart';
@@ -16,6 +19,12 @@ const Color textTertiary = Color(0xFF737373);
 const Color dividerColor = Color(0xFF262626);
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  // just_audio has no native Windows/Linux backend; media_kit provides one
+  // underneath the existing just_audio API (no audio-service code changes).
+  if (Platform.isWindows || Platform.isLinux) {
+    JustAudioMediaKit.ensureInitialized(windows: true, linux: true);
+  }
   runApp(const MyApp());
 }
 
