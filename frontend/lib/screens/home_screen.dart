@@ -23,11 +23,19 @@ import '../models/queue_item.dart';
 import '../models/playlist.dart';
 import '../services/recommendation_service.dart';
 import '../services/auth_service.dart';
+import '../models/discovery.dart';
 import '../widgets/horizontal_song_list.dart';
+import '../widgets/horizontal_card_row.dart';
 import '../widgets/genre_card.dart';
+import '../widgets/playlist_card.dart';
+import '../widgets/artist_card.dart';
 import 'genre_screen.dart';
 import 'spotify_playlist_screen.dart';
 import 'made_for_you_screen.dart';
+import 'new_releases_screen.dart';
+import 'album_detail_screen.dart';
+import 'artist_screen.dart';
+import 'mood_playlists_screen.dart';
 import 'profile_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -74,14 +82,29 @@ class _HomeScreenState extends State<HomeScreen> {
 
   // Recommendations
   List<VideoInfo> _dailyMix = [];
+  List<Map<String, dynamic>> _newReleases = [];
   bool _isLoadingRecommendations = false;
-  final List<String> _genres = ['Pop', 'Rock', 'Hip Hop', 'Electronic', 'Jazz', 'Classical', 'Indie', 'Metal'];
+  final List<String> _genres = [
+    'Pop', 'Rock', 'Hip Hop', 'Electronic', 'Jazz', 'Classical',
+    'Indie', 'Metal', 'R&B', 'Country', 'K-Pop', 'Latin',
+    'Reggae', 'Blues', 'Soul', 'Folk', 'Punk', 'Dance',
+  ];
+
+  // Spotify-style home shelves (load independently and render progressively)
+  List<HomeMix> _mixes = [];
+  List<BecauseRow> _becauseRows = [];
+  List<SpotifyPlaylistInfo> _curated = [];
+  List<ArtistInfo> _recommendedArtists = [];
+  List<MoodCategory> _moods = [];
   
   // Genre navigation
   String? _selectedGenre;
   
   // Made for You navigation
   bool _showMadeForYou = false;
+
+  // New Releases navigation
+  bool _showNewReleases = false;
 
   // Search state
   final TextEditingController _searchController = TextEditingController();
@@ -138,7 +161,17 @@ class _HomeScreenState extends State<HomeScreen> {
     }
     
     _fetchRecommendations();
+    _fetchDiscoveryShelves();
   }
+
+  VideoInfo _trackToVideo(PlaylistTrack t) => VideoInfo(
+        id: t.url ?? '',
+        title: t.title,
+        uploader: t.artist ?? 'Unknown',
+        duration: t.duration ?? 0,
+        url: t.url ?? '',
+        thumbnail: t.thumbnail ?? '',
+      );
 
   Future<void> _fetchRecommendations() async {
     setState(() {
@@ -146,19 +179,17 @@ class _HomeScreenState extends State<HomeScreen> {
     });
 
     try {
-      final dailyMixTracks = await _recommendationService.getDailyMix();
+      final results = await Future.wait([
+        _recommendationService.getDailyMix(),
+        _recommendationService.getNewReleases(),
+      ]);
 
       if (mounted) {
+        final dailyMixTracks = results[0] as List<PlaylistTrack>;
+        final newReleases = results[1] as List<Map<String, dynamic>>;
         setState(() {
-          _dailyMix = dailyMixTracks.map((t) => VideoInfo(
-            id: t.url ?? '',
-            title: t.title,
-            uploader: t.artist ?? 'Unknown',
-            duration: t.duration ?? 0,
-            url: t.url ?? '',
-            thumbnail: t.thumbnail ?? '',
-          )).toList();
-          
+          _dailyMix = dailyMixTracks.map(_trackToVideo).toList();
+          _newReleases = newReleases;
           _isLoadingRecommendations = false;
         });
       }
@@ -170,6 +201,95 @@ class _HomeScreenState extends State<HomeScreen> {
         });
       }
     }
+  }
+
+  /// Fetch the richer discovery shelves independently so each renders as soon as
+  /// it resolves and self-hides when empty (no single slow shelf blocks the page).
+  void _fetchDiscoveryShelves() {
+    _recommendationService.getMixes().then((v) {
+      if (mounted) setState(() => _mixes = v);
+    });
+    _recommendationService.getBecauseYouListened().then((v) {
+      if (mounted) setState(() => _becauseRows = v);
+    });
+    _recommendationService.getCuratedPlaylists().then((v) {
+      if (mounted) setState(() => _curated = v);
+    });
+    _recommendationService.getRecommendedArtists().then((v) {
+      if (mounted) setState(() => _recommendedArtists = v);
+    });
+    _recommendationService.getMoods().then((v) {
+      if (mounted) setState(() => _moods = v);
+    });
+  }
+
+  Future<void> _refreshHome() async {
+    _fetchDiscoveryShelves();
+    await _fetchRecommendations();
+  }
+
+  // Navigation helpers for the new shelves
+
+  void _openAlbumDetail(Map<String, dynamic> release) {
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => AlbumDetailScreen(
+        albumId: release['id'] as String? ?? '',
+        albumName: release['name'] as String? ?? '',
+        artist: release['artist'] as String?,
+        coverUrl: release['thumbnail'] as String?,
+        playerStateService: _playerStateService,
+        queueService: _queueService,
+        recentlyPlayedService: _recentlyPlayedService,
+      ),
+    ));
+  }
+
+  void _openArtist(ArtistInfo artist) {
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => ArtistScreen(
+        artistId: artist.id,
+        artistName: artist.name,
+        playerStateService: _playerStateService,
+        queueService: _queueService,
+        recentlyPlayedService: _recentlyPlayedService,
+      ),
+    ));
+  }
+
+  void _openSpotifyPlaylist(SpotifyPlaylistInfo playlist) {
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => SpotifyPlaylistScreen(
+        playlistId: playlist.id,
+        playlistName: playlist.name,
+        coverUrl: playlist.thumbnail,
+        playerStateService: _playerStateService,
+        queueService: _queueService,
+        recentlyPlayedService: _recentlyPlayedService,
+      ),
+    ));
+  }
+
+  void _openMood(MoodCategory mood) {
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => MoodPlaylistsScreen(
+        mood: mood.mood,
+        playerStateService: _playerStateService,
+        queueService: _queueService,
+        recentlyPlayedService: _recentlyPlayedService,
+      ),
+    ));
+  }
+
+  void _openMixShowAll(HomeMix mix) {
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => MadeForYouScreen(
+        title: mix.title,
+        songs: mix.tracks.map(_trackToVideo).toList(),
+        playerStateService: _playerStateService,
+        queueService: _queueService,
+        recentlyPlayedService: _recentlyPlayedService,
+      ),
+    ));
   }
 
   void _onRecentlyPlayedChanged() {
@@ -202,6 +322,18 @@ class _HomeScreenState extends State<HomeScreen> {
 
     switch (_currentIndex) {
       case 0:
+        // If New Releases is selected, show that screen
+        if (_showNewReleases) {
+          return NewReleasesScreen(
+            releases: _newReleases,
+            onBack: () {
+              setState(() {
+                _showNewReleases = false;
+              });
+            },
+            onPlayAlbum: _playAlbumFirstTrack,
+          );
+        }
         // If Made for You is selected, show that screen
         if (_showMadeForYou) {
           return MadeForYouScreen(
@@ -414,7 +546,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                         )
                       : RefreshIndicator(
-                          onRefresh: _fetchRecommendations,
+                          onRefresh: _refreshHome,
                           child: SingleChildScrollView(
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
@@ -436,7 +568,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                             bottom: 16,
                                           ),
                                           child: Text(
-                                            'Recently Played',
+                                            'Jump back in',
                                             style: Theme.of(context).textTheme.titleLarge?.copyWith(
                                               fontWeight: FontWeight.w600,
                                             ),
@@ -480,17 +612,23 @@ class _HomeScreenState extends State<HomeScreen> {
                                   },
                                 ),
 
+                                // Made for You mixes (one row per top genre)
+                                ..._buildMadeForYouShelves(),
+
+                                // Songs for You (daily mix)
                                 if (_isLoadingRecommendations)
                                   const Padding(
                                     padding: EdgeInsets.all(32.0),
                                     child: Center(child: CircularProgressIndicator()),
                                   )
-                                else ...[
+                                else
                                   HorizontalSongList(
                                     title: 'Songs for You',
                                     songs: _dailyMix,
                                     onPlay: _streamRecommendedVideo,
                                     onAddToQueue: _addRecommendedToQueue,
+                                    onDownload: _downloadRecommendedVideo,
+                                    onAddToPlaylist: _addRecommendedToPlaylist,
                                     maxItems: 8,
                                     onShowAll: () {
                                       setState(() {
@@ -498,7 +636,21 @@ class _HomeScreenState extends State<HomeScreen> {
                                       });
                                     },
                                   ),
-                                ],
+
+                                // Because you listened to {artist}
+                                ..._buildBecauseShelves(),
+
+                                // Curated playlists
+                                _buildCuratedShelf(),
+
+                                // New Releases
+                                if (!_isLoadingRecommendations) _buildNewReleasesSection(),
+
+                                // Recommended artists
+                                _buildRecommendedArtistsShelf(),
+
+                                // Browse Moods
+                                _buildMoodsSection(),
 
                                 // Genres
                                 Padding(
@@ -563,6 +715,366 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       ],
     );
+  }
+
+  // ---- Discovery shelf builders -------------------------------------------
+
+  List<Widget> _buildMadeForYouShelves() {
+    return _mixes.where((m) => m.tracks.isNotEmpty).map((mix) {
+      return HorizontalSongList(
+        title: mix.title,
+        songs: mix.tracks.map(_trackToVideo).toList(),
+        onPlay: _streamRecommendedVideo,
+        onAddToQueue: _addRecommendedToQueue,
+        onDownload: _downloadRecommendedVideo,
+        onAddToPlaylist: _addRecommendedToPlaylist,
+        maxItems: 10,
+        onShowAll: () => _openMixShowAll(mix),
+      );
+    }).toList();
+  }
+
+  List<Widget> _buildBecauseShelves() {
+    return _becauseRows.where((r) => r.tracks.isNotEmpty).map((row) {
+      return HorizontalSongList(
+        title: row.title,
+        songs: row.tracks.map(_trackToVideo).toList(),
+        onPlay: _streamRecommendedVideo,
+        onAddToQueue: _addRecommendedToQueue,
+        onDownload: _downloadRecommendedVideo,
+        onAddToPlaylist: _addRecommendedToPlaylist,
+        maxItems: 10,
+      );
+    }).toList();
+  }
+
+  Widget _buildCuratedShelf() {
+    if (_curated.isEmpty) return const SizedBox.shrink();
+    return HorizontalCardRow(
+      title: 'Curated playlists',
+      itemCount: _curated.length,
+      itemWidth: ResponsiveUtils.responsiveHorizontalCardWidth(context),
+      labelHeight: 52,
+      itemBuilder: (context, index) => PlaylistCard(
+        playlist: _curated[index],
+        onTap: () => _openSpotifyPlaylist(_curated[index]),
+      ),
+    );
+  }
+
+  Widget _buildRecommendedArtistsShelf() {
+    if (_recommendedArtists.isEmpty) return const SizedBox.shrink();
+    return HorizontalCardRow(
+      title: 'Recommended artists',
+      itemCount: _recommendedArtists.length,
+      itemWidth: ResponsiveUtils.responsiveHorizontalCardWidth(context),
+      labelHeight: 32,
+      itemBuilder: (context, index) => ArtistCard(
+        artist: _recommendedArtists[index],
+        onTap: () => _openArtist(_recommendedArtists[index]),
+      ),
+    );
+  }
+
+  Widget _buildMoodsSection() {
+    if (_moods.isEmpty) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: EdgeInsets.only(
+            left: ResponsiveUtils.responsiveValue<double>(context, compact: 12, medium: 20, expanded: 24),
+            right: ResponsiveUtils.responsiveValue<double>(context, compact: 12, medium: 20, expanded: 24),
+            top: 16,
+            bottom: 16,
+          ),
+          child: Text(
+            'Browse Moods',
+            style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600),
+          ),
+        ),
+        Padding(
+          padding: ResponsiveUtils.responsiveHorizontalPadding(context),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final crossAxisCount = ResponsiveUtils.responsiveValue<int>(context, compact: 2, medium: 3, expanded: 4);
+              final spacing = ResponsiveUtils.responsiveValue<double>(context, compact: 12, medium: 14, expanded: 16);
+              final totalSpacing = spacing * (crossAxisCount - 1);
+              final cardWidth = (constraints.maxWidth - totalSpacing) / crossAxisCount;
+              final cardHeight = ResponsiveUtils.responsiveCardHeight(context);
+              final aspectRatio = cardWidth / cardHeight;
+
+              return GridView.builder(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: crossAxisCount,
+                  crossAxisSpacing: spacing,
+                  mainAxisSpacing: spacing,
+                  childAspectRatio: aspectRatio,
+                ),
+                itemCount: _moods.length,
+                itemBuilder: (context, index) {
+                  final mood = _moods[index];
+                  return GenreCard(
+                    genre: mood.title,
+                    onTap: () => _openMood(mood),
+                  );
+                },
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildNewReleasesSection() {
+    if (_newReleases.isEmpty) return const SizedBox.shrink();
+
+    const maxItems = 8;
+    final displayed = _newReleases.length > maxItems
+        ? _newReleases.sublist(0, maxItems)
+        : _newReleases;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: EdgeInsets.only(
+            left: ResponsiveUtils.responsiveValue<double>(context, compact: 12, medium: 20, expanded: 24),
+            right: ResponsiveUtils.responsiveValue<double>(context, compact: 12, medium: 20, expanded: 24),
+            top: 16,
+            bottom: 8,
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'New Releases',
+                style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              if (_newReleases.length > maxItems)
+                TextButton(
+                  onPressed: () {
+                    setState(() {
+                      _showNewReleases = true;
+                    });
+                  },
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        'See All',
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.primary,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      Icon(
+                        Icons.arrow_forward,
+                        size: 16,
+                        color: Theme.of(context).colorScheme.primary,
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        ),
+        SizedBox(
+          height: ResponsiveUtils.responsiveHorizontalListHeight(context),
+          child: ListView.separated(
+            padding: ResponsiveUtils.responsiveHorizontalPadding(context),
+            scrollDirection: Axis.horizontal,
+            itemCount: displayed.length,
+            separatorBuilder: (context, index) => SizedBox(
+              width: ResponsiveUtils.responsiveValue<double>(context, compact: 16, medium: 20, expanded: 24),
+            ),
+            itemBuilder: (context, index) {
+              final release = displayed[index];
+              final cardWidth = ResponsiveUtils.responsiveHorizontalCardWidth(context);
+              final name = release['name'] as String? ?? '';
+              final artist = release['artist'] as String? ?? '';
+              final type = release['type'] as String? ?? 'album';
+              final releaseDate = release['release_date'] as String? ?? '';
+              final thumbnail = release['thumbnail'] as String?;
+
+              return SizedBox(
+                width: cardWidth,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(8),
+                          child: thumbnail != null && thumbnail.isNotEmpty
+                              ? Image.network(
+                                  thumbnail,
+                                  width: cardWidth,
+                                  height: cardWidth,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (context, error, stackTrace) {
+                                    return _buildAlbumPlaceholder(cardWidth);
+                                  },
+                                )
+                              : _buildAlbumPlaceholder(cardWidth),
+                        ),
+                        Material(
+                          color: Colors.transparent,
+                          child: InkWell(
+                            onTap: () => _openAlbumDetail(release),
+                            borderRadius: BorderRadius.circular(8),
+                            child: Container(
+                              padding: const EdgeInsets.all(8),
+                              decoration: BoxDecoration(
+                                color: Colors.black.withOpacity(0.4),
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Icon(
+                                Icons.album,
+                                color: Colors.white,
+                                size: 24,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    Text(
+                      artist,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                    if (releaseDate.isNotEmpty) ...[
+                      const SizedBox(height: 2),
+                      Row(
+                        children: [
+                          Text(
+                            type == 'single' ? 'Single' : 'Album',
+                            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                              color: Theme.of(context).colorScheme.primary,
+                            ),
+                          ),
+                          Text(
+                            ' • $releaseDate',
+                            style: Theme.of(context).textTheme.labelSmall,
+                          ),
+                        ],
+                      ),
+                    ],
+                  ],
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildAlbumPlaceholder(double size) {
+    return Container(
+      width: size,
+      height: size,
+      color: Theme.of(context).colorScheme.surfaceVariant,
+      child: Icon(
+        Icons.album,
+        size: 48,
+        color: Theme.of(context).colorScheme.onSurfaceVariant,
+      ),
+    );
+  }
+
+  Future<void> _playAlbumFirstTrack(String albumId, String albumName, String artist) async {
+    try {
+      final tracks = await _recommendationService.getAlbumTracks(albumId);
+      final tracksWithUrl = tracks.where((t) => t.url != null && t.url!.isNotEmpty).toList();
+      if (tracksWithUrl.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('No tracks found for "$albumName"'),
+              backgroundColor: Colors.orange,
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+        return;
+      }
+      final queueItems = tracksWithUrl.map((track) => QueueItem.fromPlaylistTrackLazy(
+        trackId: track.id,
+        title: track.title,
+        artist: track.artist,
+        originalUrl: track.url!,
+        album: track.album,
+        thumbnail: track.thumbnail,
+      )).toList();
+
+      _queueService.clearQueue();
+      _queueService.addAllToQueue(
+        queueItems,
+        isPlaylistQueue: true,
+        loadStreamingUrl: _loadStreamingUrlForAlbumItem,
+      );
+      await _queueService.playItem(
+        0,
+        _playerStateService,
+        loadStreamingUrl: _loadStreamingUrlForAlbumItem,
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Could not play album: $e'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<String?> _loadStreamingUrlForAlbumItem(QueueItem item) async {
+    final originalUrl = item.originalUrl;
+    if (originalUrl == null) return null;
+
+    try {
+      String youtubeUrl = originalUrl;
+
+      if (!youtubeUrl.contains('youtube.com') && !youtubeUrl.contains('youtu.be')) {
+        final query = '${item.title} ${item.artist}';
+        final results = await _apiService.searchYoutube(query);
+        if (results.isEmpty) return null;
+        final foundUrl = results.first.url;
+        if (foundUrl == null || foundUrl.isEmpty) return null;
+        youtubeUrl = foundUrl;
+      }
+
+      final result = await _apiService.getStreamingUrl(
+        url: youtubeUrl,
+        title: item.title ?? '',
+        artist: item.artist ?? '',
+      );
+      return result.streamingUrl;
+    } catch (e) {
+      return null;
+    }
   }
 
   Widget _buildRecentlyPlayedCard(RecentlyPlayedItem item) {
@@ -1069,12 +1581,17 @@ class _HomeScreenState extends State<HomeScreen> {
         artist: cleaned['artist']!,
       );
 
-      await _playerStateService.streamTrack(
-        result.streamingUrl,
-        trackName: result.title,
-        trackArtist: result.artist,
-        url: ytVideo.url,
+      // Add to queue so bottom player add-to-playlist/download work
+      final queueItem = QueueItem(
+        id: 'video_${ytVideo.id}',
+        title: result.title,
+        artist: result.artist,
+        url: result.streamingUrl,
+        originalUrl: ytVideo.url,
+        thumbnail: video.thumbnail,
       );
+      _queueService.clearQueue();
+      await _queueService.addAndPlay(queueItem, _playerStateService);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1086,6 +1603,226 @@ class _HomeScreenState extends State<HomeScreen> {
         );
       }
     }
+  }
+
+  Future<void> _downloadCurrentTrack() async {
+    final currentItem = _queueService.currentItem;
+    if (currentItem == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('No track to download'),
+            backgroundColor: Colors.orange,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+      return;
+    }
+
+    try {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => const Center(
+          child: CircularProgressIndicator(),
+        ),
+      );
+
+      String youtubeUrl = currentItem.originalUrl ?? currentItem.url ?? '';
+      if (youtubeUrl.isEmpty ||
+          (!youtubeUrl.contains('youtube.com') && !youtubeUrl.contains('youtu.be'))) {
+        final searchResults = await _apiService.searchYoutube(
+          '${currentItem.title} ${currentItem.artist}',
+        );
+        if (searchResults.isEmpty) {
+          if (mounted) {
+            Navigator.of(context).pop();
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Could not find "${currentItem.title}" on YouTube'),
+                backgroundColor: Colors.red,
+                behavior: SnackBarBehavior.floating,
+              ),
+            );
+          }
+          return;
+        }
+        youtubeUrl = searchResults.first.url;
+      }
+
+      final cleaned = await _apiService.cleanMetadata(
+        title: currentItem.title ?? '',
+        uploader: currentItem.artist ?? '',
+        videoId: '',
+        videoUrl: youtubeUrl,
+      );
+
+      final result = await _apiService.downloadAudio(
+        url: youtubeUrl,
+        title: cleaned['title']!,
+        artist: cleaned['artist']!,
+        album: cleaned['album'] ?? '',
+        outputFormat: 'm4a',
+        embedThumbnail: true,
+      );
+
+      if (mounted) {
+        Navigator.of(context).pop();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Downloaded: ${result.filename}'),
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        Navigator.of(context).pop();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Download failed: $e'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _addCurrentTrackToPlaylist() async {
+    final currentItem = _queueService.currentItem;
+    if (currentItem == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('No track to add to playlist'),
+            backgroundColor: Colors.orange,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+      return;
+    }
+
+    try {
+      String? urlToStore = currentItem.originalUrl ?? currentItem.url;
+      if (urlToStore != null &&
+          urlToStore.isNotEmpty &&
+          !urlToStore.contains('youtube.com') &&
+          !urlToStore.contains('youtu.be')) {
+        final youtubeUrl = await _apiService.resolveToYouTubeUrl(
+          urlToStore,
+          currentItem.title ?? '',
+          currentItem.artist,
+        );
+        urlToStore = youtubeUrl;
+      }
+      if (urlToStore == null || urlToStore.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Could not find "${currentItem.title}" on YouTube'),
+              backgroundColor: Colors.orange,
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+        return;
+      }
+
+      final track = PlaylistTrack(
+        id: currentItem.id,
+        title: currentItem.title ?? 'Unknown',
+        artist: currentItem.artist,
+        album: currentItem.album,
+        filename: currentItem.filename ?? '',
+        url: urlToStore,
+        thumbnail: currentItem.thumbnail,
+        duration: null,
+      );
+
+      if (!mounted) return;
+      await showDialog(
+        context: context,
+        builder: (context) => PlaylistSelectionDialog(
+          playlistService: _playlistService,
+          track: track,
+        ),
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to add to playlist: $e'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<VideoInfo?> _resolveToYouTubeVideo(VideoInfo video) async {
+    if (video.url.isNotEmpty &&
+        (video.url.contains('youtube.com') || video.url.contains('youtu.be'))) {
+      return video;
+    }
+    try {
+      final youtubeUrl = await _apiService.resolveToYouTubeUrl(
+        video.url.isNotEmpty ? video.url : null,
+        video.title,
+        video.uploader,
+      );
+      if (youtubeUrl == null || youtubeUrl.isEmpty) return null;
+      return VideoInfo(
+        id: video.id,
+        title: video.title,
+        uploader: video.uploader,
+        duration: video.duration,
+        url: youtubeUrl,
+        thumbnail: video.thumbnail,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _downloadRecommendedVideo(VideoInfo video) async {
+    final resolved = await _resolveToYouTubeVideo(video);
+    if (resolved == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Could not find "${video.title}" on YouTube'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+      return;
+    }
+    await _downloadVideo(resolved);
+  }
+
+  Future<void> _addRecommendedToPlaylist(VideoInfo video) async {
+    final resolved = await _resolveToYouTubeVideo(video);
+    if (resolved == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Could not find "${video.title}" on YouTube'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+      return;
+    }
+    await _showAddToPlaylistDialog(resolved);
   }
 
   Future<void> _addRecommendedToQueue(VideoInfo video) async {
@@ -1521,6 +2258,8 @@ class _HomeScreenState extends State<HomeScreen> {
                           }
                         });
                       },
+                      onDownload: _downloadCurrentTrack,
+                      onAddToPlaylist: _addCurrentTrackToPlaylist,
                     );
                   },
                 ),

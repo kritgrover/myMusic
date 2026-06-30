@@ -13,12 +13,16 @@ class ApiService {
         _client = client ?? AuthHttpClient.shared;
   
   /// Resolve a URL to a YouTube URL. If the given URL is already YouTube, returns it.
-  /// If it's a non-YouTube URL (e.g. Spotify), searches YouTube by title+artist and returns the first result.
+  /// If it's a non-YouTube URL (e.g. Spotify) or null/empty, searches YouTube by title+artist and returns the first result.
   /// Returns null if resolution fails.
   Future<String?> resolveToYouTubeUrl(String? url, String title, String? artist) async {
-    if (url == null || url.isEmpty) return null;
-    if (url.contains('youtube.com') || url.contains('youtu.be')) return url;
+    // Already have a valid YouTube URL
+    if (url != null && url.isNotEmpty &&
+        (url.contains('youtube.com') || url.contains('youtu.be'))) {
+      return url;
+    }
 
+    // For Spotify URLs, null, or empty - search YouTube by title+artist
     try {
       final results = await searchYoutube('$title ${artist ?? ''}');
       if (results.isEmpty) return null;
