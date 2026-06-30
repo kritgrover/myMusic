@@ -64,7 +64,7 @@ class RecentlyPlayedItem {
 
 class RecentlyPlayedService extends ChangeNotifier {
   final String _storageKey;
-  static const int _maxItems = 4;
+  static const int _maxItems = 8;
   List<RecentlyPlayedItem> _items = [];
 
   List<RecentlyPlayedItem> get items => List.unmodifiable(_items);

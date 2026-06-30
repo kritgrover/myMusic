@@ -1393,6 +1393,7 @@ def add_history(entry: HistoryEntry, request: Request):
         artist_id = None
         
         # If no spotify_id provided, try to find it
+        track_info = None
         if not entry.spotify_id:
             track_info = spotify_service.search_track(entry.song_title, entry.artist)
             if track_info:
@@ -1406,6 +1407,15 @@ def add_history(entry: HistoryEntry, request: Request):
             entry.duration_played, 
             entry.spotify_id
         )
+        
+        # Track artist for new-releases recommendations
+        if track_info:
+            db.upsert_user_artist(
+                current_user["id"],
+                track_info.get("artist", entry.artist),
+                track_info.get("artist_id"),
+                track_info.get("thumbnail"),
+            )
         
         # Track genre preferences for better recommendations
         if artist_id:
@@ -1521,23 +1531,32 @@ def get_personalized_recommendations(request: Request):
 
 @app.get("/recommendations/new-releases")
 def get_new_releases(request: Request):
-    """Get new releases from top artists in history"""
+    """Get new releases from top artists the user listens to (uses user_artists table)"""
     try:
         current_user = _require_current_user(request)
-        top_artists = db.get_top_artists(current_user["id"], limit=5)
+        top_artists = db.get_top_user_artists(current_user["id"], limit=10)
         all_releases = []
-        
+        seen_ids = set()
+
         for artist in top_artists:
-            # Search for artist ID first
-            # We use a trick: search for a track by this artist to get artist ID
-            track_info = spotify_service.search_track("", artist['artist'])
-            if track_info:
-                releases = spotify_service.get_artist_new_releases(track_info['artist_id'], limit=3)
-                all_releases.extend(releases)
-        
-        # Sort by release date descending
-        all_releases.sort(key=lambda x: x['release_date'], reverse=True)
-        return all_releases[:20]
+            if not artist.get("spotify_artist_id"):
+                continue
+            releases = spotify_service.get_artist_new_releases(
+                artist["spotify_artist_id"], limit=5
+            )
+            for release in releases:
+                if release["id"] not in seen_ids:
+                    seen_ids.add(release["id"])
+                    all_releases.append(release)
+
+        all_releases.sort(key=lambda x: x["release_date"], reverse=True)
+        result = all_releases[:20]
+
+        # Fallback to browse new releases if user has no tracked artists yet
+        if not result:
+            result = spotify_service.get_new_releases(country="US", limit=20)
+
+        return result
     except Exception as e:
         print(f"Error getting new releases: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -1591,6 +1610,204 @@ def get_spotify_playlist_tracks(playlist_id: str):
         return tracks
     except Exception as e:
         print(f"Error getting playlist tracks: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/recommendations/album/{album_id}/tracks")
+def get_album_tracks(album_id: str):
+    """Get tracks from a Spotify album"""
+    try:
+        tracks = spotify_service.get_album_tracks(album_id)
+        return tracks
+    except Exception as e:
+        print(f"Error getting album tracks: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Spotify-style Home Shelves
+
+@app.get("/recommendations/mixes")
+def get_made_for_you_mixes(request: Request):
+    """Personalized 'Made for You' mixes - one track row per top genre."""
+    try:
+        current_user = _require_current_user(request)
+        top_genres = db.get_top_genres(current_user["id"], limit=4)
+        # Cold-start fallback to popular genres
+        if not top_genres:
+            top_genres = ["pop", "hip-hop", "rock", "electronic"]
+
+        mixes = []
+        for genre in top_genres:
+            tracks = spotify_service.get_genre_recommendations(genre, limit=15)
+            if tracks:
+                mixes.append({
+                    "id": f"mix_{genre.lower().replace(' ', '-')}",
+                    "title": f"{genre.title()} Mix",
+                    "genre": genre,
+                    "tracks": tracks,
+                })
+        return mixes
+    except Exception as e:
+        print(f"Error getting mixes: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/recommendations/curated")
+def get_curated_playlists_endpoint(request: Request):
+    """A row of curated/themed playlists (featured-playlists API is deprecated)."""
+    try:
+        _require_current_user(request)
+        queries = [
+            "today's top hits", "viral hits", "new music friday",
+            "rap caviar", "rock classics", "all out 2010s",
+            "mega hits", "pop rising", "indie chill",
+        ]
+        return spotify_service.get_curated_playlists(queries, limit=15)
+    except Exception as e:
+        print(f"Error getting curated playlists: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/recommendations/moods")
+def get_mood_categories(request: Request):
+    """List of mood/activity categories rendered as gradient cards."""
+    try:
+        _require_current_user(request)
+        return [{"mood": m, "title": m} for m in spotify_service.get_moods()]
+    except Exception as e:
+        print(f"Error getting moods: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/recommendations/mood/{mood}/playlists")
+def get_mood_playlists_endpoint(mood: str):
+    """Playlists for a given mood/activity."""
+    try:
+        return spotify_service.get_mood_playlists(mood, limit=20)
+    except Exception as e:
+        print(f"Error getting mood playlists: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/recommendations/because-you-listened")
+def get_because_you_listened(request: Request):
+    """Related-artist track rows seeded by the user's top recent artists."""
+    try:
+        current_user = _require_current_user(request)
+        top_artists = db.get_top_user_artists(current_user["id"], limit=3)
+
+        rows = []
+        seen_track_ids = set()
+        for artist in top_artists:
+            artist_id = artist.get("spotify_artist_id")
+            artist_name = artist.get("artist_name")
+            if not artist_id or not artist_name:
+                continue
+            tracks = spotify_service.get_recommendations(seed_artists=[artist_id], limit=15)
+            # De-dup across rows so they don't show the same songs
+            unique = []
+            for t in tracks:
+                if t["id"] in seen_track_ids:
+                    continue
+                seen_track_ids.add(t["id"])
+                unique.append(t)
+            if unique:
+                rows.append({
+                    "seed_artist_id": artist_id,
+                    "seed_artist_name": artist_name,
+                    "title": f"Because you listened to {artist_name}",
+                    "tracks": unique,
+                })
+            if len(rows) >= 2:
+                break
+        return rows
+    except Exception as e:
+        print(f"Error getting because-you-listened: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/recommendations/artists")
+def get_recommended_artists_endpoint(request: Request):
+    """Recommended artists to explore, seeded by the user's top artists."""
+    try:
+        current_user = _require_current_user(request)
+        top_artists = db.get_top_user_artists(current_user["id"], limit=3)
+        seed_ids = [a.get("spotify_artist_id") for a in top_artists if a.get("spotify_artist_id")]
+
+        fallback_query = None
+        if not seed_ids:
+            top_genres = db.get_top_genres(current_user["id"], limit=1)
+            fallback_query = top_genres[0] if top_genres else "pop"
+
+        return spotify_service.get_recommended_artists(
+            seed_artist_ids=seed_ids or None,
+            fallback_query=fallback_query,
+            limit=15,
+        )
+    except Exception as e:
+        print(f"Error getting recommended artists: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Album & Artist detail endpoints
+
+@app.get("/album/{album_id}")
+def get_album_metadata(album_id: str):
+    """Get album metadata for the album detail screen (tracks via /recommendations/album/{id}/tracks)."""
+    try:
+        album = spotify_service.get_album(album_id)
+        if not album:
+            raise HTTPException(status_code=404, detail="Album not found")
+        return album
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error getting album metadata: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/artist/{artist_id}")
+def get_artist_profile(artist_id: str):
+    """Get an artist profile (name, image, genres, followers)."""
+    try:
+        artist = spotify_service.get_artist(artist_id)
+        if not artist:
+            raise HTTPException(status_code=404, detail="Artist not found")
+        return artist
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error getting artist profile: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/artist/{artist_id}/top-tracks")
+def get_artist_top_tracks_endpoint(artist_id: str):
+    """Get an artist's top tracks."""
+    try:
+        return spotify_service.get_artist_top_tracks(artist_id, limit=10)
+    except Exception as e:
+        print(f"Error getting artist top tracks: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/artist/{artist_id}/albums")
+def get_artist_albums_endpoint(artist_id: str):
+    """Get an artist's albums and singles."""
+    try:
+        return spotify_service.get_artist_albums(artist_id, limit=20)
+    except Exception as e:
+        print(f"Error getting artist albums: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/artist/{artist_id}/related")
+def get_artist_related_endpoint(artist_id: str):
+    """Get artists related to a given artist ('Fans also like')."""
+    try:
+        return spotify_service.get_related_artists(artist_id, limit=12)
+    except Exception as e:
+        print(f"Error getting related artists: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

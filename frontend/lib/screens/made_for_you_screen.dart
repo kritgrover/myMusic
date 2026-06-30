@@ -15,6 +15,7 @@ class MadeForYouScreen extends StatefulWidget {
   final QueueService queueService;
   final RecentlyPlayedService? recentlyPlayedService;
   final VoidCallback? onBack;
+  final String title;
 
   const MadeForYouScreen({
     super.key,
@@ -23,6 +24,7 @@ class MadeForYouScreen extends StatefulWidget {
     required this.queueService,
     this.recentlyPlayedService,
     this.onBack,
+    this.title = 'Songs for You',
   });
 
   @override
@@ -50,18 +52,24 @@ class _MadeForYouScreenState extends State<MadeForYouScreen> {
       }
 
       // Get streaming URL for the first result
+      final ytVideo = searchResults.first;
       final result = await _apiService.getStreamingUrl(
-        url: searchResults.first.url,
+        url: ytVideo.url,
         title: song.title,
         artist: song.uploader,
       );
 
-      await widget.playerStateService.streamTrack(
-        result.streamingUrl,
-        trackName: result.title,
-        trackArtist: result.artist,
-        url: searchResults.first.url,
+      // Add to queue so bottom player add-to-playlist/download work
+      final queueItem = QueueItem(
+        id: 'video_${ytVideo.id}',
+        title: result.title,
+        artist: result.artist,
+        url: result.streamingUrl,
+        originalUrl: ytVideo.url,
+        thumbnail: song.thumbnail,
       );
+      widget.queueService.clearQueue();
+      await widget.queueService.addAndPlay(queueItem, widget.playerStateService);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -124,6 +132,77 @@ class _MadeForYouScreenState extends State<MadeForYouScreen> {
     }
   }
 
+  Future<void> _downloadTrack(VideoInfo song) async {
+    try {
+      final youtubeUrl = await _apiService.resolveToYouTubeUrl(
+        song.url.isNotEmpty ? song.url : null,
+        song.title,
+        song.uploader,
+      );
+      if (youtubeUrl == null || youtubeUrl.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Could not find "${song.title}" on YouTube'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
+      }
+
+      if (mounted) {
+        showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (context) => const Center(
+            child: CircularProgressIndicator(),
+          ),
+        );
+      }
+
+      final cleaned = await _apiService.cleanMetadata(
+        title: song.title,
+        uploader: song.uploader,
+        videoId: '',
+        videoUrl: youtubeUrl,
+      );
+
+      final result = await _apiService.downloadAudio(
+        url: youtubeUrl,
+        title: cleaned['title']!,
+        artist: cleaned['artist']!,
+        album: cleaned['album'] ?? '',
+        outputFormat: 'm4a',
+        embedThumbnail: true,
+      );
+
+      if (mounted) {
+        Navigator.of(context).pop();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Downloaded: ${result.filename}'),
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        Navigator.of(context).pop(); // Close loading dialog
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Download failed: $e'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    }
+  }
+
   Future<void> _showAddToPlaylistDialog(VideoInfo song) async {
     // Resolve Spotify/non-YouTube URLs to YouTube so the playlist stores the correct URL
     final youtubeUrl = await _apiService.resolveToYouTubeUrl(
@@ -132,10 +211,11 @@ class _MadeForYouScreenState extends State<MadeForYouScreen> {
       song.uploader,
     );
 
-    final needsYoutube = song.url == null ||
-        song.url!.isEmpty ||
-        (!song.url!.contains('youtube.com') && !song.url!.contains('youtu.be'));
-    if (needsYoutube && youtubeUrl == null) {
+    // Use resolved YouTube URL, or original if it was already YouTube
+    final isYoutube = song.url.isNotEmpty &&
+        (song.url.contains('youtube.com') || song.url.contains('youtu.be'));
+    final effectiveUrl = youtubeUrl ?? (isYoutube ? song.url : null);
+    if (effectiveUrl == null || effectiveUrl.isEmpty) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -152,7 +232,7 @@ class _MadeForYouScreenState extends State<MadeForYouScreen> {
       title: song.title,
       artist: song.uploader,
       filename: '',
-      url: youtubeUrl ?? song.url,
+      url: effectiveUrl!,
       thumbnail: song.thumbnail,
       duration: song.duration is double ? song.duration : (song.duration?.toDouble()),
     );
@@ -195,10 +275,13 @@ class _MadeForYouScreenState extends State<MadeForYouScreen> {
                 tooltip: 'Back',
               ),
               const SizedBox(width: 8),
-              Text(
-                'Songs for You',
-                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                  fontWeight: FontWeight.w700,
+              Expanded(
+                child: Text(
+                  widget.title,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
               ),
             ],
@@ -269,66 +352,124 @@ class _MadeForYouScreenState extends State<MadeForYouScreen> {
                       final song = widget.songs[index];
                       return Card(
                         margin: const EdgeInsets.symmetric(vertical: 4.0),
-                        child: ListTile(
-                          leading: ClipRRect(
-                            borderRadius: BorderRadius.circular(4),
-                            child: song.thumbnail.isNotEmpty
-                                ? Image.network(
-                                    song.thumbnail,
-                                    width: ResponsiveUtils.responsiveIconSize(context, base: 48),
-                                    height: ResponsiveUtils.responsiveIconSize(context, base: 48),
-                                    fit: BoxFit.cover,
-                                    errorBuilder: (_, __, ___) {
-                                      final size = ResponsiveUtils.responsiveIconSize(context, base: 48);
-                                      return Container(
-                                        width: size,
-                                        height: size,
-                                        color: Theme.of(context).colorScheme.surfaceVariant,
-                                        child: const Icon(Icons.music_note),
-                                      );
-                                    },
-                                  )
-                                : Container(
-                                    width: ResponsiveUtils.responsiveIconSize(context, base: 48),
-                                    height: ResponsiveUtils.responsiveIconSize(context, base: 48),
-                                    color: Theme.of(context).colorScheme.surfaceVariant,
-                                    child: const Icon(Icons.music_note),
+                        child: InkWell(
+                          onTap: () => _playTrack(song),
+                          borderRadius: BorderRadius.circular(4),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            child: Row(
+                              children: [
+                                ClipRRect(
+                                  borderRadius: BorderRadius.circular(4),
+                                  child: song.thumbnail.isNotEmpty
+                                      ? Image.network(
+                                          song.thumbnail,
+                                          width: ResponsiveUtils.responsiveIconSize(context, base: 48),
+                                          height: ResponsiveUtils.responsiveIconSize(context, base: 48),
+                                          fit: BoxFit.cover,
+                                          errorBuilder: (_, __, ___) {
+                                            final size = ResponsiveUtils.responsiveIconSize(context, base: 48);
+                                            return Container(
+                                              width: size,
+                                              height: size,
+                                              color: Theme.of(context).colorScheme.surfaceVariant,
+                                              child: const Icon(Icons.music_note),
+                                            );
+                                          },
+                                        )
+                                      : Container(
+                                          width: ResponsiveUtils.responsiveIconSize(context, base: 48),
+                                          height: ResponsiveUtils.responsiveIconSize(context, base: 48),
+                                          color: Theme.of(context).colorScheme.surfaceVariant,
+                                          child: const Icon(Icons.music_note),
+                                        ),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Text(
+                                        song.title,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: Theme.of(context).textTheme.bodyLarge,
+                                      ),
+                                      Text(
+                                        song.uploader,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+                                          fontSize: 14,
+                                        ),
+                                      ),
+                                    ],
                                   ),
-                          ),
-                          title: Text(
-                            song.title,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          subtitle: Text(
-                            song.uploader,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+                                ),
+                                Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    IconButton(
+                                      icon: const Icon(Icons.play_arrow),
+                                      tooltip: 'Play',
+                                      onPressed: () => _playTrack(song),
+                                    ),
+                                    PopupMenuButton<String>(
+                                      icon: const Icon(Icons.more_vert),
+                                      tooltip: 'More actions',
+                                      onSelected: (value) {
+                                        switch (value) {
+                                          case 'download':
+                                            _downloadTrack(song);
+                                            break;
+                                          case 'playlist':
+                                            _showAddToPlaylistDialog(song);
+                                            break;
+                                          case 'queue':
+                                            _addToQueue(song);
+                                            break;
+                                        }
+                                      },
+                                      itemBuilder: (context) => [
+                                        const PopupMenuItem(
+                                          value: 'download',
+                                          child: Row(
+                                            children: [
+                                              Icon(Icons.download, size: 20),
+                                              SizedBox(width: 12),
+                                              Text('Download'),
+                                            ],
+                                          ),
+                                        ),
+                                        const PopupMenuItem(
+                                          value: 'playlist',
+                                          child: Row(
+                                            children: [
+                                              Icon(Icons.playlist_add, size: 20),
+                                              SizedBox(width: 12),
+                                              Text('Add to playlist'),
+                                            ],
+                                          ),
+                                        ),
+                                        const PopupMenuItem(
+                                          value: 'queue',
+                                          child: Row(
+                                            children: [
+                                              Icon(Icons.queue_music, size: 20),
+                                              SizedBox(width: 12),
+                                              Text('Add to queue'),
+                                            ],
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ],
+                                ),
+                              ],
                             ),
                           ),
-                          trailing: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              IconButton(
-                                icon: const Icon(Icons.playlist_add),
-                                tooltip: 'Add to playlist',
-                                onPressed: () => _showAddToPlaylistDialog(song),
-                              ),
-                              IconButton(
-                                icon: const Icon(Icons.queue_music),
-                                tooltip: 'Add to queue',
-                                onPressed: () => _addToQueue(song),
-                              ),
-                              IconButton(
-                                icon: const Icon(Icons.play_arrow),
-                                tooltip: 'Play',
-                                onPressed: () => _playTrack(song),
-                              ),
-                            ],
-                          ),
-                          onTap: () => _playTrack(song),
                         ),
                       );
                     },

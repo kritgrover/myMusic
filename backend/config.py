@@ -1,8 +1,15 @@
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
-load_dotenv()
+# Load environment variables, resolved by absolute path (not CWD) so the server
+# finds creds no matter where it is launched from or which .env holds them.
+# backend/.env is loaded FIRST so its JWT_SECRET_KEY wins (override=False below),
+# then the repo-root .env fills in anything missing (e.g. CLIENT_ID/CLIENT_SECRET).
+_BACKEND_DIR = Path(__file__).resolve().parent      # .../myMusic/backend
+_ROOT_DIR = _BACKEND_DIR.parent                       # .../myMusic
+load_dotenv(_BACKEND_DIR / ".env")
+load_dotenv(_ROOT_DIR / ".env", override=False)
 
 class Settings:
     # Spotify Configuration

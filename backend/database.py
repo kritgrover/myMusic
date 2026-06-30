@@ -141,6 +141,23 @@ class Database:
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
         ''')
+
+        # User artists (artist name -> Spotify ID mapping for new releases)
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS user_artists (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            artist_name TEXT NOT NULL,
+            spotify_artist_id TEXT,
+            thumbnail TEXT,
+            play_count INTEGER DEFAULT 1,
+            last_played DATETIME,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(user_id, artist_name),
+            FOREIGN KEY(user_id) REFERENCES users(id)
+        )
+        ''')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_user_artists_user_id ON user_artists(user_id)')
         
         conn.commit()
         conn.close()
@@ -332,6 +349,57 @@ class Database:
         rows = cursor.fetchall()
         conn.close()
         return [dict(row) for row in rows]
+
+    def upsert_user_artist(self, user_id, artist_name, spotify_artist_id=None, thumbnail=None):
+        """Insert or update a user's artist record. Increments play_count on conflict."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        now = datetime.now()
+        try:
+            cursor.execute(
+                '''
+                INSERT INTO user_artists (user_id, artist_name, spotify_artist_id, thumbnail, play_count, last_played)
+                VALUES (?, ?, ?, ?, 1, ?)
+                ON CONFLICT(user_id, artist_name) DO UPDATE SET
+                    play_count = play_count + 1,
+                    last_played = ?,
+                    spotify_artist_id = COALESCE(excluded.spotify_artist_id, spotify_artist_id),
+                    thumbnail = COALESCE(excluded.thumbnail, thumbnail)
+                ''',
+                (user_id, artist_name, spotify_artist_id, thumbnail, now, now),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def get_top_user_artists(self, user_id, limit=10):
+        """Get top artists by play_count with their Spotify IDs for new-releases lookups."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            '''
+            SELECT artist_name, spotify_artist_id, thumbnail, play_count
+            FROM user_artists
+            WHERE user_id = ?
+            ORDER BY play_count DESC
+            LIMIT ?
+            ''',
+            (user_id, limit),
+        )
+        rows = cursor.fetchall()
+        conn.close()
+        return [dict(row) for row in rows]
+
+    def get_user_ids_with_history(self):
+        """Get distinct user_ids that have history entries (for backfill)."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT DISTINCT user_id FROM history WHERE user_id IS NOT NULL"
+        )
+        rows = cursor.fetchall()
+        conn.close()
+        return [row[0] for row in rows]
 
     # Cache methods
     def get_cache(self, key):

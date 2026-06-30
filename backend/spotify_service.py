@@ -13,8 +13,11 @@ class SpotifyService:
 
     def _authenticate(self):
         try:
-            if self.client_id == "your_client_id_here" or self.client_secret == "your_client_secret_here":
-                print("Warning: Spotify credentials not set in config.py")
+            if (not self.client_id or not self.client_secret
+                    or self.client_id == "your_client_id_here"
+                    or self.client_secret == "your_client_secret_here"):
+                print("Spotify credentials not set (CLIENT_ID/CLIENT_SECRET) — "
+                      "add them to backend/.env or the repo-root .env, then restart.")
                 return
 
             client_credentials_manager = SpotifyClientCredentials(
@@ -385,6 +388,26 @@ class SpotifyService:
             "techno", "trance", "trip-hop", "turkish", "work-out", "world-music"
         ]
 
+    def get_album_tracks(self, album_id, limit=50):
+        """Get tracks from an album for playback."""
+        if not self.sp:
+            return []
+        cache_key = self._get_cache_key("album_tracks", album_id, limit)
+        cached = db.get_cache(cache_key)
+        if cached:
+            return cached
+        try:
+            results = self.sp.album_tracks(album_id, limit=limit)
+            tracks = []
+            for item in results.get("items", []):
+                tracks.append(self._format_track(item))
+            if tracks:
+                db.set_cache(cache_key, tracks, ttl_seconds=3600)
+            return tracks
+        except Exception as e:
+            print(f"Error getting album tracks: {e}")
+            return []
+
     def get_new_releases(self, country='US', limit=20):
         """Get new album releases from Spotify"""
         if not self.sp: return []
@@ -471,6 +494,275 @@ class SpotifyService:
         except Exception as e:
             print(f"Spotify playlist tracks error: {e}")
             return []
+
+    # ------------------------------------------------------------------
+    # Discovery helpers (curated playlists, moods, artists, albums)
+    # ------------------------------------------------------------------
+
+    def _format_artist(self, artist):
+        """Format a Spotify artist object into our standard shape."""
+        if not artist:
+            return None
+        images = artist.get('images') or []
+        followers = artist.get('followers') or {}
+        return {
+            'id': artist.get('id'),
+            'name': artist.get('name', 'Unknown'),
+            'thumbnail': images[0]['url'] if images else None,
+            'genres': artist.get('genres', []),
+            'followers': followers.get('total'),
+        }
+
+    def _format_playlist(self, pl):
+        """Format a Spotify playlist object into our standard shape."""
+        if not pl:
+            return None
+        images = pl.get('images') or []
+        owner = pl.get('owner') or {}
+        return {
+            'id': pl.get('id'),
+            'name': pl.get('name', ''),
+            'description': pl.get('description', ''),
+            'thumbnail': images[0]['url'] if images else None,
+            'url': pl.get('external_urls', {}).get('spotify', ''),
+            'owner': owner.get('display_name', ''),
+        }
+
+    def get_curated_playlists(self, queries, limit=12):
+        """Search Spotify playlists by free-text queries; returns playlist objects.
+
+        Generalizes get_genre_playlists to arbitrary search terms so it can power
+        mood/activity and themed playlist rows (featured-playlists API is deprecated).
+        """
+        if not self.sp:
+            return []
+        if isinstance(queries, str):
+            queries = [queries]
+
+        cache_key = self._get_cache_key("curated_pl", "|".join(queries), limit)
+        cached = db.get_cache(cache_key)
+        if cached:
+            return cached
+
+        playlists = []
+        seen_ids = set()
+        try:
+            for query in queries:
+                if len(playlists) >= limit:
+                    break
+                try:
+                    results = self.sp.search(q=query, type='playlist', limit=min(10, limit))
+                    for pl in results.get('playlists', {}).get('items', []):
+                        if not pl or pl.get('id') in seen_ids:
+                            continue
+                        formatted = self._format_playlist(pl)
+                        if not formatted or not formatted['id']:
+                            continue
+                        seen_ids.add(formatted['id'])
+                        playlists.append(formatted)
+                        if len(playlists) >= limit:
+                            break
+                except Exception as e:
+                    print(f"Curated playlist search error for '{query}': {e}")
+                    continue
+            if playlists:
+                db.set_cache(cache_key, playlists, ttl_seconds=86400)  # Cache for 1 day
+            return playlists
+        except Exception as e:
+            print(f"Spotify curated playlists error: {e}")
+            return []
+
+    def get_moods(self):
+        """Ordered list of mood/activity categories (rendered as gradient cards)."""
+        return [
+            "Workout", "Chill", "Focus", "Party", "Sleep",
+            "Romance", "Commute", "Throwback", "Happy", "Sad",
+        ]
+
+    def get_mood_playlists(self, mood, limit=12):
+        """Playlists for a mood/activity, built from curated playlist search."""
+        mood_queries = {
+            'workout': ['workout', 'gym workout', 'beast mode'],
+            'chill': ['chill', 'chill vibes', 'lofi chill'],
+            'focus': ['focus', 'deep focus', 'concentration'],
+            'party': ['party hits', 'dance party', 'party'],
+            'sleep': ['sleep', 'deep sleep', 'calm sleep'],
+            'romance': ['love songs', 'romance', 'romantic'],
+            'commute': ['commute', 'road trip', 'driving'],
+            'throwback': ['throwback', '2000s hits', 'oldies'],
+            'happy': ['happy', 'feel good', 'good vibes'],
+            'sad': ['sad songs', 'heartbreak', 'sad'],
+        }
+        key = (mood or '').strip().lower()
+        queries = mood_queries.get(key, [mood, f"{mood} hits"])
+        return self.get_curated_playlists(queries, limit=limit)
+
+    def get_artist(self, artist_id):
+        """Fetch an artist profile (name, image, genres, followers)."""
+        if not self.sp:
+            return None
+        cache_key = self._get_cache_key("artist_profile", artist_id)
+        cached = db.get_cache(cache_key)
+        if cached:
+            return cached
+        try:
+            result = self._format_artist(self.sp.artist(artist_id))
+            if result:
+                db.set_cache(cache_key, result, ttl_seconds=86400 * 7)  # Cache for 1 week
+            return result
+        except Exception as e:
+            print(f"Error getting artist {artist_id}: {e}")
+            return None
+
+    def get_artist_top_tracks(self, artist_id, limit=10):
+        """Fetch an artist's top tracks (formatted for playback)."""
+        if not self.sp:
+            return []
+        cache_key = self._get_cache_key("artist_top", artist_id, limit)
+        cached = db.get_cache(cache_key)
+        if cached:
+            return cached
+        try:
+            results = self.sp.artist_top_tracks(artist_id, country='US')
+            tracks = [self._format_track(t) for t in results.get('tracks', [])[:limit]]
+            if tracks:
+                db.set_cache(cache_key, tracks, ttl_seconds=86400)  # Cache for 1 day
+            return tracks
+        except Exception as e:
+            print(f"Error getting artist top tracks for {artist_id}: {e}")
+            return []
+
+    def get_artist_albums(self, artist_id, limit=20):
+        """Fetch an artist's albums and singles (newest first)."""
+        if not self.sp:
+            return []
+        cache_key = self._get_cache_key("artist_albums", artist_id, limit)
+        cached = db.get_cache(cache_key)
+        if cached:
+            return cached
+        try:
+            results = self.sp.artist_albums(artist_id, album_type='album,single', limit=limit)
+            albums = []
+            seen = set()
+            for album in results.get('items', []):
+                if not album or album.get('id') in seen:
+                    continue
+                seen.add(album['id'])
+                images = album.get('images') or []
+                albums.append({
+                    'id': album['id'],
+                    'name': album['name'],
+                    'artist': album['artists'][0]['name'] if album.get('artists') else '',
+                    'type': album.get('album_type', 'album'),
+                    'release_date': album.get('release_date', ''),
+                    'thumbnail': images[0]['url'] if images else None,
+                    'url': album.get('external_urls', {}).get('spotify', ''),
+                })
+            albums.sort(key=lambda x: x['release_date'], reverse=True)
+            if albums:
+                db.set_cache(cache_key, albums, ttl_seconds=86400)  # Cache for 1 day
+            return albums
+        except Exception as e:
+            print(f"Error getting artist albums for {artist_id}: {e}")
+            return []
+
+    def get_related_artists(self, artist_id, limit=12):
+        """Fetch artists related to a given artist (formatted)."""
+        if not self.sp:
+            return []
+        cache_key = self._get_cache_key("related_artists", artist_id, limit)
+        cached = db.get_cache(cache_key)
+        if cached:
+            return cached
+        try:
+            results = self.sp.artist_related_artists(artist_id)
+            artists = []
+            for a in results.get('artists', [])[:limit]:
+                formatted = self._format_artist(a)
+                if formatted and formatted['id']:
+                    artists.append(formatted)
+            if artists:
+                db.set_cache(cache_key, artists, ttl_seconds=86400)  # Cache for 1 day
+            return artists
+        except Exception as e:
+            print(f"Error getting related artists for {artist_id}: {e}")
+            return []
+
+    def search_artists(self, query, limit=12):
+        """Search Spotify for artists by name/genre query (formatted)."""
+        if not self.sp:
+            return []
+        cache_key = self._get_cache_key("search_artists", query, limit)
+        cached = db.get_cache(cache_key)
+        if cached:
+            return cached
+        try:
+            results = self.sp.search(q=query, type='artist', limit=limit)
+            artists = []
+            for a in results.get('artists', {}).get('items', []):
+                formatted = self._format_artist(a)
+                if formatted and formatted['id']:
+                    artists.append(formatted)
+            if artists:
+                db.set_cache(cache_key, artists, ttl_seconds=86400)  # Cache for 1 day
+            return artists
+        except Exception as e:
+            print(f"Error searching artists for '{query}': {e}")
+            return []
+
+    def get_recommended_artists(self, seed_artist_ids=None, fallback_query=None, limit=12):
+        """Recommend artists from related artists of seeds, with a search fallback."""
+        if not self.sp:
+            return []
+        artists = []
+        seen = set()
+        if seed_artist_ids:
+            for sid in [s for s in seed_artist_ids if s][:3]:
+                for a in self.get_related_artists(sid, limit=8):
+                    if a['id'] and a['id'] not in seen:
+                        seen.add(a['id'])
+                        artists.append(a)
+                    if len(artists) >= limit:
+                        break
+                if len(artists) >= limit:
+                    break
+        if len(artists) < limit and fallback_query:
+            for a in self.search_artists(fallback_query, limit=limit):
+                if a['id'] and a['id'] not in seen:
+                    seen.add(a['id'])
+                    artists.append(a)
+                if len(artists) >= limit:
+                    break
+        return artists[:limit]
+
+    def get_album(self, album_id):
+        """Fetch album metadata (name, artist, cover, release date, track count)."""
+        if not self.sp:
+            return None
+        cache_key = self._get_cache_key("album_meta", album_id)
+        cached = db.get_cache(cache_key)
+        if cached:
+            return cached
+        try:
+            album = self.sp.album(album_id)
+            images = album.get('images') or []
+            artists = album.get('artists') or []
+            result = {
+                'id': album['id'],
+                'name': album['name'],
+                'artist': artists[0]['name'] if artists else '',
+                'artist_id': artists[0]['id'] if artists else None,
+                'thumbnail': images[0]['url'] if images else None,
+                'release_date': album.get('release_date', ''),
+                'total_tracks': album.get('total_tracks', 0),
+                'type': album.get('album_type', 'album'),
+                'url': album.get('external_urls', {}).get('spotify', ''),
+            }
+            db.set_cache(cache_key, result, ttl_seconds=86400 * 7)  # Cache for 1 week
+            return result
+        except Exception as e:
+            print(f"Error getting album {album_id}: {e}")
+            return None
 
 spotify_service = SpotifyService()
 
