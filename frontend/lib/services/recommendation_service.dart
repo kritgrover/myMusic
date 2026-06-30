@@ -1,6 +1,7 @@
 import 'dart:convert';
 import '../config.dart';
 import '../models/playlist.dart';
+import '../models/discovery.dart';
 import 'auth_http_client.dart';
 
 class RecommendationService {
@@ -186,6 +187,168 @@ class RecommendationService {
       return [];
     } catch (e) {
       print('Error getting album tracks: $e');
+      return [];
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Spotify-style home shelves
+  // ---------------------------------------------------------------------------
+
+  Future<List<HomeMix>> getMixes() async {
+    try {
+      final response = await _client.get(Uri.parse('$baseUrl/recommendations/mixes'));
+      if (response.statusCode == 200) {
+        final List<dynamic> data = jsonDecode(response.body);
+        return data.map((j) => HomeMix.fromJson(j as Map<String, dynamic>)).toList();
+      }
+      return [];
+    } catch (e) {
+      print('Error getting mixes: $e');
+      return [];
+    }
+  }
+
+  Future<List<SpotifyPlaylistInfo>> getCuratedPlaylists() async {
+    try {
+      final response = await _client.get(Uri.parse('$baseUrl/recommendations/curated'));
+      if (response.statusCode == 200) {
+        final List<dynamic> data = jsonDecode(response.body);
+        return data.map((j) => SpotifyPlaylistInfo.fromJson(j as Map<String, dynamic>)).toList();
+      }
+      return [];
+    } catch (e) {
+      print('Error getting curated playlists: $e');
+      return [];
+    }
+  }
+
+  Future<List<MoodCategory>> getMoods() async {
+    try {
+      final response = await _client.get(Uri.parse('$baseUrl/recommendations/moods'));
+      if (response.statusCode == 200) {
+        final List<dynamic> data = jsonDecode(response.body);
+        return data.map((j) => MoodCategory.fromJson(j as Map<String, dynamic>)).toList();
+      }
+      return [];
+    } catch (e) {
+      print('Error getting moods: $e');
+      return [];
+    }
+  }
+
+  Future<List<SpotifyPlaylistInfo>> getMoodPlaylists(String mood) async {
+    try {
+      final response = await _client.get(
+        Uri.parse('$baseUrl/recommendations/mood/${Uri.encodeComponent(mood)}/playlists'),
+      );
+      if (response.statusCode == 200) {
+        final List<dynamic> data = jsonDecode(response.body);
+        return data.map((j) => SpotifyPlaylistInfo.fromJson(j as Map<String, dynamic>)).toList();
+      }
+      return [];
+    } catch (e) {
+      print('Error getting mood playlists: $e');
+      return [];
+    }
+  }
+
+  Future<List<BecauseRow>> getBecauseYouListened() async {
+    try {
+      final response = await _client.get(Uri.parse('$baseUrl/recommendations/because-you-listened'));
+      if (response.statusCode == 200) {
+        final List<dynamic> data = jsonDecode(response.body);
+        return data.map((j) => BecauseRow.fromJson(j as Map<String, dynamic>)).toList();
+      }
+      return [];
+    } catch (e) {
+      print('Error getting because-you-listened: $e');
+      return [];
+    }
+  }
+
+  Future<List<ArtistInfo>> getRecommendedArtists() async {
+    try {
+      final response = await _client.get(Uri.parse('$baseUrl/recommendations/artists'));
+      if (response.statusCode == 200) {
+        final List<dynamic> data = jsonDecode(response.body);
+        return data.map((j) => ArtistInfo.fromJson(j as Map<String, dynamic>)).toList();
+      }
+      return [];
+    } catch (e) {
+      print('Error getting recommended artists: $e');
+      return [];
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Album & artist detail
+  // ---------------------------------------------------------------------------
+
+  Future<AlbumInfo?> getAlbum(String albumId) async {
+    try {
+      final response = await _client.get(Uri.parse('$baseUrl/album/$albumId'));
+      if (response.statusCode == 200) {
+        return AlbumInfo.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+      }
+      return null;
+    } catch (e) {
+      print('Error getting album: $e');
+      return null;
+    }
+  }
+
+  Future<ArtistInfo?> getArtist(String artistId) async {
+    try {
+      final response = await _client.get(Uri.parse('$baseUrl/artist/$artistId'));
+      if (response.statusCode == 200) {
+        return ArtistInfo.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+      }
+      return null;
+    } catch (e) {
+      print('Error getting artist: $e');
+      return null;
+    }
+  }
+
+  Future<List<PlaylistTrack>> getArtistTopTracks(String artistId) async {
+    try {
+      final response = await _client.get(Uri.parse('$baseUrl/artist/$artistId/top-tracks'));
+      if (response.statusCode == 200) {
+        final List<dynamic> data = jsonDecode(response.body);
+        return data.map((j) => PlaylistTrack.fromJson(j as Map<String, dynamic>)).toList();
+      }
+      return [];
+    } catch (e) {
+      print('Error getting artist top tracks: $e');
+      return [];
+    }
+  }
+
+  Future<List<AlbumInfo>> getArtistAlbums(String artistId) async {
+    try {
+      final response = await _client.get(Uri.parse('$baseUrl/artist/$artistId/albums'));
+      if (response.statusCode == 200) {
+        final List<dynamic> data = jsonDecode(response.body);
+        return data.map((j) => AlbumInfo.fromJson(j as Map<String, dynamic>)).toList();
+      }
+      return [];
+    } catch (e) {
+      print('Error getting artist albums: $e');
+      return [];
+    }
+  }
+
+  Future<List<ArtistInfo>> getRelatedArtists(String artistId) async {
+    try {
+      final response = await _client.get(Uri.parse('$baseUrl/artist/$artistId/related'));
+      if (response.statusCode == 200) {
+        final List<dynamic> data = jsonDecode(response.body);
+        return data.map((j) => ArtistInfo.fromJson(j as Map<String, dynamic>)).toList();
+      }
+      return [];
+    } catch (e) {
+      print('Error getting related artists: $e');
       return [];
     }
   }
