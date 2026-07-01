@@ -5,6 +5,7 @@ class Playlist {
   final DateTime createdAt;
   final DateTime updatedAt;
   final String? coverImage;
+  final bool isPublic;
 
   Playlist({
     required this.id,
@@ -13,6 +14,7 @@ class Playlist {
     required this.createdAt,
     required this.updatedAt,
     this.coverImage,
+    this.isPublic = false,
   });
 
   Map<String, dynamic> toJson() {
@@ -23,6 +25,7 @@ class Playlist {
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt.toIso8601String(),
       'coverImage': coverImage,
+      'isPublic': isPublic,
     };
   }
 
@@ -37,6 +40,7 @@ class Playlist {
       createdAt: DateTime.parse(json['createdAt'] ?? DateTime.now().toIso8601String()),
       updatedAt: DateTime.parse(json['updatedAt'] ?? DateTime.now().toIso8601String()),
       coverImage: json['coverImage'],
+      isPublic: json['isPublic'] as bool? ?? false,
     );
   }
 
@@ -47,6 +51,7 @@ class Playlist {
     DateTime? createdAt,
     DateTime? updatedAt,
     String? coverImage,
+    bool? isPublic,
   }) {
     return Playlist(
       id: id ?? this.id,
@@ -55,6 +60,7 @@ class Playlist {
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
       coverImage: coverImage ?? this.coverImage,
+      isPublic: isPublic ?? this.isPublic,
     );
   }
 }

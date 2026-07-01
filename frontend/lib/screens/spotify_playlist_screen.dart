@@ -27,6 +27,13 @@ class SpotifyPlaylistScreen extends StatefulWidget {
   final bool embedded; // If true, don't show Scaffold/AppBar
   final VoidCallback? onBack; // Callback for back button when embedded
   final Function(String)? onDownloadStart; // Callback to start download progress tracking
+  /// When provided, tracks are loaded via this callback instead of the Spotify
+  /// playlist endpoint. Lets this screen be reused for any "remote" playlist
+  /// (e.g. a friend's public playlist) while keeping all the play/queue/download
+  /// actions identical.
+  final Future<List<PlaylistTrack>> Function()? trackLoader;
+  /// When provided, shows a "Save to my playlists" action that calls this callback.
+  final Future<void> Function()? onSaveToLibrary;
 
   const SpotifyPlaylistScreen({
     super.key,
@@ -39,6 +46,8 @@ class SpotifyPlaylistScreen extends StatefulWidget {
     this.embedded = false,
     this.onBack,
     this.onDownloadStart,
+    this.trackLoader,
+    this.onSaveToLibrary,
   });
 
   @override
@@ -60,7 +69,9 @@ class _SpotifyPlaylistScreenState extends State<SpotifyPlaylistScreen> {
 
   Future<void> _loadTracks() async {
     try {
-      final tracks = await _recommendationService.getSpotifyPlaylistTracks(widget.playlistId);
+      final tracks = widget.trackLoader != null
+          ? await widget.trackLoader!()
+          : await _recommendationService.getSpotifyPlaylistTracks(widget.playlistId);
       if (mounted) {
         setState(() {
           _tracks = tracks;
@@ -255,6 +266,31 @@ class _SpotifyPlaylistScreenState extends State<SpotifyPlaylistScreen> {
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(8),
             ),
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _saveToLibrary() async {
+    if (widget.onSaveToLibrary == null) return;
+    try {
+      await widget.onSaveToLibrary!();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Saved to your playlists'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Could not save playlist: $e'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
           ),
         );
       }
@@ -768,6 +804,12 @@ class _SpotifyPlaylistScreenState extends State<SpotifyPlaylistScreen> {
                                         onPressed: _downloadUndownloadedTracks,
                                         tooltip: 'Download undownloaded tracks',
                                       ),
+                                      if (widget.onSaveToLibrary != null)
+                                        IconButton(
+                                          icon: const Icon(Icons.library_add_outlined, size: 20),
+                                          onPressed: _saveToLibrary,
+                                          tooltip: 'Save to my playlists',
+                                        ),
                                     ],
                                   ),
                                 ),

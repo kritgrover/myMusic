@@ -37,6 +37,7 @@ import 'album_detail_screen.dart';
 import 'artist_screen.dart';
 import 'mood_playlists_screen.dart';
 import 'profile_screen.dart';
+import 'friends_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   final AuthService authService;
@@ -269,6 +270,16 @@ class _HomeScreenState extends State<HomeScreen> {
     ));
   }
 
+  void _openFriends() {
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => FriendsScreen(
+        playerStateService: _playerStateService,
+        queueService: _queueService,
+        recentlyPlayedService: _recentlyPlayedService,
+      ),
+    ));
+  }
+
   void _openMood(MoodCategory mood) {
     Navigator.of(context).push(MaterialPageRoute(
       builder: (_) => MoodPlaylistsScreen(
@@ -447,6 +458,7 @@ class _HomeScreenState extends State<HomeScreen> {
           authService: widget.authService,
           playerStateService: _playerStateService,
           queueService: _queueService,
+          onOpenFriends: _openFriends,
         );
       default:
         return _buildHomeContent();
