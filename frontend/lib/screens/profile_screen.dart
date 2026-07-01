@@ -18,12 +18,14 @@ class ProfileScreen extends StatefulWidget {
   final AuthService authService;
   final PlayerStateService playerStateService;
   final QueueService queueService;
+  final VoidCallback? onOpenFriends;
 
   const ProfileScreen({
     super.key,
     required this.authService,
     required this.playerStateService,
     required this.queueService,
+    this.onOpenFriends,
   });
 
   @override
@@ -297,10 +299,21 @@ class _ProfileScreenState extends State<ProfileScreen> {
           GradientSectionHeader(
             title: 'Your Profile',
             showGradientBar: false,
-            trailing: IconButton(
-              onPressed: _loadData,
-              tooltip: 'Refresh',
-              icon: const Icon(Icons.refresh),
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (widget.onOpenFriends != null)
+                  IconButton(
+                    onPressed: widget.onOpenFriends,
+                    tooltip: 'Friends',
+                    icon: const Icon(Icons.people_outline),
+                  ),
+                IconButton(
+                  onPressed: _loadData,
+                  tooltip: 'Refresh',
+                  icon: const Icon(Icons.refresh),
+                ),
+              ],
             ),
           ),
           const SizedBox(height: 16),

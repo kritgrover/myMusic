@@ -511,6 +511,37 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
   }
 
 
+  Future<void> _toggleVisibility() async {
+    final newValue = !_playlist.isPublic;
+    // Optimistic update so the icon flips immediately.
+    setState(() => _playlist = _playlist.copyWith(isPublic: newValue));
+    try {
+      await widget.playlistService.setVisibility(_playlist.id, newValue);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(newValue
+                ? 'Playlist is now public — followers can see it'
+                : 'Playlist is now private'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } catch (e) {
+      // Revert on failure.
+      if (mounted) {
+        setState(() => _playlist = _playlist.copyWith(isPublic: !newValue));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Could not update visibility: $e'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    }
+  }
+
   Future<void> _renamePlaylist() async {
     final nameController = TextEditingController(text: _playlist.name);
 
@@ -1285,6 +1316,16 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                                         icon: const Icon(Icons.edit, size: 20),
                                         onPressed: _renamePlaylist,
                                         tooltip: 'Rename playlist',
+                                      ),
+                                      IconButton(
+                                        icon: Icon(
+                                          _playlist.isPublic ? Icons.public : Icons.lock_outline,
+                                          size: 20,
+                                        ),
+                                        onPressed: _toggleVisibility,
+                                        tooltip: _playlist.isPublic
+                                            ? 'Public — tap to make private'
+                                            : 'Private — tap to make public',
                                       ),
                                       if (widget.queueService != null && widget.playerStateService != null)
                                         IconButton(

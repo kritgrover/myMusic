@@ -157,6 +157,7 @@ class Playlist(BaseModel):
     createdAt: str
     updatedAt: str
     coverImage: Optional[str] = None
+    isPublic: bool = False
 
 class CreatePlaylistRequest(BaseModel):
     name: str
@@ -1327,31 +1328,26 @@ async def upload_playlist_cover(playlist_id: str, request: Request, file: Upload
     return {"success": True, "coverImage": cover_url}
 
 
-@app.get("/playlists/{playlist_id}/cover")
-def get_playlist_cover(playlist_id: str, request: Request):
-    """Get playlist cover image"""
-    current_user = _require_current_user(request)
-    playlist = db.get_playlist(current_user["id"], playlist_id)
-    if not playlist:
-        raise HTTPException(status_code=404, detail="Playlist not found")
-    
+def _serve_playlist_cover(playlist: Dict, playlist_id: str):
+    """Serve a playlist's locally-uploaded cover file. Shared by the owner and the
+    public (friend-viewing) cover endpoints."""
     cover_image = playlist.get("coverImage")
     if not cover_image:
         raise HTTPException(status_code=404, detail="Cover image not found")
-    
+
     # If it's a local file path
     if cover_image.startswith("/playlists/") and cover_image.endswith("/cover"):
         covers_dir = os.path.join(BASE_DIR, "covers")
         cover_filename = f"{playlist_id}.jpg"
         cover_path = os.path.join(covers_dir, cover_filename)
-        
+
         # Try different extensions
         for ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp']:
             test_path = os.path.join(covers_dir, f"{playlist_id}{ext}")
             if os.path.exists(test_path):
                 cover_path = test_path
                 break
-        
+
         if os.path.exists(cover_path):
             # Determine content type from extension
             ext = os.path.splitext(cover_path)[1].lower()
@@ -1362,7 +1358,7 @@ def get_playlist_cover(playlist_id: str, request: Request):
                 '.gif': 'image/gif',
                 '.webp': 'image/webp'
             }.get(ext, 'image/jpeg')
-            
+
             return FileResponse(
                 cover_path,
                 media_type=content_type,
@@ -1372,9 +1368,140 @@ def get_playlist_cover(playlist_id: str, request: Request):
             )
         else:
             raise HTTPException(status_code=404, detail="Cover image file not found")
-    
+
     # If it's a URL, redirect or return it
     raise HTTPException(status_code=400, detail="External URL covers not supported via this endpoint")
+
+
+@app.get("/playlists/{playlist_id}/cover")
+def get_playlist_cover(playlist_id: str, request: Request):
+    """Get playlist cover image"""
+    current_user = _require_current_user(request)
+    playlist = db.get_playlist(current_user["id"], playlist_id)
+    if not playlist:
+        raise HTTPException(status_code=404, detail="Playlist not found")
+    return _serve_playlist_cover(playlist, playlist_id)
+
+
+# Friends / social endpoints (one-way follow + public playlists)
+
+class SetVisibilityRequest(BaseModel):
+    isPublic: bool
+
+
+@app.put("/playlists/{playlist_id}/visibility")
+def set_playlist_visibility(playlist_id: str, payload: SetVisibilityRequest, request: Request):
+    """Toggle whether one of the current user's playlists is publicly visible to followers."""
+    current_user = _require_current_user(request)
+    if not db.set_playlist_public(current_user["id"], playlist_id, payload.isPublic):
+        raise HTTPException(status_code=404, detail="Playlist not found")
+    return {"success": True, "isPublic": payload.isPublic}
+
+
+@app.get("/users/search")
+def search_users(request: Request, q: str = ""):
+    """Search users by username. Excludes the caller and annotates follow state."""
+    current_user = _require_current_user(request)
+    query = (q or "").strip()
+    if not query:
+        return []
+    results = db.search_users(query, current_user["id"])
+    for user in results:
+        user["is_following"] = db.is_following(current_user["id"], user["id"])
+    return results
+
+
+@app.get("/following")
+def get_following(request: Request):
+    """List the users the current user follows."""
+    current_user = _require_current_user(request)
+    return db.get_following(current_user["id"])
+
+
+@app.get("/users/{user_id}")
+def get_public_user(user_id: int, request: Request):
+    """Public profile for another user."""
+    current_user = _require_current_user(request)
+    profile = db.get_user_profile(user_id)
+    if not profile:
+        raise HTTPException(status_code=404, detail="User not found")
+    return {
+        "id": profile["id"],
+        "username": profile["username"],
+        "tagline": profile.get("tagline") or "",
+        "created_at": profile.get("created_at"),
+        "is_following": db.is_following(current_user["id"], user_id),
+        "public_playlist_count": db.count_public_playlists(user_id),
+    }
+
+
+@app.get("/users/{user_id}/playlists", response_model=Dict[str, Playlist])
+def get_public_user_playlists(user_id: int, request: Request):
+    """A user's public playlists (same shape as GET /playlists)."""
+    _require_current_user(request)
+    return db.get_public_playlists(user_id)
+
+
+@app.get("/users/{user_id}/playlists/{playlist_id}", response_model=Playlist)
+def get_public_user_playlist(user_id: int, playlist_id: str, request: Request):
+    """A single public playlist owned by user_id."""
+    _require_current_user(request)
+    playlist = db.get_public_playlist(user_id, playlist_id)
+    if not playlist:
+        raise HTTPException(status_code=404, detail="Playlist not found")
+    return playlist
+
+
+@app.get("/users/{user_id}/playlists/{playlist_id}/cover")
+def get_public_user_playlist_cover(user_id: int, playlist_id: str, request: Request):
+    """Serve a public playlist's cover (only if the playlist is public)."""
+    _require_current_user(request)
+    playlist = db.get_public_playlist(user_id, playlist_id)
+    if not playlist:
+        raise HTTPException(status_code=404, detail="Playlist not found")
+    return _serve_playlist_cover(playlist, playlist_id)
+
+
+@app.post("/users/{user_id}/playlists/{playlist_id}/save", response_model=Playlist)
+def save_public_playlist(user_id: int, playlist_id: str, request: Request):
+    """Clone a friend's public playlist into the current user's own playlists."""
+    current_user = _require_current_user(request)
+    source = db.get_public_playlist(user_id, playlist_id)
+    if not source:
+        raise HTTPException(status_code=404, detail="Playlist not found")
+    new_playlist = db.create_playlist(
+        user_id=current_user["id"],
+        name=source["name"],
+        playlist_id=str(uuid.uuid4()),
+    )
+    for song in source.get("songs", []):
+        # playlist_songs.id is a global primary key, so a copied song needs a
+        # fresh id to avoid colliding with the source playlist's rows.
+        song_copy = dict(song)
+        song_copy["id"] = uuid.uuid4().hex
+        db.add_song_to_playlist(current_user["id"], new_playlist["id"], song_copy)
+    saved = db.get_playlist(current_user["id"], new_playlist["id"])
+    return saved
+
+
+@app.post("/follow/{user_id}")
+def follow_user(user_id: int, request: Request):
+    """Follow another user (idempotent)."""
+    current_user = _require_current_user(request)
+    if user_id == current_user["id"]:
+        raise HTTPException(status_code=400, detail="Cannot follow yourself")
+    if not db.get_user_by_id(user_id):
+        raise HTTPException(status_code=404, detail="User not found")
+    db.follow_user(current_user["id"], user_id)
+    return {"success": True, "is_following": True}
+
+
+@app.delete("/follow/{user_id}")
+def unfollow_user(user_id: int, request: Request):
+    """Unfollow another user (idempotent)."""
+    current_user = _require_current_user(request)
+    db.unfollow_user(current_user["id"], user_id)
+    return {"success": True, "is_following": False}
 
 
 # History & Recommendations Endpoints

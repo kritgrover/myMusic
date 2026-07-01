@@ -98,6 +98,18 @@ class PlaylistService {
     }
   }
 
+  Future<void> setVisibility(String playlistId, bool isPublic) async {
+    final response = await _client.put(
+      Uri.parse('$baseUrl/playlists/$playlistId/visibility'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'isPublic': isPublic}),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to update visibility: ${response.statusCode}');
+    }
+  }
+
   Future<void> updatePlaylistCover(String playlistId, String? coverImageUrl) async {
     final response = await _client.put(
       Uri.parse('$baseUrl/playlists/$playlistId/cover'),
