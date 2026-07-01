@@ -1,5 +1,6 @@
 import 'dart:io' show Platform;
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:just_audio_media_kit/just_audio_media_kit.dart';
 import 'screens/home_screen.dart';
@@ -22,7 +23,9 @@ void main() {
   WidgetsFlutterBinding.ensureInitialized();
   // just_audio has no native Windows/Linux backend; media_kit provides one
   // underneath the existing just_audio API (no audio-service code changes).
-  if (Platform.isWindows || Platform.isLinux) {
+  // Guard with kIsWeb first: on web `Platform` (dart:io) is unavailable and
+  // throws, so the const kIsWeb short-circuits before Platform is touched.
+  if (!kIsWeb && (Platform.isWindows || Platform.isLinux)) {
     JustAudioMediaKit.ensureInitialized(windows: true, linux: true);
   }
   runApp(const MyApp());

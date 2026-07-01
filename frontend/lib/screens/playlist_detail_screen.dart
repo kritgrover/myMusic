@@ -872,22 +872,6 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
       );
     }
 
-    // Show loading indicator
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => const Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            CircularProgressIndicator(),
-            SizedBox(height: 16),
-            Text('Preparing playlist...'),
-          ],
-        ),
-      ),
-    );
-
     try {
       // Use sorted tracks
       final tracks = _sortedTracks;
@@ -947,8 +931,6 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
       }
 
       if (mounted) {
-        Navigator.of(context).pop();
-
         if (queueItems.isNotEmpty) {
           widget.queueService!.clearQueue();
           widget.queueService!.addAllToQueue(queueItems, isPlaylistQueue: true);
@@ -968,7 +950,6 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
       }
     } catch (e) {
       if (mounted) {
-        Navigator.of(context).pop(); // Close loading dialog
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Failed to play playlist: $e'),
@@ -1007,24 +988,6 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
         thumbnail: _getCoverImageUrl(),
       );
     }
-
-    // Show loading indicator
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const CircularProgressIndicator(),
-            if (shuffle) ...[
-              const SizedBox(height: 16),
-              const Text('Shuffling playlist...'),
-            ],
-          ],
-        ),
-      ),
-    );
 
     try {
       // Use sorted tracks and shuffle if needed
@@ -1088,8 +1051,6 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
       }
 
       if (mounted) {
-        Navigator.of(context).pop(); // Close loading dialog
-
         if (queueItems.isNotEmpty) {
           // If shuffle is enabled, clear the existing queue first
           if (shuffle) {
@@ -1114,7 +1075,6 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
       }
     } catch (e) {
       if (mounted) {
-        Navigator.of(context).pop(); // Close loading dialog
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Failed to ${shuffle ? 'shuffle and ' : ''}add playlist to queue: $e'),
