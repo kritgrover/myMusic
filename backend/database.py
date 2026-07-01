@@ -99,6 +99,8 @@ class Database:
         )
         ''')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_playlists_user_id ON playlists(user_id)')
+        # Per-playlist visibility for the friends/follow feature (default private).
+        self._ensure_column(cursor, "playlists", "is_public", "INTEGER DEFAULT 0")
 
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS playlist_songs (
@@ -158,7 +160,20 @@ class Database:
         )
         ''')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_user_artists_user_id ON user_artists(user_id)')
-        
+
+        # Follows (one-way, asymmetric social graph for the friends feature)
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS follows (
+            follower_id INTEGER NOT NULL,
+            followee_id INTEGER NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (follower_id, followee_id),
+            FOREIGN KEY(follower_id) REFERENCES users(id),
+            FOREIGN KEY(followee_id) REFERENCES users(id)
+        )
+        ''')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_follows_followee_id ON follows(followee_id)')
+
         conn.commit()
         conn.close()
 
@@ -638,6 +653,7 @@ class Database:
         return songs
 
     def _playlist_row_to_dict(self, cursor, row):
+        keys = row.keys()
         return {
             "id": row["id"],
             "name": row["name"],
@@ -645,13 +661,14 @@ class Database:
             "createdAt": row["created_at"],
             "updatedAt": row["updated_at"],
             "coverImage": row["cover_image"],
+            "isPublic": bool(row["is_public"]) if "is_public" in keys else False,
         }
 
     def get_all_playlists(self, user_id):
         conn = self.get_connection()
         cursor = conn.cursor()
         cursor.execute('''
-        SELECT id, name, cover_image, created_at, updated_at
+        SELECT id, name, cover_image, created_at, updated_at, is_public
         FROM playlists
         WHERE user_id = ?
         ORDER BY created_at DESC
@@ -668,7 +685,7 @@ class Database:
         conn = self.get_connection()
         cursor = conn.cursor()
         cursor.execute('''
-        SELECT id, name, cover_image, created_at, updated_at
+        SELECT id, name, cover_image, created_at, updated_at, is_public
         FROM playlists
         WHERE user_id = ? AND id = ?
         ''', (user_id, playlist_id))
@@ -798,6 +815,126 @@ class Database:
         conn.commit()
         conn.close()
         return changed
+
+    def set_playlist_public(self, user_id, playlist_id, is_public):
+        """Toggle a playlist's public visibility. Owner-scoped."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+        UPDATE playlists
+        SET is_public = ?, updated_at = ?
+        WHERE id = ? AND user_id = ?
+        ''', (1 if is_public else 0, datetime.now().isoformat(), playlist_id, user_id))
+        changed = cursor.rowcount > 0
+        conn.commit()
+        conn.close()
+        return changed
+
+    def get_public_playlists(self, owner_id):
+        """Get a user's playlists that are marked public (for friends viewing)."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+        SELECT id, name, cover_image, created_at, updated_at, is_public
+        FROM playlists
+        WHERE user_id = ? AND is_public = 1
+        ORDER BY created_at DESC
+        ''', (owner_id,))
+        rows = cursor.fetchall()
+        playlists = {}
+        for row in rows:
+            playlist = self._playlist_row_to_dict(cursor, row)
+            playlists[playlist["id"]] = playlist
+        conn.close()
+        return playlists
+
+    def get_public_playlist(self, owner_id, playlist_id):
+        """Get a single public playlist owned by owner_id, or None if private/missing."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+        SELECT id, name, cover_image, created_at, updated_at, is_public
+        FROM playlists
+        WHERE user_id = ? AND id = ? AND is_public = 1
+        ''', (owner_id, playlist_id))
+        row = cursor.fetchone()
+        if not row:
+            conn.close()
+            return None
+        playlist = self._playlist_row_to_dict(cursor, row)
+        conn.close()
+        return playlist
+
+    def count_public_playlists(self, owner_id):
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT COUNT(*) FROM playlists WHERE user_id = ? AND is_public = 1', (owner_id,))
+        count = cursor.fetchone()[0]
+        conn.close()
+        return int(count or 0)
+
+    # Social graph (one-way follow) + user discovery
+    def search_users(self, query, exclude_user_id, limit=20):
+        """Find users by (partial) username match. Never returns password hashes."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        like = f"%{query}%"
+        cursor.execute('''
+        SELECT id, username, tagline
+        FROM users
+        WHERE username LIKE ? AND id != ? AND is_active = 1
+        ORDER BY username ASC
+        LIMIT ?
+        ''', (like, exclude_user_id, limit))
+        rows = cursor.fetchall()
+        conn.close()
+        return [{"id": r["id"], "username": r["username"], "tagline": r["tagline"] or ""} for r in rows]
+
+    def follow_user(self, follower_id, followee_id):
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+        INSERT OR IGNORE INTO follows (follower_id, followee_id, created_at)
+        VALUES (?, ?, ?)
+        ''', (follower_id, followee_id, datetime.now().isoformat()))
+        conn.commit()
+        conn.close()
+
+    def unfollow_user(self, follower_id, followee_id):
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            'DELETE FROM follows WHERE follower_id = ? AND followee_id = ?',
+            (follower_id, followee_id),
+        )
+        conn.commit()
+        conn.close()
+
+    def is_following(self, follower_id, followee_id):
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            'SELECT 1 FROM follows WHERE follower_id = ? AND followee_id = ?',
+            (follower_id, followee_id),
+        )
+        row = cursor.fetchone()
+        conn.close()
+        return row is not None
+
+    def get_following(self, user_id):
+        """Users that user_id follows, with basic profile fields."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+        SELECT u.id, u.username, u.tagline
+        FROM follows f
+        JOIN users u ON u.id = f.followee_id
+        WHERE f.follower_id = ? AND u.is_active = 1
+        ORDER BY f.created_at DESC
+        ''', (user_id,))
+        rows = cursor.fetchall()
+        conn.close()
+        return [{"id": r["id"], "username": r["username"], "tagline": r["tagline"] or ""} for r in rows]
 
     def clear_song_file_references(self, deleted_filename):
         conn = self.get_connection()
