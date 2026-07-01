@@ -921,6 +921,24 @@ class Database:
         conn.close()
         return row is not None
 
+    def count_followers(self, user_id):
+        """How many users follow user_id."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT COUNT(*) FROM follows WHERE followee_id = ?', (user_id,))
+        count = cursor.fetchone()[0]
+        conn.close()
+        return int(count or 0)
+
+    def count_following(self, user_id):
+        """How many users user_id follows."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT COUNT(*) FROM follows WHERE follower_id = ?', (user_id,))
+        count = cursor.fetchone()[0]
+        conn.close()
+        return int(count or 0)
+
     def get_following(self, user_id):
         """Users that user_id follows, with basic profile fields."""
         conn = self.get_connection()
