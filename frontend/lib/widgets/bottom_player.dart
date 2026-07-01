@@ -203,19 +203,24 @@ class _BottomPlayerState extends State<BottomPlayer> {
     String? title;
     String? artist;
     String? artworkUrl;
-    
+    // Identifies the current track so the AlbumCover is re-keyed (resetting its
+    // internal resolution state) whenever the track changes, e.g. on Next/Previous.
+    String? trackKey;
+
     if (widget.queueService != null && widget.queueService!.currentItem != null) {
       final currentItem = widget.queueService!.currentItem!;
       filename = currentItem.filename;
       title = currentItem.title;
       artist = currentItem.artist;
       artworkUrl = currentItem.thumbnail;
+      trackKey = currentItem.id;
     } else {
       // Fallback to player state
       title = widget.currentTrackName;
       artist = widget.currentTrackArtist;
       // Try to extract filename from URL
       filename = _extractFilenameFromUrl(widget.playerService.currentUrl);
+      trackKey = widget.playerService.currentUrl;
     }
 
     final isDownloaded = (filename != null && filename.isNotEmpty) ||
@@ -272,6 +277,7 @@ class _BottomPlayerState extends State<BottomPlayer> {
                     child: Row(
                       children: [
                         AlbumCover(
+                          key: ValueKey('player_cover_${trackKey ?? ''}'),
                           filename: filename,
                           title: title,
                           artist: artist,

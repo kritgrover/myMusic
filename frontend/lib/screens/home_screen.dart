@@ -26,7 +26,10 @@ import '../services/auth_service.dart';
 import '../models/discovery.dart';
 import '../widgets/horizontal_song_list.dart';
 import '../widgets/horizontal_card_row.dart';
-import '../widgets/genre_card.dart';
+import '../widgets/browse_category_card.dart';
+import '../widgets/section_header.dart';
+import '../widgets/app_sidebar.dart';
+import '../widgets/app_top_bar.dart';
 import '../widgets/playlist_card.dart';
 import '../widgets/artist_card.dart';
 import 'genre_screen.dart';
@@ -39,6 +42,19 @@ import 'mood_playlists_screen.dart';
 import 'profile_screen.dart';
 import 'friends_screen.dart';
 
+/// Fires a callback whenever a route is pushed onto the content navigator, used
+/// to dismiss the lyrics overlay so it doesn't hide freshly-opened screens.
+class _NavPushObserver extends NavigatorObserver {
+  final VoidCallback onPush;
+  _NavPushObserver(this.onPush);
+
+  @override
+  void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    super.didPush(route, previousRoute);
+    onPush();
+  }
+}
+
 class HomeScreen extends StatefulWidget {
   final AuthService authService;
 
@@ -50,6 +66,17 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   int _currentIndex = 0;
+  // Nested navigator for the center content pane, so secondary screens (genre,
+  // artist, album, playlist, mood, friends, profile) open in-pane while the
+  // sidebar, top bar, and player stay put.
+  final GlobalKey<NavigatorState> _contentNavigatorKey = GlobalKey<NavigatorState>();
+  // Close the lyrics overlay whenever a screen is pushed into the content pane,
+  // so it doesn't stay layered on top of (and hide) the new screen.
+  late final _NavPushObserver _contentNavObserver = _NavPushObserver(_onContentPushed);
+
+  void _onContentPushed() {
+    if (_showLyrics && mounted) setState(() => _showLyrics = false);
+  }
   late final RecentlyPlayedService _recentlyPlayedService;
   late final PlayerStateService _playerStateService;
   final QueueService _queueService = QueueService();
@@ -98,9 +125,11 @@ class _HomeScreenState extends State<HomeScreen> {
   List<ArtistInfo> _recommendedArtists = [];
   List<MoodCategory> _moods = [];
   
-  // Genre navigation
-  String? _selectedGenre;
-  
+  // Library hub state
+  int _libraryTab = 0; // 0 playlists · 1 downloads
+  int _libraryRefreshKey = 0;
+  List<Playlist> _sidebarPlaylists = [];
+
   // Made for You navigation
   bool _showMadeForYou = false;
 
@@ -163,6 +192,12 @@ class _HomeScreenState extends State<HomeScreen> {
     
     _fetchRecommendations();
     _fetchDiscoveryShelves();
+    _loadSidebarPlaylists();
+  }
+
+  Future<void> _loadSidebarPlaylists() async {
+    final playlists = await _playlistService.getAllPlaylists();
+    if (mounted) setState(() => _sidebarPlaylists = playlists);
   }
 
   VideoInfo _trackToVideo(PlaylistTrack t) => VideoInfo(
@@ -232,7 +267,7 @@ class _HomeScreenState extends State<HomeScreen> {
   // Navigation helpers for the new shelves
 
   void _openAlbumDetail(Map<String, dynamic> release) {
-    Navigator.of(context).push(MaterialPageRoute(
+    _contentNavigatorKey.currentState?.push(MaterialPageRoute(
       builder: (_) => AlbumDetailScreen(
         albumId: release['id'] as String? ?? '',
         albumName: release['name'] as String? ?? '',
@@ -246,7 +281,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _openArtist(ArtistInfo artist) {
-    Navigator.of(context).push(MaterialPageRoute(
+    _contentNavigatorKey.currentState?.push(MaterialPageRoute(
       builder: (_) => ArtistScreen(
         artistId: artist.id,
         artistName: artist.name,
@@ -258,7 +293,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _openSpotifyPlaylist(SpotifyPlaylistInfo playlist) {
-    Navigator.of(context).push(MaterialPageRoute(
+    _contentNavigatorKey.currentState?.push(MaterialPageRoute(
       builder: (_) => SpotifyPlaylistScreen(
         playlistId: playlist.id,
         playlistName: playlist.name,
@@ -271,7 +306,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _openFriends() {
-    Navigator.of(context).push(MaterialPageRoute(
+    _contentNavigatorKey.currentState?.push(MaterialPageRoute(
       builder: (_) => FriendsScreen(
         playerStateService: _playerStateService,
         queueService: _queueService,
@@ -281,7 +316,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _openMood(MoodCategory mood) {
-    Navigator.of(context).push(MaterialPageRoute(
+    _contentNavigatorKey.currentState?.push(MaterialPageRoute(
       builder: (_) => MoodPlaylistsScreen(
         mood: mood.mood,
         playerStateService: _playerStateService,
@@ -292,13 +327,18 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _openMixShowAll(HomeMix mix) {
-    Navigator.of(context).push(MaterialPageRoute(
-      builder: (_) => MadeForYouScreen(
-        title: mix.title,
-        songs: mix.tracks.map(_trackToVideo).toList(),
-        playerStateService: _playerStateService,
-        queueService: _queueService,
-        recentlyPlayedService: _recentlyPlayedService,
+    _contentNavigatorKey.currentState?.push(MaterialPageRoute(
+      // MadeForYouScreen renders a bare Column, so give it an opaque background
+      // to fully cover the destinations beneath in the content pane.
+      builder: (context) => Material(
+        color: Theme.of(context).scaffoldBackgroundColor,
+        child: MadeForYouScreen(
+          title: mix.title,
+          songs: mix.tracks.map(_trackToVideo).toList(),
+          playerStateService: _playerStateService,
+          queueService: _queueService,
+          recentlyPlayedService: _recentlyPlayedService,
+        ),
       ),
     ));
   }
@@ -309,13 +349,193 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  Widget _buildCurrentScreen() {
-    // If lyrics is shown, show lyrics screen (applies to all tabs)
-    if (_showLyrics && _playerStateService.currentTrackName != null && _playerStateService.currentTrackArtist != null) {
-      final currentItem = _queueService.currentItem;
-      final duration = _playerStateService.audioPlayer.duration;
-      final durationSeconds = duration.inSeconds > 0 ? duration.inSeconds : null;
-      return LyricsScreen(
+  void _openGenre(String genre) {
+    _contentNavigatorKey.currentState?.push(MaterialPageRoute(
+      builder: (_) => GenreScreen(
+        genre: genre,
+        playerStateService: _playerStateService,
+        queueService: _queueService,
+        recentlyPlayedService: _recentlyPlayedService,
+        onDownloadStart: (downloadId) {
+          setState(() {
+            _downloadId = downloadId;
+            _downloadProgress = null;
+          });
+          _startDownloadProgressPolling(downloadId);
+        },
+      ),
+    ));
+  }
+
+  void _openProfile() {
+    _contentNavigatorKey.currentState?.push(MaterialPageRoute(
+      builder: (_) => Scaffold(
+        appBar: AppBar(title: const Text('Profile')),
+        body: ProfileScreen(
+          authService: widget.authService,
+          playerStateService: _playerStateService,
+          queueService: _queueService,
+          onOpenFriends: _openFriends,
+        ),
+      ),
+    ));
+  }
+
+  void _openCsvImport() {
+    _contentNavigatorKey.currentState?.push(MaterialPageRoute(
+      builder: (_) => Scaffold(
+        appBar: AppBar(title: const Text('Import from CSV')),
+        body: CsvUploadScreen(
+          onConversionStart: (filename) {
+            setState(() {
+              _csvFilename = filename;
+              _csvProgress = null;
+            });
+            _startProgressPolling(filename);
+          },
+          onConversionComplete: (conversionResult) {
+            _stopProgressPolling();
+            setState(() {
+              _csvFilename = null;
+              _csvProgress = null;
+              if (conversionResult.notFound.isNotEmpty) {
+                _pendingNotFoundSongs = conversionResult.notFound;
+                _pendingPlaylistId = conversionResult.playlistId;
+              }
+            });
+            if (conversionResult.notFound.isNotEmpty) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (mounted && _pendingNotFoundSongs != null) {
+                  final notFound = _pendingNotFoundSongs!;
+                  final playlistId = _pendingPlaylistId;
+                  _pendingNotFoundSongs = null;
+                  _pendingPlaylistId = null;
+                  _showNotFoundSongsDialog(notFound, playlistId);
+                }
+              });
+            }
+            _loadSidebarPlaylists();
+          },
+        ),
+      ),
+    ));
+  }
+
+  Future<void> _createPlaylistDialog() async {
+    final controller = TextEditingController();
+    final name = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('New playlist'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(hintText: 'Playlist name', border: OutlineInputBorder()),
+          onSubmitted: (v) => Navigator.of(context).pop(v.trim()),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.of(context).pop(controller.text.trim()), child: const Text('Create')),
+        ],
+      ),
+    );
+    if (name == null || name.isEmpty) return;
+    try {
+      await _playlistService.createPlaylist(name);
+      await _loadSidebarPlaylists();
+      if (mounted) {
+        setState(() {
+          _currentIndex = 2;
+          _libraryTab = 0;
+          _libraryRefreshKey++;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Could not create playlist: $e')));
+      }
+    }
+  }
+
+  void _showCreateOrImportMenu() {
+    showModalBottomSheet(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.playlist_add),
+              title: const Text('New playlist'),
+              onTap: () {
+                Navigator.of(context).pop();
+                _createPlaylistDialog();
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.upload_file),
+              title: const Text('Import from CSV'),
+              onTap: () {
+                Navigator.of(context).pop();
+                _openCsvImport();
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _openLibraryPlaylist(Playlist playlist) {
+    _contentNavigatorKey.currentState?.popUntil((r) => r.isFirst);
+    setState(() {
+      _currentIndex = 2;
+      _libraryTab = 0;
+      _navigateToPlaylistId = playlist.id;
+      _showLyrics = false;
+      // Force PlaylistsScreen to rebuild so it picks up the initial playlist even
+      // if the Library tab is already visible.
+      _libraryRefreshKey++;
+    });
+  }
+
+  void _onSearchTap() {
+    _contentNavigatorKey.currentState?.popUntil((r) => r.isFirst);
+    setState(() {
+      _currentIndex = 1;
+      _showLyrics = false;
+    });
+  }
+
+  void _onSearchSubmitted(String query) {
+    _contentNavigatorKey.currentState?.popUntil((r) => r.isFirst);
+    setState(() {
+      _currentIndex = 1;
+      _showLyrics = false;
+    });
+    _performSearch();
+  }
+
+  void _onSearchChanged(String value) {
+    setState(() {
+      if (value.isEmpty) {
+        _searchResults = [];
+      }
+    });
+  }
+
+  /// The lyrics overlay, shown above the content stack when toggled from the
+  /// player. Kept as an overlay (not in the nested navigator) so it covers
+  /// whatever secondary screen is open while the sidebar/player stay visible.
+  Widget _buildLyricsOverlay() {
+    final currentItem = _queueService.currentItem;
+    final duration = _playerStateService.audioPlayer.duration;
+    final durationSeconds = duration.inSeconds > 0 ? duration.inSeconds : null;
+    // Opaque background so the overlay fully covers the content beneath it
+    // (the embedded lyrics screen is otherwise transparent).
+    return Material(
+      color: Theme.of(context).scaffoldBackgroundColor,
+      child: LyricsScreen(
         trackName: _playerStateService.currentTrackName!,
         artistName: _playerStateService.currentTrackArtist ?? '',
         albumName: currentItem?.album,
@@ -328,12 +548,13 @@ class _HomeScreenState extends State<HomeScreen> {
             _showLyrics = false;
           });
         },
-      );
-    }
+      ),
+    );
+  }
 
+  Widget _buildCurrentScreen() {
     switch (_currentIndex) {
       case 0:
-        // If New Releases is selected, show that screen
         if (_showNewReleases) {
           return NewReleasesScreen(
             releases: _newReleases,
@@ -345,7 +566,6 @@ class _HomeScreenState extends State<HomeScreen> {
             onPlayAlbum: _playAlbumFirstTrack,
           );
         }
-        // If Made for You is selected, show that screen
         if (_showMadeForYou) {
           return MadeForYouScreen(
             songs: _dailyMix,
@@ -359,211 +579,138 @@ class _HomeScreenState extends State<HomeScreen> {
             },
           );
         }
-        // If a genre is selected, show genre screen, otherwise show home content
-        if (_selectedGenre != null) {
-          return GenreScreen(
-            genre: _selectedGenre!,
-            playerStateService: _playerStateService,
-            queueService: _queueService,
-            recentlyPlayedService: _recentlyPlayedService,
-            embedded: true,
-            onBack: () {
-              setState(() {
-                _selectedGenre = null;
-              });
-            },
-            onDownloadStart: (downloadId) {
-              setState(() {
-                _downloadId = downloadId;
-                _downloadProgress = null;
-              });
-              _startDownloadProgressPolling(downloadId);
-            },
-          );
-        }
-        return _buildHomeContent();
+        return _buildHomeFeed();
       case 1:
-        return DownloadsScreen(
-          playerStateService: _playerStateService,
-          queueService: _queueService,
-          recentlyPlayedService: _recentlyPlayedService,
-        );
+        return _buildSearchPage();
       case 2:
-        final playlistId = _navigateToPlaylistId;
-        // Clear the navigation ID after using it
-        if (_navigateToPlaylistId != null) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) {
-              setState(() {
-                _navigateToPlaylistId = null;
-              });
-            }
-          });
-        }
-        return PlaylistsScreen(
-          playerStateService: _playerStateService,
-          queueService: _queueService,
-          recentlyPlayedService: _recentlyPlayedService,
-          initialPlaylistId: playlistId,
-          onDownloadStart: (downloadId) {
-            setState(() {
-              _downloadId = downloadId;
-              _downloadProgress = null;
-            });
-            _startDownloadProgressPolling(downloadId);
-          },
-        );
-      case 3:
-        return CsvUploadScreen(
-          onConversionStart: (filename) {
-            setState(() {
-              _csvFilename = filename;
-              _csvProgress = null;
-            });
-            _startProgressPolling(filename);
-          },
-          onConversionComplete: (conversionResult) {
-            _stopProgressPolling();
-            setState(() {
-              _csvFilename = null;
-              _csvProgress = null;
-              
-              // Store pending dialog data
-              if (conversionResult.notFound.isNotEmpty) {
-                _pendingNotFoundSongs = conversionResult.notFound;
-                _pendingPlaylistId = conversionResult.playlistId;
-              }
-            });
-            
-            // Show dialog after state update
-            if (conversionResult.notFound.isNotEmpty) {
-              print('CSV Conversion: ${conversionResult.notFound.length} songs not found, showing dialog...');
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                if (mounted && _pendingNotFoundSongs != null) {
-                  final notFound = _pendingNotFoundSongs!;
-                  final playlistId = _pendingPlaylistId;
-                  _pendingNotFoundSongs = null;
-                  _pendingPlaylistId = null;
-                  print('Showing dialog with ${notFound.length} not found songs');
-                  _showNotFoundSongsDialog(notFound, playlistId);
-                }
-              });
-            } else {
-              print('CSV Conversion: All songs found, no dialog needed');
-            }
-          },
-        );
-      case 4:
-        return ProfileScreen(
-          authService: widget.authService,
-          playerStateService: _playerStateService,
-          queueService: _queueService,
-          onOpenFriends: _openFriends,
-        );
+        return _buildLibrary();
       default:
-        return _buildHomeContent();
+        return _buildHomeFeed();
     }
   }
 
-  Widget _buildHomeContent() {
+  /// The Library hub: filter chips (Playlists / Downloads) + a "+" to create or
+  /// import, rendering the existing PlaylistsScreen / DownloadsScreen bodies.
+  Widget _buildLibrary() {
+    final playlistId = _navigateToPlaylistId;
+    if (_navigateToPlaylistId != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          setState(() {
+            _navigateToPlaylistId = null;
+          });
+        }
+      });
+    }
+
+    Widget body;
+    if (_libraryTab == 0) {
+      body = PlaylistsScreen(
+        key: ValueKey('library_playlists_$_libraryRefreshKey'),
+        playerStateService: _playerStateService,
+        queueService: _queueService,
+        recentlyPlayedService: _recentlyPlayedService,
+        initialPlaylistId: playlistId,
+        onDownloadStart: (downloadId) {
+          setState(() {
+            _downloadId = downloadId;
+            _downloadProgress = null;
+          });
+          _startDownloadProgressPolling(downloadId);
+        },
+      );
+    } else {
+      body = DownloadsScreen(
+        playerStateService: _playerStateService,
+        queueService: _queueService,
+        recentlyPlayedService: _recentlyPlayedService,
+      );
+    }
+
     return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Search section
         Padding(
-          padding: ResponsiveUtils.responsivePadding(context),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          padding: EdgeInsets.only(
+            left: ResponsiveUtils.responsiveValue<double>(context, compact: 12, medium: 20, expanded: 24),
+            right: ResponsiveUtils.responsiveValue<double>(context, compact: 12, medium: 20, expanded: 24),
+            top: 12,
+            bottom: 4,
+          ),
+          child: Row(
             children: [
               Text(
-                'Discover Music',
-                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                  fontWeight: FontWeight.w700,
-                ),
+                'Your Library',
+                style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700, letterSpacing: -0.3),
               ),
-              const SizedBox(height: 20),
-              TextField(
-                controller: _searchController,
-                decoration: InputDecoration(
-                  hintText: 'Search for songs, artists, albums...',
-                  prefixIcon: const Icon(Icons.search, size: 24),
-                  suffixIcon: _searchController.text.isNotEmpty
-                      ? IconButton(
-                          icon: const Icon(Icons.clear, size: 20),
-                          onPressed: () {
-                            _searchController.clear();
-                            setState(() {
-                              _searchResults = [];
-                            });
-                          },
-                        )
-                      : null,
-                ),
-                onSubmitted: (_) => _performSearch(),
-                onChanged: (_) => setState(() {}),
-                textInputAction: TextInputAction.search,
+              const Spacer(),
+              IconButton(
+                icon: const Icon(Icons.add),
+                tooltip: 'Create playlist or import',
+                onPressed: _showCreateOrImportMenu,
               ),
             ],
           ),
         ),
-        // Search results or recently played section
-        Expanded(
-          child: _isSearching
-              ? const Center(child: CircularProgressIndicator())
-              : _searchResults.isNotEmpty
-                  ? ListView.separated(
-                      padding: ResponsiveUtils.responsiveHorizontalPadding(context),
-                      itemCount: _searchResults.length,
-                      separatorBuilder: (context, index) => const SizedBox(height: 12),
-                      itemBuilder: (context, index) {
-                        return VideoCard(
-                          video: _searchResults[index],
-                          onStream: () async {
-                            await _streamVideo(_searchResults[index]);
-                          },
-                          onDownload: () async {
-                            await _downloadVideo(_searchResults[index]);
-                          },
-                          onAddToPlaylist: () async {
-                            await _showAddToPlaylistDialog(_searchResults[index]);
-                          },
-                          onAddToQueue: () async {
-                            await _addToQueue(_searchResults[index]);
-                          },
-                        );
-                      },
-                    )
-                  : _searchController.text.isNotEmpty
-                      ? Center(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(
-                                Icons.search_off,
-                                size: 64,
-                                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.3),
-                              ),
-                              const SizedBox(height: 16),
-                              Text(
-                                'No results found',
-                                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                                  color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
-                                ),
-                              ),
-                              const SizedBox(height: 8),
-                              Text(
-                                'Try a different search term',
-                                style: Theme.of(context).textTheme.bodySmall,
-                              ),
-                            ],
-                          ),
-                        )
-                      : RefreshIndicator(
-                          onRefresh: _refreshHome,
-                          child: SingleChildScrollView(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                // Recently Played
+        Padding(
+          padding: EdgeInsets.symmetric(
+            horizontal: ResponsiveUtils.responsiveValue<double>(context, compact: 12, medium: 20, expanded: 24),
+            vertical: 4,
+          ),
+          child: Row(
+            children: [
+              ChoiceChip(
+                label: const Text('Playlists'),
+                selected: _libraryTab == 0,
+                onSelected: (_) => setState(() => _libraryTab = 0),
+              ),
+              const SizedBox(width: 8),
+              ChoiceChip(
+                label: const Text('Downloads'),
+                selected: _libraryTab == 1,
+                onSelected: (_) => setState(() => _libraryTab = 1),
+              ),
+            ],
+          ),
+        ),
+        Expanded(child: body),
+      ],
+    );
+  }
+
+  Widget _buildGreetingHeader() {
+    final hour = DateTime.now().hour;
+    final greeting = hour < 12
+        ? 'Good morning'
+        : hour < 17
+            ? 'Good afternoon'
+            : 'Good evening';
+    return Padding(
+      padding: EdgeInsets.only(
+        left: ResponsiveUtils.responsiveValue<double>(context, compact: 12, medium: 20, expanded: 24),
+        right: ResponsiveUtils.responsiveValue<double>(context, compact: 12, medium: 20, expanded: 24),
+        top: 12,
+        bottom: 4,
+      ),
+      child: Text(
+        greeting,
+        style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+              fontWeight: FontWeight.w700,
+              letterSpacing: -0.5,
+            ),
+      ),
+    );
+  }
+
+  Widget _buildHomeFeed() {
+    return RefreshIndicator(
+      onRefresh: _refreshHome,
+      child: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _buildGreetingHeader(),
+            // Recently Played
                                 ListenableBuilder(
                                   listenable: _recentlyPlayedService,
                                   builder: (context, _) {
@@ -661,71 +808,129 @@ class _HomeScreenState extends State<HomeScreen> {
                                 // Recommended artists
                                 _buildRecommendedArtistsShelf(),
 
-                                // Browse Moods
-                                _buildMoodsSection(),
-
-                                // Genres
-                                Padding(
-                                  padding: EdgeInsets.only(
-                                    left: ResponsiveUtils.responsiveValue<double>(context, compact: 12, medium: 20, expanded: 24),
-                                    right: ResponsiveUtils.responsiveValue<double>(context, compact: 12, medium: 20, expanded: 24),
-                                    top: 16,
-                                    bottom: 16,
-                                  ),
-                                  child: Text(
-                                    'Browse by Genre',
-                                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                ),
-                                Padding(
-                                  padding: ResponsiveUtils.responsiveHorizontalPadding(context),
-                                  child: LayoutBuilder(
-                                    builder: (context, constraints) {
-                                      final crossAxisCount = ResponsiveUtils.responsiveValue<int>(
-                                        context,
-                                        compact: 2,
-                                        medium: 3,
-                                        expanded: 4,
-                                      );
-                                      final spacing = ResponsiveUtils.responsiveValue<double>(context, compact: 12, medium: 14, expanded: 16);
-                                      final totalSpacing = spacing * (crossAxisCount - 1);
-                                      final cardWidth = (constraints.maxWidth - totalSpacing) / crossAxisCount;
-                                      final cardHeight = ResponsiveUtils.responsiveCardHeight(context);
-                                      final aspectRatio = cardWidth / cardHeight;
-
-                                      return GridView.builder(
-                                        shrinkWrap: true,
-                                        physics: const NeverScrollableScrollPhysics(),
-                                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                                          crossAxisCount: crossAxisCount,
-                                          crossAxisSpacing: spacing,
-                                          mainAxisSpacing: spacing,
-                                          childAspectRatio: aspectRatio,
-                                        ),
-                                        itemCount: _genres.length,
-                                        itemBuilder: (context, index) {
-                                          return GenreCard(
-                                            genre: _genres[index],
-                                            onTap: () {
-                                              setState(() {
-                                                _selectedGenre = _genres[index];
-                                              });
-                                            },
-                                          );
-                                        },
-                                      );
-                                    },
-                                  ),
-                                ),
-                                SizedBox(height: ResponsiveUtils.responsivePlayerBottomPadding(context)),
-                              ],
-                            ),
-                          ),
-                        ),
+            SizedBox(height: ResponsiveUtils.responsivePlayerBottomPadding(context)),
+          ],
         ),
-      ],
+      ),
+    );
+  }
+
+  /// The Search destination: live YouTube results when a query is present, else a
+  /// clean "Browse all" grid of genre + mood category tiles.
+  Widget _buildSearchPage() {
+    if (_isSearching) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (_searchResults.isNotEmpty) {
+      return ListView.separated(
+        padding: ResponsiveUtils.responsiveHorizontalPadding(context).add(const EdgeInsets.symmetric(vertical: 8)),
+        itemCount: _searchResults.length,
+        separatorBuilder: (context, index) => const SizedBox(height: 12),
+        itemBuilder: (context, index) {
+          return VideoCard(
+            video: _searchResults[index],
+            onStream: () async {
+              await _streamVideo(_searchResults[index]);
+            },
+            onDownload: () async {
+              await _downloadVideo(_searchResults[index]);
+            },
+            onAddToPlaylist: () async {
+              await _showAddToPlaylistDialog(_searchResults[index]);
+            },
+            onAddToQueue: () async {
+              await _addToQueue(_searchResults[index]);
+            },
+          );
+        },
+      );
+    }
+    if (_searchController.text.isNotEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.search_off, size: 64, color: Theme.of(context).colorScheme.onSurface.withOpacity(0.3)),
+            const SizedBox(height: 16),
+            Text(
+              'No results found',
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+                  ),
+            ),
+            const SizedBox(height: 8),
+            Text('Try a different search term', style: Theme.of(context).textTheme.bodySmall),
+          ],
+        ),
+      );
+    }
+    return _buildBrowseAll();
+  }
+
+  Widget _buildBrowseAll() {
+    return SingleChildScrollView(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: EdgeInsets.only(
+              left: ResponsiveUtils.responsiveValue<double>(context, compact: 12, medium: 20, expanded: 24),
+              right: ResponsiveUtils.responsiveValue<double>(context, compact: 12, medium: 20, expanded: 24),
+              top: 16,
+              bottom: 2,
+            ),
+            child: Text(
+              'Browse all',
+              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -0.5,
+                  ),
+            ),
+          ),
+          const SectionHeader(title: 'Genres'),
+          _browseGrid(
+            itemCount: _genres.length,
+            itemBuilder: (context, index) => BrowseCategoryCard(
+              label: _genres[index],
+              onTap: () => _openGenre(_genres[index]),
+            ),
+          ),
+          if (_moods.isNotEmpty) ...[
+            const SectionHeader(title: 'Moods'),
+            _browseGrid(
+              itemCount: _moods.length,
+              itemBuilder: (context, index) {
+                final mood = _moods[index];
+                return BrowseCategoryCard(
+                  label: mood.title,
+                  imageUrl: mood.thumbnail,
+                  onTap: () => _openMood(mood),
+                );
+              },
+            ),
+          ],
+          SizedBox(height: ResponsiveUtils.responsivePlayerBottomPadding(context)),
+        ],
+      ),
+    );
+  }
+
+  /// Chunky, well-spaced category grid used by the Search "Browse all" surface.
+  Widget _browseGrid({required int itemCount, required IndexedWidgetBuilder itemBuilder}) {
+    return Padding(
+      padding: ResponsiveUtils.responsiveHorizontalPadding(context),
+      child: GridView.builder(
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: ResponsiveUtils.responsiveValue<int>(context, compact: 2, medium: 3, expanded: 4),
+          crossAxisSpacing: ResponsiveUtils.responsiveValue<double>(context, compact: 14, medium: 16, expanded: 18),
+          mainAxisSpacing: ResponsiveUtils.responsiveValue<double>(context, compact: 14, medium: 16, expanded: 18),
+          childAspectRatio: 1.5,
+        ),
+        itemCount: itemCount,
+        itemBuilder: itemBuilder,
+      ),
     );
   }
 
@@ -785,59 +990,6 @@ class _HomeScreenState extends State<HomeScreen> {
         artist: _recommendedArtists[index],
         onTap: () => _openArtist(_recommendedArtists[index]),
       ),
-    );
-  }
-
-  Widget _buildMoodsSection() {
-    if (_moods.isEmpty) return const SizedBox.shrink();
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: EdgeInsets.only(
-            left: ResponsiveUtils.responsiveValue<double>(context, compact: 12, medium: 20, expanded: 24),
-            right: ResponsiveUtils.responsiveValue<double>(context, compact: 12, medium: 20, expanded: 24),
-            top: 16,
-            bottom: 16,
-          ),
-          child: Text(
-            'Browse Moods',
-            style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600),
-          ),
-        ),
-        Padding(
-          padding: ResponsiveUtils.responsiveHorizontalPadding(context),
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final crossAxisCount = ResponsiveUtils.responsiveValue<int>(context, compact: 2, medium: 3, expanded: 4);
-              final spacing = ResponsiveUtils.responsiveValue<double>(context, compact: 12, medium: 14, expanded: 16);
-              final totalSpacing = spacing * (crossAxisCount - 1);
-              final cardWidth = (constraints.maxWidth - totalSpacing) / crossAxisCount;
-              final cardHeight = ResponsiveUtils.responsiveCardHeight(context);
-              final aspectRatio = cardWidth / cardHeight;
-
-              return GridView.builder(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: crossAxisCount,
-                  crossAxisSpacing: spacing,
-                  mainAxisSpacing: spacing,
-                  childAspectRatio: aspectRatio,
-                ),
-                itemCount: _moods.length,
-                itemBuilder: (context, index) {
-                  final mood = _moods[index];
-                  return GenreCard(
-                    genre: mood.title,
-                    onTap: () => _openMood(mood),
-                  );
-                },
-              );
-            },
-          ),
-        ),
-      ],
     );
   }
 
@@ -1541,12 +1693,18 @@ class _HomeScreenState extends State<HomeScreen> {
         artist: cleaned['artist']!,
       );
 
-      await _playerStateService.streamTrack(
-        result.streamingUrl,
-        trackName: result.title,
-        trackArtist: result.artist,
-        url: video.url,
+      // Play through the queue (replacing it) so the now-playing bar reflects
+      // this song's metadata + artwork even if a playlist was already playing.
+      final queueItem = QueueItem(
+        id: 'video_${video.id}',
+        title: result.title,
+        artist: result.artist,
+        url: result.streamingUrl,
+        originalUrl: video.url,
+        thumbnail: video.thumbnail,
       );
+      _queueService.clearQueue();
+      await _queueService.addAndPlay(queueItem, _playerStateService);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -2121,182 +2279,179 @@ class _HomeScreenState extends State<HomeScreen> {
       label: 'Home',
     ),
     NavigationDestination(
-      icon: Icon(Icons.download_outlined),
-      selectedIcon: Icon(Icons.download),
-      label: 'Downloads',
+      icon: Icon(Icons.search),
+      selectedIcon: Icon(Icons.search),
+      label: 'Search',
     ),
     NavigationDestination(
-      icon: Icon(Icons.playlist_play_outlined),
-      selectedIcon: Icon(Icons.playlist_play),
-      label: 'Playlists',
-    ),
-    NavigationDestination(
-      icon: Icon(Icons.upload_file_outlined),
-      selectedIcon: Icon(Icons.upload_file),
-      label: 'CSV',
-    ),
-    NavigationDestination(
-      icon: Icon(Icons.person_outline),
-      selectedIcon: Icon(Icons.person),
-      label: 'User',
+      icon: Icon(Icons.library_music_outlined),
+      selectedIcon: Icon(Icons.library_music),
+      label: 'Library',
     ),
   ];
 
   void _onNavDestinationSelected(int index) {
     FocusScope.of(context).unfocus();
+    // Clear any secondary screen pushed onto the content pane so the selected
+    // primary destination is revealed.
+    _contentNavigatorKey.currentState?.popUntil((r) => r.isFirst);
     setState(() {
       _showLyrics = false;
       _currentIndex = index;
     });
   }
 
+
   @override
   Widget build(BuildContext context) {
-    final useBottomNav = ResponsiveUtils.isCompact(context);
+    final compact = ResponsiveUtils.isCompact(context);
+    final expandedSidebar = ResponsiveUtils.isExpanded(context);
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('myMusic'),
-        actions: [
-          IconButton(
-            tooltip: 'Logout',
-            icon: const Icon(Icons.logout),
-            onPressed: () async {
-              await widget.authService.logout();
-            },
-          ),
-        ],
-      ),
-      body: Row(
-        children: [
-          // Side Navigation (medium/expanded only)
-          if (!useBottomNav)
-            Container(
-              width: 80,
-              decoration: const BoxDecoration(
-                border: Border(
-                  right: BorderSide(color: Color(0xFF262626), width: 1),
-                ),
-              ),
-              child: NavigationRail(
-                selectedIndex: _currentIndex,
-                onDestinationSelected: _onNavDestinationSelected,
-                labelType: NavigationRailLabelType.all,
-                useIndicator: true,
-                extended: false,
-                minExtendedWidth: 80,
-                destinations: [
-                  NavigationRailDestination(
-                    icon: const Icon(Icons.home_outlined),
-                    selectedIcon: const Icon(Icons.home),
-                    label: const Text('Home'),
+      body: SafeArea(
+        bottom: false,
+        child: Column(
+          children: [
+            Expanded(
+              child: Row(
+                children: [
+                  // Persistent sidebar (medium/expanded only)
+                  if (!compact)
+                    SizedBox(
+                      width: expandedSidebar ? 220 : 72,
+                      child: AppSidebar(
+                        selectedIndex: _currentIndex,
+                        onSelect: _onNavDestinationSelected,
+                        expanded: expandedSidebar,
+                        playlists: _sidebarPlaylists,
+                        onOpenPlaylist: _openLibraryPlaylist,
+                        onCreate: _showCreateOrImportMenu,
+                      ),
+                    ),
+                  // Top bar + current destination
+                  Expanded(
+                    child: Column(
+                      children: [
+                        AppTopBar(
+                          searchController: _searchController,
+                          onSearchTap: _onSearchTap,
+                          onSearchSubmitted: _onSearchSubmitted,
+                          onSearchChanged: _onSearchChanged,
+                          username: widget.authService.username,
+                          onProfile: _openProfile,
+                          onFriends: _openFriends,
+                          onLogout: () async {
+                            await widget.authService.logout();
+                          },
+                        ),
+                        Expanded(
+                          child: Stack(
+                            children: [
+                              // Nested navigator for the content pane. Its root page
+                              // is the current destination (opaque + interactive, and
+                              // rebuilt each frame via the pages API); secondary
+                              // screens are pushed on top imperatively via _open*.
+                              Positioned.fill(
+                                child: Navigator(
+                                  key: _contentNavigatorKey,
+                                  observers: [_contentNavObserver],
+                                  pages: [
+                                    MaterialPage(
+                                      key: const ValueKey('content-root'),
+                                      child: _buildCurrentScreen(),
+                                    ),
+                                  ],
+                                  onPopPage: (route, result) => route.didPop(result),
+                                ),
+                              ),
+                              // Lyrics overlay (above content + pushed screens).
+                              if (_showLyrics &&
+                                  _playerStateService.currentTrackName != null &&
+                                  _playerStateService.currentTrackArtist != null)
+                                Positioned.fill(child: _buildLyricsOverlay()),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                  NavigationRailDestination(
-                    icon: const Icon(Icons.download_outlined),
-                    selectedIcon: const Icon(Icons.download),
-                    label: const Text('Downloads'),
-                  ),
-                  NavigationRailDestination(
-                    icon: const Icon(Icons.playlist_play_outlined),
-                    selectedIcon: const Icon(Icons.playlist_play),
-                    label: const Text('Playlists'),
-                  ),
-                  NavigationRailDestination(
-                    icon: const Icon(Icons.upload_file_outlined),
-                    selectedIcon: const Icon(Icons.upload_file),
-                    label: const Text('CSV'),
-                  ),
-                  NavigationRailDestination(
-                    icon: const Icon(Icons.person_outline),
-                    selectedIcon: const Icon(Icons.person),
-                    label: const Text('User'),
-                  ),
+                  // Queue panel (right side, above the player)
+                  if (_showQueuePanel)
+                    QueuePanel(
+                      queueService: _queueService,
+                      onClose: () {
+                        setState(() {
+                          _showQueuePanel = false;
+                        });
+                      },
+                      onItemTap: (item) async {
+                        final index = _queueService.queue.indexOf(item);
+                        if (index >= 0) {
+                          await _queueService.playItem(index, _playerStateService);
+                        }
+                      },
+                    ),
                 ],
               ),
             ),
-          // Main content
-          Expanded(
-            child: Column(
-              children: [
-                Expanded(
-                  child: _buildCurrentScreen(),
-                ),
-                // CSV Progress bar
-                if (_csvProgress != null && _csvFilename != null)
-                  CsvProgressBar(
-                    processed: _csvProgress!.processed,
-                    notFound: _csvProgress!.notFound,
-                    total: _csvProgress!.total,
-                    status: _csvProgress!.status,
-                    progress: _csvProgress!.progress,
-                  ),
-                // Download Progress bar
-                if (_downloadProgress != null && _downloadId != null)
-                  DownloadProgressBar(
-                    processed: _downloadProgress!.processed,
-                    failed: _downloadProgress!.failed,
-                    total: _downloadProgress!.total,
-                    status: _downloadProgress!.status,
-                    progress: _downloadProgress!.progress,
-                  ),
-                // Bottom player
-                ListenableBuilder(
-                  listenable: _playerStateService,
-                  builder: (context, _) {
-                    return BottomPlayer(
-                      playerService: _playerStateService.audioPlayer,
-                      currentTrackName: _playerStateService.currentTrackName,
-                      currentTrackArtist: _playerStateService.currentTrackArtist,
-                      queueService: _queueService,
-                      playerStateService: _playerStateService,
-                      onQueueToggle: () {
-                        setState(() {
-                          _showQueuePanel = !_showQueuePanel;
-                        });
-                      },
-                      onLyricsToggle: () {
-                        setState(() {
-                          _showLyrics = !_showLyrics;
-                          // Fetch lyrics when opening screen
-                          if (_showLyrics && _playerStateService.currentTrackName != null && _playerStateService.currentTrackArtist != null) {
-                            final currentItem = _queueService.currentItem;
-                            final dur = _playerStateService.audioPlayer.duration;
-                            _lyricsService.fetchLyrics(
-                              _playerStateService.currentTrackName!,
-                              _playerStateService.currentTrackArtist ?? '',
-                              albumName: currentItem?.album,
-                              duration: dur.inSeconds > 0 ? dur.inSeconds : null,
-                            );
-                          }
-                        });
-                      },
-                      onDownload: _downloadCurrentTrack,
-                      onAddToPlaylist: _addCurrentTrackToPlaylist,
-                    );
+            // CSV / download progress bars (full width, above the player)
+            if (_csvProgress != null && _csvFilename != null)
+              CsvProgressBar(
+                processed: _csvProgress!.processed,
+                notFound: _csvProgress!.notFound,
+                total: _csvProgress!.total,
+                status: _csvProgress!.status,
+                progress: _csvProgress!.progress,
+              ),
+            if (_downloadProgress != null && _downloadId != null)
+              DownloadProgressBar(
+                processed: _downloadProgress!.processed,
+                failed: _downloadProgress!.failed,
+                total: _downloadProgress!.total,
+                status: _downloadProgress!.status,
+                progress: _downloadProgress!.progress,
+              ),
+            // Persistent now-playing bar (full width). Listen to BOTH the player
+            // state and the queue so track changes (e.g. Next) refresh the bar's
+            // artwork/title even when only the queue's currentItem changed.
+            ListenableBuilder(
+              listenable: Listenable.merge([_playerStateService, _queueService]),
+              builder: (context, _) {
+                return BottomPlayer(
+                  playerService: _playerStateService.audioPlayer,
+                  currentTrackName: _playerStateService.currentTrackName,
+                  currentTrackArtist: _playerStateService.currentTrackArtist,
+                  queueService: _queueService,
+                  playerStateService: _playerStateService,
+                  onQueueToggle: () {
+                    setState(() {
+                      _showQueuePanel = !_showQueuePanel;
+                    });
                   },
-                ),
-              ],
-            ),
-          ),
-          // Queue panel
-          if (_showQueuePanel)
-            QueuePanel(
-              queueService: _queueService,
-              onClose: () {
-                setState(() {
-                  _showQueuePanel = false;
-                });
+                  onLyricsToggle: () {
+                    setState(() {
+                      _showLyrics = !_showLyrics;
+                      if (_showLyrics && _playerStateService.currentTrackName != null && _playerStateService.currentTrackArtist != null) {
+                        final currentItem = _queueService.currentItem;
+                        final dur = _playerStateService.audioPlayer.duration;
+                        _lyricsService.fetchLyrics(
+                          _playerStateService.currentTrackName!,
+                          _playerStateService.currentTrackArtist ?? '',
+                          albumName: currentItem?.album,
+                          duration: dur.inSeconds > 0 ? dur.inSeconds : null,
+                        );
+                      }
+                    });
+                  },
+                  onDownload: _downloadCurrentTrack,
+                  onAddToPlaylist: _addCurrentTrackToPlaylist,
+                );
               },
-              onItemTap: (item) async {
-                final index = _queueService.queue.indexOf(item);
-                if (index >= 0) {
-                  await _queueService.playItem(index, _playerStateService);
-                }
-              },
             ),
-        ],
+          ],
+        ),
       ),
-      bottomNavigationBar: useBottomNav
+      bottomNavigationBar: compact
           ? NavigationBar(
               selectedIndex: _currentIndex,
               onDestinationSelected: _onNavDestinationSelected,
@@ -2308,17 +2463,9 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _onTrackChanged() {
-    // If lyrics screen is open, fetch lyrics for the new track
-    if (_showLyrics && _playerStateService.currentTrackName != null && _playerStateService.currentTrackArtist != null) {
-      final currentItem = _queueService.currentItem;
-      final dur = _playerStateService.audioPlayer.duration;
-      _lyricsService.fetchLyrics(
-        _playerStateService.currentTrackName!,
-        _playerStateService.currentTrackArtist ?? '',
-        albumName: currentItem?.album,
-        duration: dur.inSeconds > 0 ? dur.inSeconds : null,
-      );
-    }
+    // Rebuild the shell so the open lyrics overlay receives the new track's props
+    // and refreshes its lyrics + artwork via didUpdateWidget.
+    if (mounted) setState(() {});
   }
 
   @override

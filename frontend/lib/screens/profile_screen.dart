@@ -3,6 +3,7 @@ import '../utils/responsive_utils.dart';
 
 import '../services/auth_service.dart';
 import '../services/profile_service.dart';
+import '../services/friends_service.dart';
 import '../services/player_state_service.dart';
 import '../services/queue_service.dart';
 import '../services/api_service.dart';
@@ -11,8 +12,9 @@ import '../models/queue_item.dart';
 import '../widgets/playlist_selection_dialog.dart';
 import '../widgets/album_cover.dart';
 import '../widgets/empty_state_widget.dart';
-import '../widgets/gradient_section_header.dart';
+import '../widgets/profile_header.dart';
 import '../models/playlist.dart';
+import 'spotify_playlist_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   final AuthService authService;
@@ -34,6 +36,7 @@ class ProfileScreen extends StatefulWidget {
 
 class _ProfileScreenState extends State<ProfileScreen> {
   final ProfileService _profileService = ProfileService();
+  final FriendsService _friendsService = FriendsService();
   final ApiService _apiService = ApiService();
   final PlaylistService _playlistService = PlaylistService();
   final TextEditingController _usernameController = TextEditingController();
@@ -42,6 +45,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   UserProfile? _profile;
   AnalyticsRecap? _recap;
   List<ProfileHistoryItem> _history = [];
+  List<Playlist> _publicPlaylists = [];
   String _selectedPeriod = 'weekly';
   bool _isLoading = true;
   bool _isSaving = false;
@@ -70,11 +74,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
         recapFuture,
       ]);
       final profile = results[0] as UserProfile;
+      // The user's own public playlists (same view friends get).
+      List<Playlist> publicPlaylists = [];
+      try {
+        publicPlaylists = await _friendsService.getUserPlaylists(profile.id);
+      } catch (_) {}
       if (!mounted) return;
       setState(() {
         _profile = profile;
         _history = results[1] as List<ProfileHistoryItem>;
         _recap = results[2] as AnalyticsRecap;
+        _publicPlaylists = publicPlaylists;
         _usernameController.text = profile.username;
         _taglineController.text = profile.tagline;
         _isLoading = false;
@@ -267,6 +277,69 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
+  Future<void> _editProfileDialog() async {
+    _usernameController.text = _profile?.username ?? _usernameController.text;
+    _taglineController.text = _profile?.tagline ?? _taglineController.text;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Edit profile'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: _usernameController,
+              decoration: const InputDecoration(labelText: 'Username', border: OutlineInputBorder()),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _taglineController,
+              maxLength: 120,
+              decoration: const InputDecoration(labelText: 'Tagline', border: OutlineInputBorder()),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(dialogContext).pop(), child: const Text('Cancel')),
+          FilledButton(
+            onPressed: () async {
+              await _saveProfile();
+              if (mounted) Navigator.of(dialogContext).pop();
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String? _httpCover(Playlist playlist) {
+    final cover = playlist.coverImage;
+    if (cover != null && (cover.startsWith('http://') || cover.startsWith('https://'))) return cover;
+    if (playlist.tracks.isNotEmpty) return playlist.tracks.first.thumbnail;
+    return null;
+  }
+
+  void _openOwnPublicPlaylist(Playlist playlist) {
+    final id = _profile?.id;
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => SpotifyPlaylistScreen(
+        playlistId: playlist.id,
+        playlistName: playlist.name,
+        coverUrl: _httpCover(playlist),
+        playerStateService: widget.playerStateService,
+        queueService: widget.queueService,
+        recentlyPlayedService: null,
+        trackLoader: id == null
+            ? null
+            : () async {
+                final full = await _friendsService.getUserPlaylist(id, playlist.id);
+                return full.tracks;
+              },
+      ),
+    ));
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
@@ -286,231 +359,135 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final recap = _recap;
     final topGenre = (recap?.topGenres.isNotEmpty ?? false) ? recap!.topGenres.first : '-';
     final topArtist = (recap?.topArtists.isNotEmpty ?? false) ? recap!.topArtists.first.artist : '-';
+    final profile = _profile;
 
-    final primaryColor = Theme.of(context).colorScheme.primary;
-    final secondaryColor = Theme.of(context).colorScheme.secondary;
-    final surfaceColor = Theme.of(context).colorScheme.surface;
-
-    return SingleChildScrollView(
-      padding: ResponsiveUtils.responsivePadding(context),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+    return RefreshIndicator(
+      onRefresh: _loadData,
+      child: ListView(
+        padding: EdgeInsets.zero,
         children: [
-          GradientSectionHeader(
-            title: 'Your Profile',
-            showGradientBar: false,
-            trailing: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (widget.onOpenFriends != null)
-                  IconButton(
-                    onPressed: widget.onOpenFriends,
-                    tooltip: 'Friends',
-                    icon: const Icon(Icons.people_outline),
-                  ),
-                IconButton(
-                  onPressed: _loadData,
-                  tooltip: 'Refresh',
-                  icon: const Icon(Icons.refresh),
-                ),
-              ],
-            ),
+          ProfileHeader(
+            name: profile?.username ?? '',
+            tagline: profile?.tagline ?? '',
+            followerCount: profile?.followerCount ?? 0,
+            followingCount: profile?.followingCount ?? 0,
+            publicPlaylistCount: profile?.publicPlaylistCount ?? 0,
+            isSelf: true,
+            onEdit: _editProfileDialog,
+            onFollowingTap: widget.onOpenFriends,
           ),
-          const SizedBox(height: 16),
-          // Subtle radial gradient behind profile card
-          Stack(
-            children: [
-              Positioned(
-                top: -40,
-                left: -40,
-                right: -40,
-                child: Container(
-                  height: ResponsiveUtils.responsiveValue<double>(context, compact: 140, medium: 160, expanded: 180),
-                  decoration: BoxDecoration(
-                    gradient: RadialGradient(
-                      center: Alignment.topCenter,
-                      radius: 1.2,
-                      colors: [
-                        primaryColor.withOpacity(0.12),
-                        secondaryColor.withOpacity(0.06),
-                        Colors.transparent,
-                      ],
-                      stops: const [0.0, 0.5, 1.0],
-                    ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (_error != null) ...[
+                  const SizedBox(height: 8),
+                  Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+                ],
+                // Public playlists
+                if (_publicPlaylists.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    'Public playlists',
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: -0.3,
+                        ),
                   ),
-                ),
-              ),
-              Container(
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                    color: primaryColor.withOpacity(0.08),
-                    width: 1,
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 12,
+                    runSpacing: 12,
+                    children: _publicPlaylists
+                        .map((p) => _PublicPlaylistTile(
+                              name: p.name,
+                              trackCount: p.tracks.length,
+                              coverUrl: _httpCover(p),
+                              onTap: () => _openOwnPublicPlaylist(p),
+                            ))
+                        .toList(),
                   ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: primaryColor.withOpacity(0.04),
-                      blurRadius: 20,
-                      offset: const Offset(0, 4),
+                ],
+                // Recap
+                const SizedBox(height: 24),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'Your recap',
+                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: -0.3,
+                            ),
+                      ),
                     ),
+                    _periodChip('Weekly', 'weekly'),
+                    const SizedBox(width: 8),
+                    _periodChip('Monthly', 'monthly'),
                   ],
                 ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(12),
-                  child: Container(
-                    color: surfaceColor,
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                      children: [
-                        Row(
-                          children: [
-                            Container(
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                gradient: LinearGradient(
-                                  begin: Alignment.topLeft,
-                                  end: Alignment.bottomRight,
-                                  colors: [
-                                    primaryColor.withOpacity(0.8),
-                                    secondaryColor.withOpacity(0.8),
-                                  ],
-                                ),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: primaryColor.withOpacity(0.3),
-                                    blurRadius: 12,
-                                    offset: const Offset(0, 4),
-                                  ),
-                                ],
-                              ),
-                              child: CircleAvatar(
-                                radius: 28,
-                                backgroundColor: Colors.transparent,
-                                child: Text(
-                                  (_usernameController.text.isNotEmpty ? _usernameController.text[0] : '?').toUpperCase(),
-                                  style: const TextStyle(
-                                    fontSize: 24,
-                                    fontWeight: FontWeight.w700,
-                                    color: Colors.white,
-                                  ),
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 16),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  TextField(
-                                    controller: _usernameController,
-                                    decoration: const InputDecoration(labelText: 'Username'),
-                                  ),
-                                  const SizedBox(height: 8),
-                                  TextField(
-                                    controller: _taglineController,
-                                    maxLength: 120,
-                                    decoration: const InputDecoration(labelText: 'Tagline'),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 12),
-                        Align(
-                          alignment: Alignment.centerRight,
-                          child: ElevatedButton(
-                            onPressed: _isSaving ? null : _saveProfile,
-                            child: _isSaving
-                                ? const SizedBox(
-                                    width: 16,
-                                    height: 16,
-                                    child: CircularProgressIndicator(strokeWidth: 2),
-                                  )
-                                : const Text('Save Profile'),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
+                const SizedBox(height: 16),
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 12,
+                  children: [
+                    _StatCard(label: 'Plays', value: '${recap?.totals.plays ?? 0}', icon: Icons.play_circle_outline),
+                    _StatCard(label: 'Minutes', value: (recap?.totals.minutes ?? 0).toStringAsFixed(1), icon: Icons.timer_outlined),
+                    _StatCard(label: 'Unique Artists', value: '${recap?.totals.uniqueArtists ?? 0}', icon: Icons.people_outline),
+                    _StatCard(label: 'Top Artist', value: topArtist, icon: Icons.person),
+                    _StatCard(label: 'Top Genre', value: topGenre, icon: Icons.music_note),
+                  ],
                 ),
-              ),
-            ],
-          ),
-          if (_error != null) ...[
-            const SizedBox(height: 10),
-            Text(
-              _error!,
-              style: TextStyle(color: Theme.of(context).colorScheme.error),
-            ),
-          ],
-          const SizedBox(height: 24),
-          GradientSectionHeader(
-            title: 'Recap',
-            showGradientBar: true,
-            trailing: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                FilterChip(
-                  label: const Text('Weekly'),
-                  selected: _selectedPeriod == 'weekly',
-                  onSelected: (_) {
-                    setState(() => _selectedPeriod = 'weekly');
-                    _reloadRecap();
-                  },
-                  selectedColor: primaryColor.withOpacity(0.2),
-                  checkmarkColor: primaryColor,
+                // History
+                const SizedBox(height: 28),
+                Text(
+                  'Recent history',
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: -0.3,
+                      ),
                 ),
-                const SizedBox(width: 8),
-                FilterChip(
-                  label: const Text('Monthly'),
-                  selected: _selectedPeriod == 'monthly',
-                  onSelected: (_) {
-                    setState(() => _selectedPeriod = 'monthly');
-                    _reloadRecap();
-                  },
-                  selectedColor: primaryColor.withOpacity(0.2),
-                  checkmarkColor: primaryColor,
-                ),
+                const SizedBox(height: 12),
+                if (_history.isEmpty)
+                  EmptyStateWidget(
+                    icon: Icons.history,
+                    title: 'No recent history yet',
+                    subtitle: 'Start listening and your tracks will appear here.',
+                  )
+                else
+                  ..._history.map((item) {
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: _HistoryListTile(
+                        item: item,
+                        onPlay: () => _playTrack(item),
+                        onAddToQueue: () => _addToQueue(item),
+                        onAddToPlaylist: () => _showAddToPlaylistDialog(item),
+                        formatTimestamp: _formatTimestamp,
+                      ),
+                    );
+                  }),
+                const SizedBox(height: 24),
               ],
             ),
           ),
-          const SizedBox(height: 16),
-          Wrap(
-            spacing: 12,
-            runSpacing: 12,
-            children: [
-              _StatCard(label: 'Plays', value: '${recap?.totals.plays ?? 0}', icon: Icons.play_circle_outline),
-              _StatCard(label: 'Minutes', value: (recap?.totals.minutes ?? 0).toStringAsFixed(1), icon: Icons.timer_outlined),
-              _StatCard(label: 'Unique Artists', value: '${recap?.totals.uniqueArtists ?? 0}', icon: Icons.people_outline),
-              _StatCard(label: 'Top Artist', value: topArtist, icon: Icons.person),
-              _StatCard(label: 'Top Genre', value: topGenre, icon: Icons.music_note),
-            ],
-          ),
-          const SizedBox(height: 28),
-          GradientSectionHeader(title: 'Recent History', showGradientBar: true),
-          const SizedBox(height: 12),
-          if (_history.isEmpty)
-            EmptyStateWidget(
-              icon: Icons.history,
-              title: 'No recent history yet',
-              subtitle: 'Start listening and your tracks will appear here.',
-            )
-          else
-            ..._history.map((item) {
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: _HistoryListTile(
-                  item: item,
-                  onPlay: () => _playTrack(item),
-                  onAddToQueue: () => _addToQueue(item),
-                  onAddToPlaylist: () => _showAddToPlaylistDialog(item),
-                  formatTimestamp: _formatTimestamp,
-                ),
-              );
-            }),
         ],
       ),
+    );
+  }
+
+  Widget _periodChip(String label, String period) {
+    final primaryColor = Theme.of(context).colorScheme.primary;
+    return FilterChip(
+      label: Text(label),
+      selected: _selectedPeriod == period,
+      onSelected: (_) {
+        setState(() => _selectedPeriod = period);
+        _reloadRecap();
+      },
+      selectedColor: primaryColor.withOpacity(0.2),
+      checkmarkColor: primaryColor,
     );
   }
 
@@ -525,6 +502,69 @@ class _ProfileScreenState extends State<ProfileScreen> {
     _usernameController.dispose();
     _taglineController.dispose();
     super.dispose();
+  }
+}
+
+class _PublicPlaylistTile extends StatelessWidget {
+  final String name;
+  final int trackCount;
+  final String? coverUrl;
+  final VoidCallback onTap;
+
+  const _PublicPlaylistTile({
+    required this.name,
+    required this.trackCount,
+    required this.onTap,
+    this.coverUrl,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final width = ResponsiveUtils.responsiveValue<double>(context, compact: 140, medium: 150, expanded: 160);
+    return SizedBox(
+      width: width,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            AspectRatio(
+              aspectRatio: 1,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: (coverUrl != null && coverUrl!.isNotEmpty)
+                    ? Image.network(
+                        coverUrl!,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => _placeholder(context),
+                      )
+                    : _placeholder(context),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+            ),
+            Text(
+              '$trackCount ${trackCount == 1 ? 'track' : 'tracks'}',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _placeholder(BuildContext context) {
+    return Container(
+      color: Theme.of(context).colorScheme.surfaceVariant,
+      child: Icon(Icons.queue_music, size: 40, color: Theme.of(context).colorScheme.onSurfaceVariant),
+    );
   }
 }
 

@@ -5,6 +5,7 @@ import '../services/friends_service.dart';
 import '../services/player_state_service.dart';
 import '../services/queue_service.dart';
 import '../services/recently_played_service.dart';
+import '../widgets/profile_header.dart';
 import 'spotify_playlist_screen.dart';
 
 /// Shows another user's public profile: header card, follow/unfollow, and their
@@ -90,6 +91,9 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
           createdAt: profile.createdAt,
           isFollowing: !wasFollowing,
           publicPlaylistCount: profile.publicPlaylistCount,
+          // Following/unfollowing them changes their follower count.
+          followerCount: (profile.followerCount + (wasFollowing ? -1 : 1)).clamp(0, 1 << 31),
+          followingCount: profile.followingCount,
         );
         _isFollowBusy = false;
       });
@@ -148,85 +152,52 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
               : RefreshIndicator(
                   onRefresh: _load,
                   child: ListView(
-                    padding: const EdgeInsets.all(16),
+                    padding: EdgeInsets.zero,
                     children: [
-                      _buildHeader(context, username),
-                      const SizedBox(height: 24),
-                      Text(
-                        'Public playlists',
-                        style: Theme.of(context).textTheme.titleMedium,
+                      ProfileHeader(
+                        name: _profile?.username ?? username,
+                        tagline: _profile?.tagline ?? '',
+                        followerCount: _profile?.followerCount ?? 0,
+                        followingCount: _profile?.followingCount ?? 0,
+                        publicPlaylistCount: _profile?.publicPlaylistCount ?? 0,
+                        isSelf: false,
+                        isFollowing: _profile?.isFollowing ?? false,
+                        actionBusy: _isFollowBusy,
+                        onToggleFollow: _toggleFollow,
                       ),
-                      const SizedBox(height: 8),
-                      if (_playlists.isEmpty)
-                        Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 24),
-                          child: Center(
-                            child: Text(
-                              'No public playlists yet.',
-                              style: TextStyle(
-                                color: Theme.of(context)
-                                    .colorScheme
-                                    .onSurface
-                                    .withOpacity(0.6),
-                              ),
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Public playlists',
+                              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                                    fontWeight: FontWeight.w700,
+                                    letterSpacing: -0.3,
+                                  ),
                             ),
-                          ),
-                        )
-                      else
-                        ..._playlists.map((p) => _buildPlaylistTile(context, p)),
+                            const SizedBox(height: 8),
+                            if (_playlists.isEmpty)
+                              Padding(
+                                padding: const EdgeInsets.symmetric(vertical: 24),
+                                child: Center(
+                                  child: Text(
+                                    'No public playlists yet.',
+                                    style: TextStyle(
+                                      color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+                                    ),
+                                  ),
+                                ),
+                              )
+                            else
+                              ..._playlists.map((p) => _buildPlaylistTile(context, p)),
+                          ],
+                        ),
+                      ),
                     ],
                   ),
                 ),
-    );
-  }
-
-  Widget _buildHeader(BuildContext context, String username) {
-    final profile = _profile;
-    final letter = username.isNotEmpty ? username[0].toUpperCase() : '?';
-    return Row(
-      children: [
-        CircleAvatar(
-          radius: 36,
-          backgroundColor: Theme.of(context).colorScheme.primaryContainer,
-          child: Text(
-            letter,
-            style: TextStyle(
-              fontSize: 28,
-              fontWeight: FontWeight.bold,
-              color: Theme.of(context).colorScheme.onPrimaryContainer,
-            ),
-          ),
-        ),
-        const SizedBox(width: 16),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(username, style: Theme.of(context).textTheme.titleLarge),
-              if ((profile?.tagline ?? '').isNotEmpty) ...[
-                const SizedBox(height: 4),
-                Text(
-                  profile!.tagline,
-                  style: TextStyle(
-                    color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
-                  ),
-                ),
-              ],
-              const SizedBox(height: 8),
-              FilledButton.tonalIcon(
-                onPressed: _isFollowBusy ? null : _toggleFollow,
-                icon: Icon(
-                  (profile?.isFollowing ?? false)
-                      ? Icons.person_remove
-                      : Icons.person_add,
-                  size: 18,
-                ),
-                label: Text((profile?.isFollowing ?? false) ? 'Following' : 'Follow'),
-              ),
-            ],
-          ),
-        ),
-      ],
     );
   }
 
