@@ -288,6 +288,9 @@ def get_profile(request: Request):
         "username": profile["username"],
         "tagline": profile.get("tagline") or "",
         "created_at": profile.get("created_at"),
+        "follower_count": db.count_followers(profile["id"]),
+        "following_count": db.count_following(profile["id"]),
+        "public_playlist_count": db.count_public_playlists(profile["id"]),
     }
 
 
@@ -1432,6 +1435,8 @@ def get_public_user(user_id: int, request: Request):
         "created_at": profile.get("created_at"),
         "is_following": db.is_following(current_user["id"], user_id),
         "public_playlist_count": db.count_public_playlists(user_id),
+        "follower_count": db.count_followers(user_id),
+        "following_count": db.count_following(user_id),
     }
 
 

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../utils/responsive_utils.dart';
+import 'section_header.dart';
 
 /// A reusable horizontal shelf (section title + optional "Show All" + horizontally
 /// scrolling cards). Parallels HorizontalSongList but renders arbitrary cards
@@ -31,45 +32,7 @@ class HorizontalCardRow extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Padding(
-          padding: EdgeInsets.only(
-            left: ResponsiveUtils.responsiveValue<double>(context, compact: 12, medium: 20, expanded: 24),
-            right: ResponsiveUtils.responsiveValue<double>(context, compact: 12, medium: 20, expanded: 24),
-            top: 8,
-            bottom: 8,
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Expanded(
-                child: Text(
-                  title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600),
-                ),
-              ),
-              if (onShowAll != null)
-                TextButton(
-                  onPressed: onShowAll,
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        'Show All',
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.primary,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                      const SizedBox(width: 4),
-                      Icon(Icons.arrow_forward, size: 16, color: Theme.of(context).colorScheme.primary),
-                    ],
-                  ),
-                ),
-            ],
-          ),
-        ),
+        SectionHeader(title: title, onShowAll: onShowAll),
         SizedBox(
           height: itemWidth + labelHeight,
           child: ListView.separated(

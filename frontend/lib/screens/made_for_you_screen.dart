@@ -178,7 +178,7 @@ class _MadeForYouScreenState extends State<MadeForYouScreen> {
       );
 
       if (mounted) {
-        Navigator.of(context).pop();
+        Navigator.of(context, rootNavigator: true).pop();
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Downloaded: ${result.filename}'),
@@ -191,7 +191,7 @@ class _MadeForYouScreenState extends State<MadeForYouScreen> {
       }
     } catch (e) {
       if (mounted) {
-        Navigator.of(context).pop(); // Close loading dialog
+        Navigator.of(context, rootNavigator: true).pop(); // Close loading dialog
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Download failed: $e'),

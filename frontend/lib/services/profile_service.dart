@@ -8,12 +8,18 @@ class UserProfile {
   final String username;
   final String tagline;
   final DateTime? createdAt;
+  final int followerCount;
+  final int followingCount;
+  final int publicPlaylistCount;
 
   UserProfile({
     required this.id,
     required this.username,
     required this.tagline,
     this.createdAt,
+    this.followerCount = 0,
+    this.followingCount = 0,
+    this.publicPlaylistCount = 0,
   });
 
   factory UserProfile.fromJson(Map<String, dynamic> json) {
@@ -22,6 +28,9 @@ class UserProfile {
       username: json['username'] as String? ?? '',
       tagline: json['tagline'] as String? ?? '',
       createdAt: json['created_at'] != null ? DateTime.tryParse(json['created_at'] as String) : null,
+      followerCount: json['follower_count'] as int? ?? 0,
+      followingCount: json['following_count'] as int? ?? 0,
+      publicPlaylistCount: json['public_playlist_count'] as int? ?? 0,
     );
   }
 }

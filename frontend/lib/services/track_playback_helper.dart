@@ -158,12 +158,12 @@ class TrackPlaybackHelper {
         embedThumbnail: true,
       );
       if (context.mounted) {
-        Navigator.of(context).pop();
+        Navigator.of(context, rootNavigator: true).pop();
         _info(context, 'Downloaded: ${result.filename}');
       }
     } catch (e) {
       if (context.mounted) {
-        Navigator.of(context).pop();
+        Navigator.of(context, rootNavigator: true).pop();
         _error(context, 'Download failed: $e');
       }
     }

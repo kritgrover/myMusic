@@ -94,7 +94,19 @@ class _LyricsScreenState extends State<LyricsScreen> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.trackName != widget.trackName ||
         oldWidget.artistName != widget.artistName) {
+      // Track changed (e.g. Next/Previous) while the lyrics screen is open.
+      // Reset per-track state so the previous track's lyrics/artwork don't
+      // linger while the new track's data loads, then refresh both.
+      setState(() {
+        _syncedLines = [];
+        _plainLines = [];
+        _highlightedLineIndex = -1;
+        _hoveredLineIndex = -1;
+        _currentPosition = Duration.zero;
+        _artworkUrl = null;
+      });
       _loadArtwork();
+      _fetchLyrics();
     }
   }
 

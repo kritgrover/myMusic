@@ -45,6 +45,8 @@ class FriendProfile {
   final DateTime? createdAt;
   final bool isFollowing;
   final int publicPlaylistCount;
+  final int followerCount;
+  final int followingCount;
 
   FriendProfile({
     required this.id,
@@ -53,6 +55,8 @@ class FriendProfile {
     this.createdAt,
     this.isFollowing = false,
     this.publicPlaylistCount = 0,
+    this.followerCount = 0,
+    this.followingCount = 0,
   });
 
   factory FriendProfile.fromJson(Map<String, dynamic> json) {
@@ -65,6 +69,8 @@ class FriendProfile {
           : null,
       isFollowing: json['is_following'] as bool? ?? false,
       publicPlaylistCount: json['public_playlist_count'] as int? ?? 0,
+      followerCount: json['follower_count'] as int? ?? 0,
+      followingCount: json['following_count'] as int? ?? 0,
     );
   }
 }
