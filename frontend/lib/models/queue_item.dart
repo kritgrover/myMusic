@@ -5,6 +5,8 @@ class QueueItem {
   final String? title;
   final String? artist;
   final String? album;
+  final double? duration;
+  final String? spotifyId;
   final String? url; // For streaming URLs
   final String? filename; // For local files
   final String? thumbnail;
@@ -16,6 +18,8 @@ class QueueItem {
     this.title,
     this.artist,
     this.album,
+    this.duration,
+    this.spotifyId,
     this.url,
     this.filename,
     this.thumbnail,
@@ -85,6 +89,8 @@ class QueueItem {
     required String originalUrl,
     String? album,
     String? thumbnail,
+    double? duration,
+    String? spotifyId,
   }) {
     return QueueItem(
       id: 'track_$trackId',
@@ -93,6 +99,9 @@ class QueueItem {
       album: album,
       originalUrl: originalUrl,
       thumbnail: thumbnail,
+      duration: duration,
+      spotifyId:
+          spotifyId ?? ApiService.spotifyTrackId(originalUrl, id: trackId),
     );
   }
 
@@ -108,6 +117,8 @@ class QueueItem {
       filename: clearFilename ? null : filename,
       thumbnail: thumbnail,
       originalUrl: originalUrl,
+      duration: duration,
+      spotifyId: spotifyId,
     );
   }
 
@@ -122,6 +133,8 @@ class QueueItem {
       filename: filename,
       thumbnail: thumbnail,
       originalUrl: originalUrl,
+      duration: duration,
+      spotifyId: spotifyId,
     );
   }
 

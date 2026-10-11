@@ -42,12 +42,14 @@ class AppTopBar extends StatelessWidget {
               onTap: onSearchTap,
               onSubmitted: onSearchSubmitted,
               onChanged: onSearchChanged,
+              maxLength: 300,
               textInputAction: TextInputAction.search,
               decoration: InputDecoration(
+                counterText: '',
                 isDense: true,
                 hintText: MediaQuery.sizeOf(context).width < 600
                     ? 'What do you want to play?'
-                    : 'Search for a song, artist or album',
+                    : 'Search songs, artists, albums, playlists…',
                 prefixIcon: const Icon(Icons.search, size: 20),
                 suffixIcon: searchController.text.isNotEmpty
                     ? IconButton(

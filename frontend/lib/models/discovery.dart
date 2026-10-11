@@ -51,7 +51,10 @@ class ArtistInfo {
       id: json['id'] ?? '',
       name: json['name'] ?? '',
       thumbnail: json['thumbnail'],
-      genres: (json['genres'] as List<dynamic>?)?.map((e) => e.toString()).toList() ?? const [],
+      genres: (json['genres'] as List<dynamic>?)
+              ?.map((e) => e.toString())
+              .toList() ??
+          const [],
       followers: (json['followers'] as num?)?.toInt(),
     );
   }
@@ -66,6 +69,7 @@ class AlbumInfo {
   final String? thumbnail;
   final String? releaseDate;
   final String? type;
+  final String? group;
   final int? totalTracks;
 
   AlbumInfo({
@@ -76,8 +80,26 @@ class AlbumInfo {
     this.thumbnail,
     this.releaseDate,
     this.type,
+    this.group,
     this.totalTracks,
   });
+
+  String get releaseGroup => group ?? type ?? 'album';
+
+  String get releaseYear => (releaseDate ?? '').split('-').first;
+
+  String get releaseTypeLabel {
+    switch (releaseGroup) {
+      case 'single':
+        return 'Single / EP';
+      case 'compilation':
+        return 'Compilation';
+      case 'appears_on':
+        return 'Appears on';
+      default:
+        return 'Album';
+    }
+  }
 
   factory AlbumInfo.fromJson(Map<String, dynamic> json) {
     return AlbumInfo(
@@ -88,6 +110,7 @@ class AlbumInfo {
       thumbnail: json['thumbnail'],
       releaseDate: json['release_date'],
       type: json['type'],
+      group: json['group'],
       totalTracks: (json['total_tracks'] as num?)?.toInt(),
     );
   }
@@ -100,7 +123,11 @@ class HomeMix {
   final String genre;
   final List<PlaylistTrack> tracks;
 
-  HomeMix({required this.id, required this.title, required this.genre, required this.tracks});
+  HomeMix(
+      {required this.id,
+      required this.title,
+      required this.genre,
+      required this.tracks});
 
   factory HomeMix.fromJson(Map<String, dynamic> json) {
     return HomeMix(

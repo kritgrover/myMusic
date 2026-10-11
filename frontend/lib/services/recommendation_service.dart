@@ -196,8 +196,25 @@ class RecommendationService {
   }
 
   Future<List<PlaylistTrack>> getAlbumTracks(String albumId) async {
-    return _getTracks(
-        '/recommendations/album/${Uri.encodeComponent(albumId)}/tracks');
+    final scope = sessionScope;
+    final response = await _client
+        .get(Uri.parse(
+            '$baseUrl/recommendations/album/${Uri.encodeComponent(albumId)}/tracks'))
+        .timeout(const Duration(seconds: 55));
+    if (scope != sessionScope) {
+      throw StateError('The listening session changed.');
+    }
+    if (response.statusCode != 200) {
+      throw StateError('Could not load the album tracks. Please retry.');
+    }
+    final data = jsonDecode(response.body);
+    if (data is! List || data.any((j) => j is! Map<String, dynamic>)) {
+      throw const FormatException('The album track response was invalid.');
+    }
+    return data
+        .map((j) =>
+            PlaylistTrack.fromJson(_trackJson(j as Map<String, dynamic>)))
+        .toList();
   }
 
   // ---------------------------------------------------------------------------
@@ -318,11 +335,14 @@ class RecommendationService {
   // ---------------------------------------------------------------------------
 
   Future<AlbumInfo?> getAlbum(String albumId) async {
+    final scope = sessionScope;
     try {
-      final response = await _client.get(Uri.parse('$baseUrl/album/$albumId'));
-      if (response.statusCode == 200) {
+      final response = await _client
+          .get(Uri.parse('$baseUrl/album/${Uri.encodeComponent(albumId)}'))
+          .timeout(const Duration(seconds: 12));
+      if (scope == sessionScope && response.statusCode == 200) {
         return AlbumInfo.fromJson(
-            jsonDecode(response.body) as Map<String, dynamic>);
+            _artworkJson(jsonDecode(response.body) as Map<String, dynamic>));
       }
       return null;
     } catch (e) {
@@ -332,12 +352,14 @@ class RecommendationService {
   }
 
   Future<ArtistInfo?> getArtist(String artistId) async {
+    final scope = sessionScope;
     try {
-      final response =
-          await _client.get(Uri.parse('$baseUrl/artist/$artistId'));
-      if (response.statusCode == 200) {
+      final response = await _client
+          .get(Uri.parse('$baseUrl/artist/${Uri.encodeComponent(artistId)}'))
+          .timeout(const Duration(seconds: 12));
+      if (scope == sessionScope && response.statusCode == 200) {
         return ArtistInfo.fromJson(
-            jsonDecode(response.body) as Map<String, dynamic>);
+            _artworkJson(jsonDecode(response.body) as Map<String, dynamic>));
       }
       return null;
     } catch (e) {
@@ -351,27 +373,34 @@ class RecommendationService {
   }
 
   Future<List<AlbumInfo>> getArtistAlbums(String artistId) async {
-    try {
-      final response =
-          await _client.get(Uri.parse('$baseUrl/artist/$artistId/albums'));
-      if (response.statusCode == 200) {
-        final List<dynamic> data = jsonDecode(response.body);
-        return data
-            .map((j) => AlbumInfo.fromJson(j as Map<String, dynamic>))
-            .toList();
-      }
-      return [];
-    } catch (e) {
-      print('Error getting artist albums: $e');
-      return [];
+    final scope = sessionScope;
+    final response = await _client
+        .get(Uri.parse(
+            '$baseUrl/artist/${Uri.encodeComponent(artistId)}/albums'))
+        .timeout(const Duration(seconds: 55));
+    if (scope != sessionScope) {
+      throw StateError('The listening session changed.');
     }
+    if (response.statusCode != 200) {
+      throw StateError('Could not load the discography. Please retry.');
+    }
+    final data = jsonDecode(response.body);
+    if (data is! List || data.any((j) => j is! Map<String, dynamic>)) {
+      throw const FormatException('The discography response was invalid.');
+    }
+    return data
+        .map((j) => AlbumInfo.fromJson(_artworkJson(j as Map<String, dynamic>)))
+        .toList();
   }
 
   Future<List<ArtistInfo>> getRelatedArtists(String artistId) async {
+    final scope = sessionScope;
     try {
-      final response =
-          await _client.get(Uri.parse('$baseUrl/artist/$artistId/related'));
-      if (response.statusCode == 200) {
+      final response = await _client
+          .get(Uri.parse(
+              '$baseUrl/artist/${Uri.encodeComponent(artistId)}/related'))
+          .timeout(const Duration(seconds: 12));
+      if (scope == sessionScope && response.statusCode == 200) {
         final List<dynamic> data = jsonDecode(response.body);
         return data
             .map((j) => ArtistInfo.fromJson(j as Map<String, dynamic>))
@@ -386,7 +415,24 @@ class RecommendationService {
 
   Future<List<PlaylistTrack>> getSpotifyPlaylistTracks(
       String playlistId) async {
-    return _getTracks(
-        '/recommendations/playlist/${Uri.encodeComponent(playlistId)}');
+    final scope = sessionScope;
+    final response = await _client
+        .get(Uri.parse(
+            '$baseUrl/recommendations/playlist/${Uri.encodeComponent(playlistId)}'))
+        .timeout(const Duration(seconds: 12));
+    if (scope != sessionScope) {
+      throw StateError('The listening session changed.');
+    }
+    if (response.statusCode != 200) {
+      throw StateError('Could not load the playlist tracks. Please retry.');
+    }
+    final data = jsonDecode(response.body);
+    if (data is! List || data.any((j) => j is! Map<String, dynamic>)) {
+      throw const FormatException('The playlist track response was invalid.');
+    }
+    return data
+        .map((j) =>
+            PlaylistTrack.fromJson(_trackJson(j as Map<String, dynamic>)))
+        .toList();
   }
 }

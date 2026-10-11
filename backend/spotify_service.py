@@ -4,6 +4,11 @@ from config import settings
 from database import db
 import time
 
+
+class SpotifyCatalogError(RuntimeError):
+    """The catalog could not be loaded completely; callers should offer retry."""
+
+
 class SpotifyService:
     def __init__(self):
         self.client_id = settings.SPOTIFY_CLIENT_ID
@@ -24,13 +29,51 @@ class SpotifyService:
                 client_id=self.client_id,
                 client_secret=self.client_secret
             )
-            self.sp = spotipy.Spotify(client_credentials_manager=client_credentials_manager)
+            self.sp = spotipy.Spotify(
+                client_credentials_manager=client_credentials_manager,
+                requests_timeout=6, retries=0, status_retries=0,
+            )
         except Exception as e:
             print(f"Failed to authenticate with Spotify: {e}")
             self.sp = None
 
     def _get_cache_key(self, prefix, *args):
         return f"{prefix}:{':'.join(str(arg) for arg in args)}"
+
+    def _catalog_pages(self, fetch_page, page_size, *, max_pages=500, deadline=None):
+        """Read every provider page or fail explicitly, never return a partial list.
+
+        Request offsets ourselves instead of following arbitrary next URLs. The
+        page and time guards protect against broken pagination and rate limits;
+        a guarded response must not be cached as a complete discography.
+        """
+        offset = 0
+        deadline = deadline if deadline is not None else time.monotonic() + 45
+        page_signatures = set()
+        items = []
+        for _ in range(max_pages):
+            if time.monotonic() > deadline:
+                raise SpotifyCatalogError('The catalog is taking too long. Please retry.')
+            page = fetch_page(offset, page_size)
+            if not isinstance(page, dict) or not isinstance(page.get('items'), list):
+                raise SpotifyCatalogError('The catalog returned an invalid page. Please retry.')
+            if page.get('offset', offset) != offset:
+                raise SpotifyCatalogError('The catalog returned an unexpected page. Please retry.')
+            batch = page['items']
+            signature = tuple(item.get('id') if isinstance(item, dict) else None for item in batch)
+            if batch and signature in page_signatures:
+                raise SpotifyCatalogError('The catalog repeated a page. Please retry.')
+            page_signatures.add(signature)
+            items.extend(item for item in batch if isinstance(item, dict))
+            offset += len(batch)
+            if not page.get('next'):
+                total = page.get('total')
+                if isinstance(total, int) and offset < total:
+                    raise SpotifyCatalogError('The catalog response was incomplete. Please retry.')
+                return items
+            if not batch:
+                raise SpotifyCatalogError('The catalog response was incomplete. Please retry.')
+        raise SpotifyCatalogError('The catalog has too many pages to load. Please retry.')
 
     def search_track(self, title, artist):
         if not self.sp: return None
@@ -220,7 +263,9 @@ class SpotifyService:
             'id': track['id'],
             'title': track['name'],
             'artist': track['artists'][0]['name'] if track.get('artists') else 'Unknown',
+            'artist_id': track['artists'][0].get('id') if track.get('artists') else None,
             'album': track['album']['name'] if track.get('album') else '',
+            'album_id': track.get('album', {}).get('id'),
             'thumbnail': track['album']['images'][0]['url'] if track.get('album', {}).get('images') else None,
             'url': track['external_urls']['spotify'] if track.get('external_urls') else '',
             'duration': track.get('duration_ms', 0) / 1000 if track.get('duration_ms') else 0
@@ -388,25 +433,39 @@ class SpotifyService:
             "techno", "trance", "trip-hop", "turkish", "work-out", "world-music"
         ]
 
-    def get_album_tracks(self, album_id, limit=50):
-        """Get tracks from an album for playback."""
+    def get_album_tracks(self, album_id, limit=50, market='US'):
+        """Get every available track, in disc/track order, including box sets."""
         if not self.sp:
-            return []
-        cache_key = self._get_cache_key("album_tracks", album_id, limit)
+            raise SpotifyCatalogError('The music catalog is unavailable. Please retry.')
+        cache_key = self._get_cache_key("album_tracks_complete_v1", album_id, market)
         cached = db.get_cache(cache_key)
-        if cached:
+        if cached is not None:
             return cached
         try:
-            results = self.sp.album_tracks(album_id, limit=limit)
+            items = self._catalog_pages(
+                lambda offset, size: self.sp.album_tracks(
+                    album_id, limit=size, offset=offset, market=market),
+                min(50, max(1, int(limit))),
+            )
             tracks = []
-            for item in results.get("items", []):
-                tracks.append(self._format_track(item))
-            if tracks:
-                db.set_cache(cache_key, tracks, ttl_seconds=3600)
+            seen = set()
+            for item in items:
+                if not item.get('id') or item['id'] in seen:
+                    continue
+                seen.add(item['id'])
+                track = self._format_track(item)
+                track.update(album_id=album_id,
+                             disc_number=item.get('disc_number', 1),
+                             track_number=item.get('track_number', 0))
+                tracks.append(track)
+            tracks.sort(key=lambda track: (track['disc_number'], track['track_number']))
+            db.set_cache(cache_key, tracks, ttl_seconds=3600)
             return tracks
+        except SpotifyCatalogError:
+            raise
         except Exception as e:
             print(f"Error getting album tracks: {e}")
-            return []
+            raise SpotifyCatalogError('Could not load the album tracks. Please retry.') from e
 
     def get_new_releases(self, country='US', limit=20):
         """Get new album releases from Spotify"""
@@ -466,14 +525,18 @@ class SpotifyService:
             return []
 
     def get_playlist_tracks(self, playlist_id, limit=50):
-        if not self.sp: return []
+        if not self.sp:
+            raise SpotifyCatalogError('Playlist tracks are unavailable with this catalog connection. Please retry.')
 
-        cache_key = self._get_cache_key("playlist_tracks", playlist_id, limit)
+        cache_key = self._get_cache_key("playlist_tracks_v2", playlist_id, limit)
         cached = db.get_cache(cache_key)
-        if cached: return cached
+        if cached is not None:
+            return cached
 
         try:
             results = self.sp.playlist_tracks(playlist_id, limit=limit)
+            if not isinstance(results, dict) or not isinstance(results.get('items'), list):
+                raise SpotifyCatalogError('The playlist response was unavailable. Please retry.')
             
             tracks = []
             for item in results.get('items', []):
@@ -491,9 +554,14 @@ class SpotifyService:
             
             db.set_cache(cache_key, tracks, ttl_seconds=3600) # Cache for 1 hour
             return tracks
+        except SpotifyCatalogError:
+            raise
         except Exception as e:
             print(f"Spotify playlist tracks error: {e}")
-            return []
+            # Development-mode apps may receive playlist metadata but not its
+            # contents. Do not turn access restrictions or outages into a false
+            # empty-playlist response, or cache that failure.
+            raise SpotifyCatalogError('Playlist tracks are unavailable with this catalog connection. Please retry.') from e
 
     # ------------------------------------------------------------------
     # Discovery helpers (curated playlists, moods, artists, albums)
@@ -632,20 +700,43 @@ class SpotifyService:
             print(f"Error getting artist top tracks for {artist_id}: {e}")
             return []
 
-    def get_artist_albums(self, artist_id, limit=20):
-        """Fetch an artist's albums and singles (newest first)."""
+    def get_artist_albums(self, artist_id, limit=10, market='US'):
+        """Fetch all available releases (newest first); limit is the page size.
+
+        Availability is limited to the configured provider's catalog and market,
+        not every recording ever released by an artist. Keep distinct release
+        IDs so deluxe, remastered, live, and regional editions are not conflated.
+        """
         if not self.sp:
-            return []
-        cache_key = self._get_cache_key("artist_albums", artist_id, limit)
+            raise SpotifyCatalogError('The music catalog is unavailable. Please retry.')
+        cache_key = self._get_cache_key("artist_discography_complete_v1", artist_id, market)
         cached = db.get_cache(cache_key)
-        if cached:
+        if cached is not None:
             return cached
         try:
-            results = self.sp.artist_albums(artist_id, album_type='album,single', limit=limit)
+            deadline = time.monotonic() + 45
+            # The album_group field was removed from development-mode responses
+            # in 2026. Query appearances separately so a guest release is never
+            # mislabeled as one of the artist's own albums.
+            items = self._catalog_pages(
+                lambda offset, size: self.sp.artist_albums(
+                    artist_id, album_type='album,single,compilation',
+                    limit=size, offset=offset, country=market),
+                min(10, max(1, int(limit))),
+                deadline=deadline,
+            )
+            appearances = self._catalog_pages(
+                lambda offset, size: self.sp.artist_albums(
+                    artist_id, album_type='appears_on',
+                    limit=size, offset=offset, country=market),
+                min(10, max(1, int(limit))),
+                deadline=deadline,
+            )
+            items.extend({**album, 'album_group': 'appears_on'} for album in appearances)
             albums = []
             seen = set()
-            for album in results.get('items', []):
-                if not album or album.get('id') in seen:
+            for album in items:
+                if not album.get('id') or album['id'] in seen:
                     continue
                 seen.add(album['id'])
                 images = album.get('images') or []
@@ -653,18 +744,22 @@ class SpotifyService:
                     'id': album['id'],
                     'name': album['name'],
                     'artist': album['artists'][0]['name'] if album.get('artists') else '',
+                    'artist_id': album['artists'][0].get('id') if album.get('artists') else None,
                     'type': album.get('album_type', 'album'),
+                    'group': album.get('album_group', album.get('album_type', 'album')),
+                    'total_tracks': album.get('total_tracks'),
                     'release_date': album.get('release_date', ''),
                     'thumbnail': images[0]['url'] if images else None,
                     'url': album.get('external_urls', {}).get('spotify', ''),
                 })
             albums.sort(key=lambda x: x['release_date'], reverse=True)
-            if albums:
-                db.set_cache(cache_key, albums, ttl_seconds=86400)  # Cache for 1 day
+            db.set_cache(cache_key, albums, ttl_seconds=3600)
             return albums
+        except SpotifyCatalogError:
+            raise
         except Exception as e:
             print(f"Error getting artist albums for {artist_id}: {e}")
-            return []
+            raise SpotifyCatalogError('Could not load the discography. Please retry.') from e
 
     def get_related_artists(self, artist_id, limit=12):
         """Fetch artists related to a given artist (formatted)."""

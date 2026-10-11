@@ -196,6 +196,14 @@ class Database:
             FOREIGN KEY(user_id) REFERENCES users(id))''')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_saved_library_user_kind_time ON saved_library(user_id, kind, saved_at DESC)')
 
+        # Explicit recording choices belong to an account, never the shared catalog cache.
+        cursor.execute('''CREATE TABLE IF NOT EXISTS source_preferences (
+            user_id INTEGER NOT NULL, recording_key TEXT NOT NULL,
+            source_url TEXT NOT NULL, updated_at INTEGER NOT NULL, canonical_key TEXT,
+            PRIMARY KEY(user_id, recording_key),
+            FOREIGN KEY(user_id) REFERENCES users(id))''')
+        self._ensure_column(cursor, 'source_preferences', 'canonical_key', 'TEXT')
+
         conn.commit()
         conn.close()
 
@@ -212,6 +220,48 @@ class Database:
             for row in rows:
                 library[row['kind']].append(json.loads(row['metadata']))
         return library
+
+    def get_source_preference(self, user_id, recording_key):
+        with closing(self.get_connection()) as conn:
+            row = conn.execute('SELECT source_url FROM source_preferences WHERE user_id = ? AND recording_key = ?',
+                               (user_id, recording_key)).fetchone()
+        return row['source_url'] if row else None
+
+    def set_search_cache(self, key, data, ttl_seconds, max_entries=512):
+        """Autocomplete must not grow the shared provider cache on every keystroke."""
+        if not key.startswith(('unified-search:v1:', 'source-search:v1:')):
+            raise ValueError('Invalid search cache key')
+        now = time.time()
+        with closing(self.get_connection()) as conn, conn:
+            conn.execute('INSERT OR REPLACE INTO spotify_cache(key, data, expiry) VALUES (?, ?, ?)',
+                         (key, json.dumps(data, ensure_ascii=False, allow_nan=False), now + ttl_seconds))
+            conn.execute('''DELETE FROM spotify_cache WHERE
+                (key LIKE 'unified-search:v1:%' OR key LIKE 'source-search:v1:%') AND expiry < ?''', (now,))
+            conn.execute('''DELETE FROM spotify_cache WHERE key IN (
+                SELECT key FROM spotify_cache WHERE key LIKE 'unified-search:v1:%' OR key LIKE 'source-search:v1:%'
+                ORDER BY expiry DESC LIMIT -1 OFFSET ?)''', (max_entries,))
+
+    def save_source_preference(self, user_id, recording_key, source_url, aliases=()):
+        with closing(self.get_connection()) as conn, conn:
+            existing = conn.execute('SELECT canonical_key FROM source_preferences WHERE user_id = ? AND recording_key = ?',
+                                    (user_id, recording_key)).fetchone()
+            canonical = (existing['canonical_key'] if existing else None) or recording_key
+            # Editing through a metadata alias updates the same catalog choice too.
+            conn.execute('UPDATE source_preferences SET source_url = ?, updated_at = ? WHERE user_id = ? AND canonical_key = ?',
+                         (source_url, time.time_ns(), user_id, canonical))
+            for key in set((canonical, recording_key, *aliases)):
+                conn.execute('''INSERT INTO source_preferences(user_id, recording_key, source_url, updated_at, canonical_key)
+                    VALUES (?, ?, ?, ?, ?) ON CONFLICT(user_id, recording_key) DO UPDATE SET
+                    source_url = excluded.source_url, updated_at = excluded.updated_at, canonical_key = excluded.canonical_key''',
+                             (user_id, key, source_url, time.time_ns(), canonical))
+
+    def remove_source_preference(self, user_id, recording_key):
+        with closing(self.get_connection()) as conn, conn:
+            row = conn.execute('SELECT canonical_key FROM source_preferences WHERE user_id = ? AND recording_key = ?',
+                               (user_id, recording_key)).fetchone()
+            canonical = (row['canonical_key'] if row else None) or recording_key
+            conn.execute('DELETE FROM source_preferences WHERE user_id = ? AND (recording_key = ? OR canonical_key = ?)',
+                         (user_id, canonical, canonical))
 
     def save_library_item(self, user_id, kind, item_id, metadata):
         with closing(self.get_connection()) as conn, conn:

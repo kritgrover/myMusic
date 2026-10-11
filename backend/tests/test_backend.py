@@ -172,6 +172,42 @@ class BackendRegressionTests(unittest.TestCase):
         self.assertEqual(response.content, b"cached")
         upstream_client.aclose.assert_awaited_once()
 
+    def test_upstream_non_audio_success_falls_back_to_cached_audio(self):
+        import httpx
+
+        source = "https://www.youtube.com/watch?v=contentType"
+        cache = self.root / "downloads" / "_stream_cache"
+        cache.mkdir(exist_ok=True)
+        (cache / (hashlib.sha256(source.encode()).hexdigest() + ".m4a")).write_bytes(b"cached-audio")
+        for content_type in ("text/html; charset=utf-8", "application/json",
+                             "application/vnd.apple.mpegurl", "audio/x-mpegurl",
+                             "application/dash+xml"):
+            with self.subTest(content_type=content_type):
+                upstream = httpx.Response(200, headers={"Content-Type": content_type}, content=b"not audio")
+                upstream_client = Mock()
+                upstream_client.send = AsyncMock(return_value=upstream)
+                upstream_client.aclose = AsyncMock()
+                with patch.object(self.api.download_service, "get_streaming_url", return_value="https://test.googlevideo.com/audio"), \
+                        patch.object(self.api.httpx, "AsyncClient", return_value=upstream_client):
+                    response = self.client.get("/stream/" + quote(source, safe=""),
+                                               headers={"User-Agent": "libmpv"})
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.content, b"cached-audio")
+                self.assertEqual(response.headers["content-type"], "audio/mp4")
+                headers = upstream_client.build_request.call_args.kwargs["headers"]
+                self.assertIn("Mozilla/5.0", headers["User-Agent"])
+                self.assertNotIn("libmpv", headers["User-Agent"])
+                upstream_client.aclose.assert_awaited_once()
+                self.assertTrue(upstream.is_closed)
+
+    def test_stream_provider_failure_reports_safe_gateway_error(self):
+        with patch.object(self.api.download_service, "get_streaming_url", side_effect=RuntimeError("private extractor detail")), \
+                patch.object(self.api.stream_cache, "acquire", side_effect=RuntimeError("private cookie path")):
+            response = self.client.get("/stream/" + quote("https://www.youtube.com/watch?v=failedAudio", safe=""))
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json()["detail"], "YouTube audio is unavailable. Please try again later.")
+        self.assertNotIn("private", response.text)
+
     def test_cover_requires_auth_and_accepts_owner(self):
         playlist = self.api.db.create_playlist(self.user["id"], "Cover fixture")
         covers = self.root / "covers"

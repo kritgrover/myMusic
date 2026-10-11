@@ -16,7 +16,9 @@ from config import settings
 import httpx
 from download_service import DownloadService
 from database import db
-from spotify_service import spotify_service
+from spotify_service import spotify_service, SpotifyCatalogError
+from search_routes import build_search_router
+from unified_search import recording_key
 from lyrics_service import lyrics_service
 from metadata_service import MetadataService, _regex_parse as _enhanced_regex_parse
 from auth_utils import create_access_token, decode_access_token, create_media_token, decode_media_token
@@ -118,6 +120,8 @@ class DownloadRequest(BaseModel):
     album: str = ""
     output_format: str = "m4a"  # "m4a" or "mp3"
     embed_thumbnail: bool = False
+    spotify_id: str = ""
+    recording_type: str = ""
 
 
 class VideoInfo(BaseModel):
@@ -491,11 +495,10 @@ async def stream_audio(encoded_url: str, request: Request):
             "Accept-Language": "en-US,en;q=0.9",
             "Referer": "https://www.youtube.com/",
             "Origin": "https://www.youtube.com",
-            "User-Agent": request.headers.get(
-                "user-agent",
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            ),
+            # Native players send libmpv/Lavf identifiers, which are not the
+            # browser identity used to resolve the YouTube media URL.
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                          "(KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
         }
         if range_header:
             upstream_headers["Range"] = range_header
@@ -517,8 +520,20 @@ async def stream_audio(encoded_url: str, request: Request):
             "Access-Control-Expose-Headers": "Content-Length, Content-Range, Accept-Ranges",
         }
 
-        # If upstream denies/blocks, fall back to cached local stream file.
-        if response.status_code >= 300 and response.status_code != 416:
+        # HTML errors and manifests can arrive with HTTP 200. Passing those
+        # bytes to a decoder produces a misleading "wrong format" failure.
+        mime_type = content_type.split(";", 1)[0].strip().lower()
+        is_audio_payload = mime_type.startswith("audio/") or mime_type in {
+            "video/mp4", "video/webm", "application/octet-stream",
+        }
+        is_manifest = mime_type in {
+            "audio/mpegurl", "audio/x-mpegurl", "application/vnd.apple.mpegurl",
+            "application/x-mpegurl", "application/dash+xml",
+        }
+        # Preserve range errors so the client can correct its byte request.
+        if response.status_code != 416 and (
+            response.status_code >= 300 or not is_audio_payload or is_manifest
+        ):
             await close_resources()
             loop = asyncio.get_event_loop()
             return await loop.run_in_executor(None, stream_from_cached_download, youtube_url)
@@ -550,7 +565,7 @@ async def stream_audio(encoded_url: str, request: Request):
         except Exception:
             import traceback
             print(f"Stream error: {traceback.format_exc()}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=502, detail="YouTube audio is unavailable. Please try again later.")
 
 
 @app.post("/download")
@@ -558,6 +573,12 @@ def download_audio(request: DownloadRequest, http_request: Request):
     """Download audio from YouTube URL"""
     user = _require_current_user(http_request)
     source = _source_url(request.url)
+    chosen = db.get_source_preference(user['id'], recording_key({
+        'title': request.title, 'artist': request.artist, 'album': request.album,
+        'spotify_id': request.spotify_id, 'recording_type': request.recording_type,
+    }))
+    if chosen:
+        source = _source_url(chosen)
     if request.output_format not in ("m4a", "mp3"):
         raise HTTPException(status_code=400, detail="Unsupported audio format")
     try:
@@ -595,6 +616,12 @@ def start_batch_download(request: BatchDownloadRequest, http_request: Request):
     user = _require_current_user(http_request)
     for entry in request.downloads:
         entry.url = _source_url(entry.url)
+        chosen = db.get_source_preference(user['id'], recording_key({
+            'title': entry.title, 'artist': entry.artist, 'album': entry.album,
+            'spotify_id': entry.spotify_id, 'recording_type': entry.recording_type,
+        }))
+        if chosen:
+            entry.url = _source_url(chosen)
         if entry.output_format not in ("m4a", "mp3"):
             raise HTTPException(status_code=400, detail="Unsupported audio format")
     download_id = str(uuid.uuid4())
@@ -1884,6 +1911,8 @@ def get_spotify_playlist_tracks(playlist_id: str):
     try:
         tracks = spotify_service.get_playlist_tracks(playlist_id)
         return tracks
+    except SpotifyCatalogError:
+        raise HTTPException(status_code=503, detail='Playlist tracks are temporarily unavailable. Please try again.') from None
     except Exception as e:
         print(f"Error getting playlist tracks: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -1895,6 +1924,8 @@ def get_album_tracks(album_id: str):
     try:
         tracks = spotify_service.get_album_tracks(album_id)
         return tracks
+    except SpotifyCatalogError:
+        raise HTTPException(status_code=503, detail='Album tracks are temporarily unavailable. Please try again.') from None
     except Exception as e:
         print(f"Error getting album tracks: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -2045,6 +2076,8 @@ def get_artist_albums_endpoint(artist_id: str):
     """Get an artist's albums and singles."""
     try:
         return spotify_service.get_artist_albums(artist_id, limit=20)
+    except SpotifyCatalogError:
+        raise HTTPException(status_code=503, detail='Artist releases are temporarily unavailable. Please try again.') from None
     except Exception as e:
         print(f"Error getting artist albums: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -2086,6 +2119,12 @@ def get_lyrics(track_name: str, artist_name: str = "",
     except Exception as e:
         print(f"Error getting lyrics: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+app.include_router(build_search_router(
+    database=lambda: db, spotify=lambda: spotify_service, downloads=lambda: download_service,
+    current_user=_require_current_user, saved_library=get_saved_library, list_downloads=list_downloads,
+))
 
 
 if __name__ == "__main__":

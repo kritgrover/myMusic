@@ -128,7 +128,10 @@ class _Recent extends Fake implements RecentlyPlayedService {
       String? artist,
       String? thumbnail,
       String? filename,
-      String? url}) async {
+      String? url,
+      String? album,
+      double? duration,
+      String? spotifyId}) async {
     titles.add(title);
   }
 }

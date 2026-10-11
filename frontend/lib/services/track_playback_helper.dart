@@ -6,6 +6,7 @@ import 'playlist_service.dart';
 import '../models/playlist.dart';
 import '../models/queue_item.dart';
 import '../widgets/playlist_selection_dialog.dart';
+import '../widgets/source_selection_dialog.dart';
 
 /// Centralizes the resolve -> clean -> stream/queue/download/add-to-playlist flow
 /// for Spotify-sourced [PlaylistTrack]s so every discovery shelf and detail screen
@@ -30,19 +31,16 @@ class TrackPlaybackHelper {
   /// Lazy loader used by queued items: resolves originalUrl (Spotify/empty -> YouTube)
   /// then returns the backend streaming URL. Mirrors home_screen._loadStreamingUrlForAlbumItem.
   Future<String?> loadStreamingUrl(QueueItem item) async {
-    final originalUrl = item.originalUrl;
-    if (originalUrl == null) return null;
     try {
-      String youtubeUrl = originalUrl;
-      if (!youtubeUrl.contains('youtube.com') &&
-          !youtubeUrl.contains('youtu.be')) {
-        final results = await apiService
-            .searchYoutube('${item.title} ${item.artist ?? ''}');
-        if (results.isEmpty) return null;
-        final found = results.first.url;
-        if (found.isEmpty) return null;
-        youtubeUrl = found;
-      }
+      final youtubeUrl = await apiService.resolveToYouTubeUrl(
+        item.originalUrl,
+        item.title ?? '',
+        item.artist,
+        album: item.album,
+        duration: item.duration,
+        spotifyId: item.spotifyId,
+      );
+      if (youtubeUrl == null) return null;
       final result = await apiService.getStreamingUrl(
         url: youtubeUrl,
         title: item.title ?? '',
@@ -53,6 +51,16 @@ class TrackPlaybackHelper {
       return null;
     }
   }
+
+  Future<String?> _resolve(PlaylistTrack track) =>
+      apiService.resolveToYouTubeUrl(
+        track.url,
+        track.title,
+        track.artist,
+        album: track.album,
+        duration: track.duration,
+        spotifyId: ApiService.spotifyTrackId(track.url, id: track.id),
+      );
 
   /// Play a single track immediately (replaces the queue with just this track).
   Future<void> playTrack(BuildContext context, PlaylistTrack track) async {
@@ -69,10 +77,9 @@ class TrackPlaybackHelper {
             playerStateService);
         return;
       }
-      final yt = await apiService.resolveToYouTubeUrl(
-          track.url, track.title, track.artist);
+      final yt = await _resolve(track);
       if (yt == null || yt.isEmpty) {
-        _notFound(context, track.title);
+        _notFound(context, track);
         return;
       }
       final result = await apiService.getStreamingUrl(
@@ -85,6 +92,8 @@ class TrackPlaybackHelper {
         title: track.title,
         artist: track.artist ?? result.artist,
         album: track.album,
+        duration: track.duration,
+        spotifyId: ApiService.spotifyTrackId(track.url, id: track.id),
         url: result.streamingUrl,
         originalUrl: yt,
         thumbnail: track.thumbnail,
@@ -115,6 +124,7 @@ class TrackPlaybackHelper {
                   originalUrl: t.url ?? '',
                   album: t.album,
                   thumbnail: t.thumbnail,
+                  duration: t.duration,
                 ))
           .toList();
       queueService.clearQueue();
@@ -140,10 +150,9 @@ class TrackPlaybackHelper {
         if (showSnackbar) _info(context, 'Added "${track.title}" to queue');
         return;
       }
-      final yt = await apiService.resolveToYouTubeUrl(
-          track.url, track.title, track.artist);
+      final yt = await _resolve(track);
       if (yt == null || yt.isEmpty) {
-        if (showSnackbar) _notFound(context, track.title);
+        if (showSnackbar) _notFound(context, track);
         return;
       }
       final result = await apiService.getStreamingUrl(
@@ -156,6 +165,8 @@ class TrackPlaybackHelper {
         title: track.title,
         artist: track.artist ?? result.artist,
         album: track.album,
+        duration: track.duration,
+        spotifyId: ApiService.spotifyTrackId(track.url, id: track.id),
         url: result.streamingUrl,
         originalUrl: yt,
         thumbnail: track.thumbnail,
@@ -170,11 +181,10 @@ class TrackPlaybackHelper {
   Future<void> download(BuildContext context, PlaylistTrack track) async {
     String? yt;
     try {
-      yt = await apiService.resolveToYouTubeUrl(
-          track.url, track.title, track.artist);
+      yt = await _resolve(track);
     } catch (_) {}
     if (yt == null || yt.isEmpty) {
-      _notFound(context, track.title);
+      _notFound(context, track);
       return;
     }
 
@@ -193,6 +203,7 @@ class TrackPlaybackHelper {
         album: track.album ?? '',
         outputFormat: 'm4a',
         embedThumbnail: true,
+        spotifyId: ApiService.spotifyTrackId(track.url, id: track.id),
       );
       if (context.mounted) {
         Navigator.of(context, rootNavigator: true).pop();
@@ -208,12 +219,9 @@ class TrackPlaybackHelper {
 
   Future<void> addToPlaylist(BuildContext context, PlaylistTrack track) async {
     try {
-      final yt = track.filename.isNotEmpty
-          ? track.url
-          : await apiService.resolveToYouTubeUrl(
-              track.url, track.title, track.artist);
+      final yt = track.filename.isNotEmpty ? track.url : await _resolve(track);
       if (track.filename.isEmpty && (yt == null || yt.isEmpty)) {
-        _notFound(context, track.title);
+        _notFound(context, track);
         return;
       }
       final playlistTrack = PlaylistTrack(
@@ -256,7 +264,24 @@ class TrackPlaybackHelper {
     );
   }
 
-  void _notFound(BuildContext context, String title) {
-    _error(context, 'Could not find "$title" on YouTube');
+  void _notFound(BuildContext context, PlaylistTrack track) {
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text('Could not confirm a recording for "${track.title}".'),
+      behavior: SnackBarBehavior.floating,
+      action: SnackBarAction(
+        label: 'Change recording',
+        onPressed: () {
+          if (!context.mounted) return;
+          showDialog<bool>(
+            context: context,
+            builder: (_) => SourceSelectionDialog(
+              track: track,
+              apiService: apiService,
+            ),
+          );
+        },
+      ),
+    ));
   }
 }

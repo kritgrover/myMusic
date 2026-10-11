@@ -20,8 +20,8 @@ class _Api extends Fake implements ApiService {
   }
 
   @override
-  Future<String?> resolveToYouTubeUrl(
-      String? url, String title, String? artist) async {
+  Future<String?> resolveToYouTubeUrl(String? url, String title, String? artist,
+      {String? album, double? duration, String? spotifyId}) async {
     searches++;
     throw StateError(
         'Source resolution should not be used for an owned download.');

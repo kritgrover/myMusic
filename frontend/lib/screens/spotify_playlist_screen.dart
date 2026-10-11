@@ -27,14 +27,17 @@ class SpotifyPlaylistScreen extends StatefulWidget {
   final RecentlyPlayedService? recentlyPlayedService;
   final bool embedded; // If true, don't show Scaffold/AppBar
   final VoidCallback? onBack; // Callback for back button when embedded
-  final Function(String)? onDownloadStart; // Callback to start download progress tracking
+  final Function(String)?
+      onDownloadStart; // Callback to start download progress tracking
   /// When provided, tracks are loaded via this callback instead of the Spotify
   /// playlist endpoint. Lets this screen be reused for any "remote" playlist
   /// (e.g. a friend's public playlist) while keeping all the play/queue/download
   /// actions identical.
   final Future<List<PlaylistTrack>> Function()? trackLoader;
+
   /// When provided, shows a "Save to my playlists" action that calls this callback.
   final Future<void> Function()? onSaveToLibrary;
+  final RecommendationService? recommendationService;
 
   const SpotifyPlaylistScreen({
     super.key,
@@ -49,6 +52,7 @@ class SpotifyPlaylistScreen extends StatefulWidget {
     this.onDownloadStart,
     this.trackLoader,
     this.onSaveToLibrary,
+    this.recommendationService,
   });
 
   @override
@@ -56,37 +60,43 @@ class SpotifyPlaylistScreen extends StatefulWidget {
 }
 
 class _SpotifyPlaylistScreenState extends State<SpotifyPlaylistScreen> {
-  final RecommendationService _recommendationService = RecommendationService();
+  late final RecommendationService _recommendationService;
   final ApiService _apiService = ApiService();
   List<PlaylistTrack> _tracks = [];
   bool _isLoading = true;
+  bool _loadFailed = false;
   PlaylistSortOption _sortOption = PlaylistSortOption.defaultOrder;
 
   @override
   void initState() {
     super.initState();
+    _recommendationService =
+        widget.recommendationService ?? RecommendationService();
     _loadTracks();
   }
 
   Future<void> _loadTracks() async {
+    setState(() {
+      _isLoading = true;
+      _loadFailed = false;
+    });
     try {
       final tracks = widget.trackLoader != null
           ? await widget.trackLoader!()
-          : await _recommendationService.getSpotifyPlaylistTracks(widget.playlistId);
+          : await _recommendationService
+              .getSpotifyPlaylistTracks(widget.playlistId);
       if (mounted) {
         setState(() {
           _tracks = tracks;
           _isLoading = false;
         });
       }
-    } catch (e) {
+    } catch (_) {
       if (mounted) {
         setState(() {
           _isLoading = false;
+          _loadFailed = true;
         });
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error loading tracks: $e')),
-        );
       }
     }
   }
@@ -94,7 +104,7 @@ class _SpotifyPlaylistScreenState extends State<SpotifyPlaylistScreen> {
   // Get sorted tracks based on current sort option
   List<PlaylistTrack> get _sortedTracks {
     final tracks = List<PlaylistTrack>.from(_tracks);
-    
+
     switch (_sortOption) {
       case PlaylistSortOption.defaultOrder:
         return tracks;
@@ -188,9 +198,12 @@ class _SpotifyPlaylistScreenState extends State<SpotifyPlaylistScreen> {
   }
 
   Future<void> _downloadUndownloadedTracks() async {
-    final tracksToDownload = _tracks.where((track) => 
-      !_isTrackDownloaded(track) && track.url != null && track.url!.isNotEmpty
-    ).toList();
+    final tracksToDownload = _tracks
+        .where((track) =>
+            !_isTrackDownloaded(track) &&
+            track.url != null &&
+            track.url!.isNotEmpty)
+        .toList();
 
     if (tracksToDownload.isEmpty) {
       if (mounted) {
@@ -230,14 +243,16 @@ class _SpotifyPlaylistScreenState extends State<SpotifyPlaylistScreen> {
     if (confirmed != true) return;
 
     try {
-      final downloads = tracksToDownload.map((track) => {
-        'url': track.url!,
-        'title': track.title,
-        'artist': track.artist ?? '',
-        'album': track.album ?? '',
-        'output_format': 'm4a',
-        'embed_thumbnail': true,
-      }).toList();
+      final downloads = tracksToDownload
+          .map((track) => {
+                'url': track.url!,
+                'title': track.title,
+                'artist': track.artist ?? '',
+                'album': track.album ?? '',
+                'output_format': 'm4a',
+                'embed_thumbnail': true,
+              })
+          .toList();
 
       final result = await _apiService.startBatchDownload(downloads);
       final downloadId = result['download_id'] as String;
@@ -298,31 +313,38 @@ class _SpotifyPlaylistScreenState extends State<SpotifyPlaylistScreen> {
     }
   }
 
+  Future<String?> _resolveTrackSource(PlaylistTrack track) =>
+      _apiService.resolveToYouTubeUrl(
+        track.url,
+        track.title,
+        track.artist,
+        album: track.album,
+        duration: track.duration,
+        spotifyId: ApiService.spotifyTrackId(track.url, id: track.id),
+      );
+
   Future<void> _playTrack(PlaylistTrack track) async {
     try {
       if (track.filename.isNotEmpty && widget.playerStateService != null) {
         final displayTitle = getDisplayTitle(track.title, track.filename);
-        final url = (track.url != null && track.url!.isNotEmpty) ? track.url : null;
+        final url =
+            (track.url != null && track.url!.isNotEmpty) ? track.url : null;
         await widget.playerStateService.playTrack(
-          track.filename, 
+          track.filename,
           trackName: displayTitle,
           trackArtist: track.artist,
           url: url,
+          album: track.album,
+          duration: track.duration,
+          spotifyId: ApiService.spotifyTrackId(track.url, id: track.id),
         );
       } else if (track.url != null && track.url!.isNotEmpty) {
         if (widget.playerStateService != null) {
           try {
-            // Search YouTube for the track if URL is not a YouTube URL
-            String? youtubeUrl = track.url;
-            if (!track.url!.contains('youtube.com') && !track.url!.contains('youtu.be')) {
-              final query = "${track.title} ${track.artist}";
-              final results = await _apiService.searchYoutube(query);
-              if (results.isNotEmpty) {
-                youtubeUrl = results.first.url;
-              }
-            }
-
-            if (youtubeUrl != null) {
+            final youtubeUrl = await _resolveTrackSource(track);
+            if (youtubeUrl == null)
+              throw StateError('No matching recording found');
+            if (youtubeUrl.isNotEmpty) {
               final result = await _apiService.getStreamingUrl(
                 url: youtubeUrl,
                 title: track.title,
@@ -334,6 +356,9 @@ class _SpotifyPlaylistScreenState extends State<SpotifyPlaylistScreen> {
                 trackName: result.title,
                 trackArtist: result.artist,
                 url: youtubeUrl,
+                album: track.album,
+                duration: track.duration,
+                spotifyId: ApiService.spotifyTrackId(track.url, id: track.id),
               );
             }
           } catch (e) {
@@ -418,6 +443,7 @@ class _SpotifyPlaylistScreenState extends State<SpotifyPlaylistScreen> {
             originalUrl: track.url!,
             album: track.album,
             thumbnail: track.thumbnail,
+            duration: track.duration,
           ));
         }
       }
@@ -425,11 +451,11 @@ class _SpotifyPlaylistScreenState extends State<SpotifyPlaylistScreen> {
       if (queueItems.isNotEmpty) {
         widget.queueService!.clearQueue();
         widget.queueService!.addAllToQueue(
-          queueItems, 
+          queueItems,
           isPlaylistQueue: true,
           loadStreamingUrl: _loadStreamingUrlForQueueItem,
         );
-        
+
         if (widget.recentlyPlayedService != null) {
           await widget.recentlyPlayedService!.addPlaylist(
             playlistId: widget.playlistId,
@@ -437,10 +463,10 @@ class _SpotifyPlaylistScreenState extends State<SpotifyPlaylistScreen> {
             thumbnail: widget.coverUrl,
           );
         }
-        
+
         // Start playing first item (will load streaming URL if needed)
         await widget.queueService!.playItem(0, widget.playerStateService!);
-        
+
         // Preload streaming URLs for next 2 items in background
         _preloadNextStreamingUrls(0, 2);
       }
@@ -519,6 +545,7 @@ class _SpotifyPlaylistScreenState extends State<SpotifyPlaylistScreen> {
             originalUrl: track.url!,
             album: track.album,
             thumbnail: track.thumbnail,
+            duration: track.duration,
           ));
         }
       }
@@ -527,9 +554,9 @@ class _SpotifyPlaylistScreenState extends State<SpotifyPlaylistScreen> {
         if (shuffle) {
           widget.queueService!.clearQueue();
         }
-        
+
         widget.queueService!.addAllToQueue(
-          queueItems, 
+          queueItems,
           isPlaylistQueue: true,
           loadStreamingUrl: _loadStreamingUrlForQueueItem,
         );
@@ -543,7 +570,7 @@ class _SpotifyPlaylistScreenState extends State<SpotifyPlaylistScreen> {
             );
           }
           await widget.queueService!.playItem(0, widget.playerStateService!);
-          
+
           // Preload streaming URLs for next 2 items in background
           _preloadNextStreamingUrls(0, 2);
         }
@@ -552,7 +579,8 @@ class _SpotifyPlaylistScreenState extends State<SpotifyPlaylistScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Failed to ${shuffle ? 'shuffle and ' : ''}add playlist to queue: $e'),
+            content: Text(
+                'Failed to ${shuffle ? 'shuffle and ' : ''}add playlist to queue: $e'),
             backgroundColor: Colors.red,
             behavior: SnackBarBehavior.floating,
             shape: RoundedRectangleBorder(
@@ -568,15 +596,17 @@ class _SpotifyPlaylistScreenState extends State<SpotifyPlaylistScreen> {
   Future<void> _preloadNextStreamingUrls(int startIndex, int count) async {
     final queue = widget.queueService!.queue;
     final endIndex = (startIndex + count + 1).clamp(0, queue.length);
-    
+
     for (int i = startIndex + 1; i < endIndex; i++) {
       final item = queue[i];
-      
+
       // Skip if already has streaming URL or is a local file
-      if (item.url != null || item.filename != null || item.originalUrl == null) {
+      if (item.url != null ||
+          item.filename != null ||
+          item.originalUrl == null) {
         continue;
       }
-      
+
       // Load streaming URL in background
       _loadStreamingUrlForItem(item, i).catchError((e) {
         // Silently fail - we'll load it when needed
@@ -586,37 +616,23 @@ class _SpotifyPlaylistScreenState extends State<SpotifyPlaylistScreen> {
 
   // Load streaming URL for a queue item (callback for queue service)
   Future<String?> _loadStreamingUrlForQueueItem(QueueItem item) async {
-    final originalUrl = item.originalUrl;
-    if (originalUrl == null) return null;
-    
     try {
-      String youtubeUrl = originalUrl;
-      
-      // If not a YouTube URL, search for it
-      if (!youtubeUrl.contains('youtube.com') && !youtubeUrl.contains('youtu.be')) {
-        final query = "${item.title} ${item.artist}";
-        final results = await _apiService.searchYoutube(query);
-        if (results.isNotEmpty) {
-          final foundUrl = results.first.url;
-          if (foundUrl != null) {
-            youtubeUrl = foundUrl;
-          } else {
-            return null;
-          }
-        } else {
-          return null;
-        }
-      }
-
+      final youtubeUrl = await _apiService.resolveToYouTubeUrl(
+        item.originalUrl,
+        item.title ?? '',
+        item.artist,
+        album: item.album,
+        duration: item.duration,
+        spotifyId: item.spotifyId,
+      );
+      if (youtubeUrl == null) return null;
       final result = await _apiService.getStreamingUrl(
         url: youtubeUrl,
         title: item.title ?? '',
         artist: item.artist ?? '',
       );
-
       return result.streamingUrl;
-    } catch (e) {
-      // Return null on error - will be handled by queue service
+    } catch (_) {
       return null;
     }
   }
@@ -646,16 +662,10 @@ class _SpotifyPlaylistScreenState extends State<SpotifyPlaylistScreen> {
         );
       } else if (track.url != null && track.url!.isNotEmpty) {
         try {
-          String? youtubeUrl = track.url;
-          if (!track.url!.contains('youtube.com') && !track.url!.contains('youtu.be')) {
-            final query = "${track.title} ${track.artist}";
-            final results = await _apiService.searchYoutube(query);
-            if (results.isNotEmpty) {
-              youtubeUrl = results.first.url;
-            }
-          }
-
-          if (youtubeUrl != null) {
+          final youtubeUrl = await _resolveTrackSource(track);
+          if (youtubeUrl == null)
+            throw StateError('No matching recording found');
+          if (youtubeUrl.isNotEmpty) {
             final result = await _apiService.getStreamingUrl(
               url: youtubeUrl,
               title: track.title,
@@ -667,6 +677,7 @@ class _SpotifyPlaylistScreenState extends State<SpotifyPlaylistScreen> {
               title: result.title,
               artist: result.artist,
               streamingUrl: result.streamingUrl,
+              originalUrl: youtubeUrl,
               album: track.album,
             );
           }
@@ -712,6 +723,36 @@ class _SpotifyPlaylistScreenState extends State<SpotifyPlaylistScreen> {
   }
 
   Widget _buildContent() {
+    if (_loadFailed) {
+      return Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            if (widget.onBack != null)
+              TextButton.icon(
+                  onPressed: widget.onBack,
+                  icon: const Icon(Icons.arrow_back),
+                  label: const Text('Back')),
+            const Icon(Icons.cloud_off_outlined, size: 44),
+            const SizedBox(height: 16),
+            Text('Playlist tracks are unavailable',
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.titleLarge),
+            const SizedBox(height: 8),
+            Text(
+                widget.trackLoader == null
+                    ? 'This catalog connection could not load the tracks in “${widget.playlistName}”. The provider may limit access to playlist contents.'
+                    : 'Could not load the tracks in “${widget.playlistName}”. Please try again.',
+                textAlign: TextAlign.center),
+            const SizedBox(height: 16),
+            OutlinedButton.icon(
+                onPressed: _loadTracks,
+                icon: const Icon(Icons.refresh),
+                label: const Text('Retry playlist')),
+          ]),
+        ),
+      );
+    }
     final primaryColor = Theme.of(context).colorScheme.primary;
     final surfaceHover = Theme.of(context).colorScheme.surfaceVariant;
 
@@ -745,7 +786,9 @@ class _SpotifyPlaylistScreenState extends State<SpotifyPlaylistScreen> {
                       coverImageUrl: widget.coverUrl,
                       primaryColor: primaryColor,
                     ),
-                    SizedBox(width: ResponsiveUtils.responsiveValue<double>(context, compact: 12, medium: 16, expanded: 20)),
+                    SizedBox(
+                        width: ResponsiveUtils.responsiveValue<double>(context,
+                            compact: 12, medium: 16, expanded: 20)),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -757,7 +800,10 @@ class _SpotifyPlaylistScreenState extends State<SpotifyPlaylistScreen> {
                               Expanded(
                                 child: Text(
                                   widget.playlistName,
-                                  style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .headlineMedium
+                                      ?.copyWith(
                                         fontWeight: FontWeight.bold,
                                       ),
                                   maxLines: 1,
@@ -776,12 +822,16 @@ class _SpotifyPlaylistScreenState extends State<SpotifyPlaylistScreen> {
                                   Icon(
                                     Icons.music_note,
                                     size: 18,
-                                    color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .onSurface
+                                        .withOpacity(0.5),
                                   ),
                                   const SizedBox(width: 6),
                                   Text(
                                     '${_tracks.length} ${_tracks.length == 1 ? 'track' : 'tracks'}',
-                                    style: Theme.of(context).textTheme.bodyMedium,
+                                    style:
+                                        Theme.of(context).textTheme.bodyMedium,
                                   ),
                                 ],
                               ),
@@ -792,22 +842,28 @@ class _SpotifyPlaylistScreenState extends State<SpotifyPlaylistScreen> {
                                   child: Wrap(
                                     spacing: 8,
                                     runSpacing: 4,
-                                    crossAxisAlignment: WrapCrossAlignment.center,
+                                    crossAxisAlignment:
+                                        WrapCrossAlignment.center,
                                     children: [
-                                      if (widget.queueService != null && widget.playerStateService != null)
+                                      if (widget.queueService != null &&
+                                          widget.playerStateService != null)
                                         IconButton(
-                                          icon: const Icon(Icons.queue_music, size: 20),
+                                          icon: const Icon(Icons.queue_music,
+                                              size: 20),
                                           onPressed: _addPlaylistToQueue,
                                           tooltip: 'Add playlist to queue',
                                         ),
                                       IconButton(
-                                        icon: const Icon(Icons.download, size: 20),
+                                        icon: const Icon(Icons.download,
+                                            size: 20),
                                         onPressed: _downloadUndownloadedTracks,
                                         tooltip: 'Download undownloaded tracks',
                                       ),
                                       if (widget.onSaveToLibrary != null)
                                         IconButton(
-                                          icon: const Icon(Icons.library_add_outlined, size: 20),
+                                          icon: const Icon(
+                                              Icons.library_add_outlined,
+                                              size: 20),
                                           onPressed: _saveToLibrary,
                                           tooltip: 'Save to my playlists',
                                         ),
@@ -822,36 +878,44 @@ class _SpotifyPlaylistScreenState extends State<SpotifyPlaylistScreen> {
                           Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
-                              if (widget.queueService != null && widget.playerStateService != null)
+                              if (widget.queueService != null &&
+                                  widget.playerStateService != null)
                                 Row(
                                   children: [
                                     FilledButton.icon(
                                       onPressed: _playPlaylist,
                                       style: FilledButton.styleFrom(
-                                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 20, vertical: 12),
                                         shape: RoundedRectangleBorder(
-                                          borderRadius: BorderRadius.circular(24),
+                                          borderRadius:
+                                              BorderRadius.circular(24),
                                         ),
                                       ),
-                                      icon: const Icon(Icons.play_arrow_rounded, size: 26),
+                                      icon: const Icon(Icons.play_arrow_rounded,
+                                          size: 26),
                                       label: const Text(
                                         'Play',
-                                        style: TextStyle(fontWeight: FontWeight.w600),
+                                        style: TextStyle(
+                                            fontWeight: FontWeight.w600),
                                       ),
                                     ),
                                     const SizedBox(width: 8),
                                     OutlinedButton.icon(
                                       onPressed: _shufflePlaylistToQueue,
                                       style: OutlinedButton.styleFrom(
-                                        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 11),
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 18, vertical: 11),
                                         shape: RoundedRectangleBorder(
-                                          borderRadius: BorderRadius.circular(24),
+                                          borderRadius:
+                                              BorderRadius.circular(24),
                                         ),
                                       ),
                                       icon: const Icon(Icons.shuffle, size: 22),
                                       label: const Text(
                                         'Shuffle',
-                                        style: TextStyle(fontWeight: FontWeight.w500),
+                                        style: TextStyle(
+                                            fontWeight: FontWeight.w500),
                                       ),
                                     ),
                                   ],
@@ -863,7 +927,10 @@ class _SpotifyPlaylistScreenState extends State<SpotifyPlaylistScreen> {
                                 children: [
                                   Text(
                                     'Sort by:',
-                                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .bodyMedium
+                                        ?.copyWith(
                                           fontWeight: FontWeight.w500,
                                         ),
                                   ),
@@ -876,7 +943,8 @@ class _SpotifyPlaylistScreenState extends State<SpotifyPlaylistScreen> {
                                       onChanged: _changeSortOption,
                                       items: const [
                                         DropdownMenuItem(
-                                          value: PlaylistSortOption.defaultOrder,
+                                          value:
+                                              PlaylistSortOption.defaultOrder,
                                           child: Text('Default'),
                                         ),
                                         DropdownMenuItem(
@@ -925,16 +993,20 @@ class _SpotifyPlaylistScreenState extends State<SpotifyPlaylistScreen> {
                         itemCount: _sortedTracks.length,
                         itemBuilder: (context, index) {
                           final track = _sortedTracks[index];
-                          final isCurrentlyPlaying = widget.playerStateService != null &&
-                              widget.playerStateService.currentTrackUrl?.contains(track.url ?? '') == true;
-                          
-                          final displayTitle = getDisplayTitle(track.title, track.filename);
-                          
+                          final isCurrentlyPlaying =
+                              widget.playerStateService != null &&
+                                  widget.playerStateService.currentTrackUrl
+                                          ?.contains(track.url ?? '') ==
+                                      true;
+
+                          final displayTitle =
+                              getDisplayTitle(track.title, track.filename);
+
                           return Column(
                             children: [
                               Material(
-                                color: isCurrentlyPlaying 
-                                    ? primaryColor.withOpacity(0.1) 
+                                color: isCurrentlyPlaying
+                                    ? primaryColor.withOpacity(0.1)
                                     : Colors.transparent,
                                 borderRadius: BorderRadius.circular(8),
                                 child: InkWell(
@@ -942,46 +1014,70 @@ class _SpotifyPlaylistScreenState extends State<SpotifyPlaylistScreen> {
                                   borderRadius: BorderRadius.circular(8),
                                   hoverColor: surfaceHover,
                                   child: Padding(
-                                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 12, vertical: 8),
                                     child: Row(
                                       children: [
                                         AlbumCover(
-                                          filename: track.filename.isNotEmpty ? track.filename : null,
+                                          filename: track.filename.isNotEmpty
+                                              ? track.filename
+                                              : null,
                                           title: track.title,
                                           artist: track.artist,
                                           album: track.album,
-                                          artworkUrl: (track.thumbnail != null && !track.thumbnail!.contains('img.youtube.com'))
-                                        ? track.thumbnail
-                                        : null,
-                                          size: ResponsiveUtils.responsiveIconSize(context, base: 40),
+                                          artworkUrl: (track.thumbnail !=
+                                                      null &&
+                                                  !track.thumbnail!.contains(
+                                                      'img.youtube.com'))
+                                              ? track.thumbnail
+                                              : null,
+                                          size: ResponsiveUtils
+                                              .responsiveIconSize(context,
+                                                  base: 40),
                                           backgroundColor: isCurrentlyPlaying
                                               ? primaryColor.withOpacity(0.2)
                                               : surfaceHover,
                                           iconColor: isCurrentlyPlaying
                                               ? primaryColor
-                                              : Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+                                              : Theme.of(context)
+                                                  .colorScheme
+                                                  .onSurface
+                                                  .withOpacity(0.5),
                                         ),
                                         const SizedBox(width: 12),
                                         Expanded(
                                           child: Column(
-                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
                                             children: [
                                               Text(
                                                 displayTitle,
-                                                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                                  fontWeight: isCurrentlyPlaying ? FontWeight.w600 : FontWeight.w400,
-                                                  color: isCurrentlyPlaying ? primaryColor : null,
-                                                ),
+                                                style: Theme.of(context)
+                                                    .textTheme
+                                                    .bodyMedium
+                                                    ?.copyWith(
+                                                      fontWeight:
+                                                          isCurrentlyPlaying
+                                                              ? FontWeight.w600
+                                                              : FontWeight.w400,
+                                                      color: isCurrentlyPlaying
+                                                          ? primaryColor
+                                                          : null,
+                                                    ),
                                                 maxLines: 1,
                                                 overflow: TextOverflow.ellipsis,
                                               ),
-                                              if (track.artist != null && track.artist!.isNotEmpty) ...[
+                                              if (track.artist != null &&
+                                                  track.artist!.isNotEmpty) ...[
                                                 const SizedBox(height: 2),
                                                 Text(
                                                   track.artist!,
-                                                  style: Theme.of(context).textTheme.bodySmall,
+                                                  style: Theme.of(context)
+                                                      .textTheme
+                                                      .bodySmall,
                                                   maxLines: 1,
-                                                  overflow: TextOverflow.ellipsis,
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
                                                 ),
                                               ],
                                             ],
@@ -993,8 +1089,11 @@ class _SpotifyPlaylistScreenState extends State<SpotifyPlaylistScreen> {
                                             // Add to queue button
                                             if (widget.queueService != null)
                                               IconButton(
-                                                icon: const Icon(Icons.queue_music, size: 20),
-                                                onPressed: () => _addToQueue(track),
+                                                icon: const Icon(
+                                                    Icons.queue_music,
+                                                    size: 20),
+                                                onPressed: () =>
+                                                    _addToQueue(track),
                                                 tooltip: 'Add to queue',
                                               ),
                                             // Download status icon
@@ -1009,8 +1108,11 @@ class _SpotifyPlaylistScreenState extends State<SpotifyPlaylistScreen> {
                                                     tooltip: 'Downloaded',
                                                   )
                                                 : IconButton(
-                                                    icon: const Icon(Icons.download_outlined, size: 20),
-                                                    onPressed: () => _downloadTrack(track),
+                                                    icon: const Icon(
+                                                        Icons.download_outlined,
+                                                        size: 20),
+                                                    onPressed: () =>
+                                                        _downloadTrack(track),
                                                     tooltip: 'Download',
                                                   ),
                                           ],
@@ -1035,7 +1137,7 @@ class _SpotifyPlaylistScreenState extends State<SpotifyPlaylistScreen> {
     if (widget.embedded) {
       return _buildContent();
     }
-    
+
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.playlistName),
@@ -1056,7 +1158,8 @@ class _PlaylistCoverWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final coverSize = ResponsiveUtils.responsiveLargeIconSize(context, base: 160);
+    final coverSize =
+        ResponsiveUtils.responsiveLargeIconSize(context, base: 160);
     return Container(
       width: coverSize,
       height: coverSize,
@@ -1069,7 +1172,8 @@ class _PlaylistCoverWidget extends StatelessWidget {
               borderRadius: BorderRadius.circular(12),
               child: Image.network(
                 AuthHttpClient.shared.cacheScopedUrl(coverImageUrl!),
-                headers: AuthHttpClient.shared.authHeadersForUrl(coverImageUrl!),
+                headers:
+                    AuthHttpClient.shared.authHeadersForUrl(coverImageUrl!),
                 width: coverSize,
                 height: coverSize,
                 fit: BoxFit.cover,

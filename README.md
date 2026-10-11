@@ -55,7 +55,7 @@ A full-stack application for searching YouTube, downloading music, playing audio
 ## Features
 
 ### Core Features
-- 🔍 **YouTube Search**: Search for music videos with deep search option
+- 🔍 **Unified Search**: Separate Songs, Artists, Albums, Playlists, and Your Library results, with autocomplete suggestions and recent searches
 - ⬇️ **Audio Download**: Download audio from YouTube videos (M4A/MP3)
 - 🎵 **Media Player**: Built-in audio player with playback controls
 - 📥 **Downloads Management**: View and manage downloaded files
@@ -83,7 +83,10 @@ A full-stack application for searching YouTube, downloading music, playing audio
 - Saving the same song from different screens shares one like; failed saves are rolled back with a retryable error.
 - Private audio and embedded artwork are restricted to their owner's account. Browser playback uses short-lived, file-scoped media links that are never stored in playback history.
 - Responsive now-playing controls, seek bar, mute with volume restoration, and a compact queue overlay
-- Search as you type, with retry and protection against stale search results
+- Search as you type, with retry and protection against stale search results. Recent searches are stored on this device per account and backend; remove individual entries or clear them all.
+- Recording labels distinguish original, studio, live, remix, acoustic, instrumental, cover, and karaoke versions when the source metadata identifies them. Unlabeled video recordings remain “Unspecified.”
+- Use **More actions → Change recording** on a streaming track to compare sources or paste a specific YouTube video link. **Use and remember** saves the choice to your account; **Use automatic match** resets it. Existing downloaded audio remains the downloaded recording.
+- Artist pages show the available discography with Albums, Singles & EPs, Compilations, and Appears on filters, release years, and newest/oldest sorting. Release and album-track pagination fetches the full available result, with retry on incomplete provider responses.
 - Search your playlists by playlist name, song title, or artist; sort by recent update, name, or track count
 - Saved playlist shortcuts on Home, including when recommendations are unavailable
 - `Ctrl+K` / `Cmd+K` focuses music search
@@ -126,6 +129,21 @@ pip install -r requirements.txt
 - **Windows**: Download from https://ffmpeg.org/download.html
 - **macOS**: `brew install ffmpeg`
 - **Linux**: `sudo apt-get install ffmpeg`
+
+   YouTube playback also needs **Node.js 22+** or **Deno 2.3+** on `PATH`.
+   The backend detects and enables that runtime automatically. The pinned
+   `yt-dlp[default]` dependency includes the matching JavaScript solver package;
+   installing plain `yt-dlp` alone can leave playback unable to resolve audio.
+   See the [yt-dlp JavaScript setup guide](https://github.com/yt-dlp/yt-dlp/wiki/EJS).
+
+   If YouTube playback starts failing after a provider change, update the
+   extractor and its solver together, then restart the backend:
+   ```bash
+   python -m pip install --upgrade "yt-dlp[default]"
+   ```
+   After verifying playback, update the version pin in `backend/requirements.txt`
+   so a fresh installation uses the verified version too. Public playback does
+   not automatically read cookies from your browser.
 
 4. Configure authentication (required):
    - Generate a random signing secret:
@@ -222,6 +240,30 @@ metadata and strips private file/artwork references. Deleting a shared legacy
 download removes only the caller's claim; its bytes remain while another owner
 still has a claim. Matching playlist links are cleared by exact relative path.
 Liked tracks remain saved and can use their original source after local deletion.
+
+### Search and recording choices
+
+`GET /search/unified?q=...&limit=20` returns `songs`, `artists`, `albums`,
+`playlists`, `library`, `suggestions`, and `warnings`. Catalog metadata comes
+from Spotify's US market; playlists include the caller's own playlists.
+Your Library searches saved music, owned downloads, and tracks in owned playlists.
+The app loads `GET /search/library` independently so owned music appears while
+catalog providers are still responding.
+Only public provider results are cached. Account results are read separately on
+each request. Spotify access and market availability determine catalog coverage;
+when it is unavailable, search returns available YouTube sources and account
+results with an explanatory notice. Search currently returns the provider's first
+10 catalog results per category, plus up to 20 video fallback results.
+
+`POST /search/candidates` and `POST /search/resolve` accept `title`, `artist`,
+optional `album`, `duration` (seconds), `spotify_id`, and an existing `url`.
+The resolver first honors an account's remembered choice, then an explicit
+source, otherwise ranks sources by title, artist, duration, and recording version.
+An uncertain automatic match returns an error so the user can choose a source.
+`PUT /search/source` remembers an individual YouTube URL for that recording;
+`DELETE /search/source` with the recording identity restores automatic selection.
+Choices persist in SQLite per account and never change another user's matches.
+Version detection uses text metadata, not audio fingerprinting.
 
 ### Saved account library
 
@@ -479,6 +521,18 @@ flutter test
 flutter analyze
 flutter build web
 ```
+
+For a Windows decoder check against a real YouTube source, build Windows Release,
+start the regular backend, then run this from the repository root:
+
+```powershell
+py backend/scripts/check_native_playback.py --username YOUR_USERNAME --youtube-url "https://www.youtube.com/watch?v=VIDEO_ID"
+```
+
+The script prompts for your password, authenticates the stream, and decodes two
+seconds with the app's bundled libmpv library into a silent output. It leaves the
+open app untouched and reports no credentials or signed URLs. This checks the
+live provider and native decoder separately from the fixture and widget tests.
 
 For a served fixture build, use separate terminals from the repository root:
 

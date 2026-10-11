@@ -16,20 +16,27 @@ class _LoginScreenState extends State<LoginScreen> {
   final TextEditingController _passwordController = TextEditingController();
   final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
   String? _error;
+  bool _isSubmitting = false;
 
   Future<void> _submit() async {
+    if (_isSubmitting || widget.authService.isLoading) return;
     if (!_formKey.currentState!.validate()) return;
     setState(() {
       _error = null;
+      _isSubmitting = true;
     });
 
     final ok = await widget.authService.login(
       _usernameController.text.trim(),
       _passwordController.text,
     );
-    if (!ok && mounted) {
+    if (mounted) {
       setState(() {
-        _error = 'Invalid username or password';
+        _isSubmitting = false;
+        if (!ok) {
+          _error = widget.authService.lastLoginError ??
+              'Could not sign you in. Please try again.';
+        }
       });
     }
   }
@@ -82,7 +89,8 @@ class _LoginScreenState extends State<LoginScreen> {
                       const SizedBox(height: 12),
                       Text(
                         _error!,
-                        style: TextStyle(color: Theme.of(context).colorScheme.error),
+                        style: TextStyle(
+                            color: Theme.of(context).colorScheme.error),
                       ),
                     ],
                     const SizedBox(height: 20),
@@ -91,14 +99,16 @@ class _LoginScreenState extends State<LoginScreen> {
                       child: ListenableBuilder(
                         listenable: widget.authService,
                         builder: (context, _) {
-                          final loading = widget.authService.isLoading;
+                          final loading =
+                              _isSubmitting || widget.authService.isLoading;
                           return ElevatedButton(
                             onPressed: loading ? null : _submit,
                             child: loading
                                 ? const SizedBox(
                                     width: 18,
                                     height: 18,
-                                    child: CircularProgressIndicator(strokeWidth: 2),
+                                    child: CircularProgressIndicator(
+                                        strokeWidth: 2),
                                   )
                                 : const Text('Login'),
                           );

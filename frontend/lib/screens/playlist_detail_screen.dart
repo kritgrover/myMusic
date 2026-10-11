@@ -27,9 +27,11 @@ class PlaylistDetailScreen extends StatefulWidget {
   final PlaylistService playlistService;
   final dynamic playerStateService; // Optional, for playing tracks
   final QueueService? queueService;
-  final RecentlyPlayedService? recentlyPlayedService; // Optional, for tracking play history
+  final RecentlyPlayedService?
+      recentlyPlayedService; // Optional, for tracking play history
   final VoidCallback? onBack; // Callback to return to playlists list
-  final Function(String)? onDownloadStart; // Callback to start download progress tracking
+  final Function(String)?
+      onDownloadStart; // Callback to start download progress tracking
 
   const PlaylistDetailScreen({
     super.key,
@@ -70,14 +72,15 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
     });
 
     try {
-      final updatedPlaylist = await widget.playlistService.getPlaylist(_playlist.id);
+      final updatedPlaylist =
+          await widget.playlistService.getPlaylist(_playlist.id);
       if (!mounted || requestId != _loadRequestId) return;
       if (updatedPlaylist != null) {
         setState(() {
           _playlist = updatedPlaylist;
           _isLoading = false;
         });
-        
+
         // Sync downloaded files with playlist tracks
         _syncDownloadedFiles();
       } else {
@@ -132,7 +135,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
   // Get sorted tracks based on current sort option
   List<PlaylistTrack> get _sortedTracks {
     final tracks = List<PlaylistTrack>.from(_playlist.tracks);
-    
+
     switch (_sortOption) {
       case PlaylistSortOption.defaultOrder:
         // Return tracks in original order
@@ -172,9 +175,10 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
 
   Future<void> _removeTrack(PlaylistTrack track) async {
     try {
-      await widget.playlistService.removeTrackFromPlaylist(_playlist.id, track.id);
+      await widget.playlistService
+          .removeTrackFromPlaylist(_playlist.id, track.id);
       await _loadPlaylist();
-      
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -252,22 +256,26 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
     }
   }
 
-  Future<void> _waitForDownloadAndUpdate(String downloadId, List<PlaylistTrack> tracks) async {
+  Future<void> _waitForDownloadAndUpdate(
+      String downloadId, List<PlaylistTrack> tracks) async {
     // Poll until download is complete
     while (mounted) {
       try {
         final progress = await _apiService.getDownloadProgress(downloadId);
         if (!mounted) return;
-        
+
         if (progress.isCompleted) {
           // Batch results preserve request order, including failed downloads.
           // Remember confirmed files locally without deleting playlist entries.
-          for (int i = 0; i < progress.downloads.length && i < tracks.length; i++) {
+          for (int i = 0;
+              i < progress.downloads.length && i < tracks.length;
+              i++) {
             final downloadResult = progress.downloads[i];
             final track = tracks[i];
             final filename = downloadResult['filename'];
             if (downloadResult['success'] == true &&
-                filename is String && filename.isNotEmpty) {
+                filename is String &&
+                filename.isNotEmpty) {
               _confirmedDownloads[track.id] = filename;
             }
           }
@@ -304,7 +312,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
           }
           break;
         }
-        
+
         // Wait before polling again
         await Future.delayed(const Duration(milliseconds: 500));
       } catch (e) {
@@ -315,12 +323,15 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
     }
   }
 
-  Future<String?> _resolveTrackUrlToYouTube(PlaylistTrack track) async {
-    final url = track.url;
-    if (url == null || url.isEmpty) return null;
-    if (url.contains('youtube.com') || url.contains('youtu.be')) return url;
-    return await _apiService.resolveToYouTubeUrl(url, track.title, track.artist);
-  }
+  Future<String?> _resolveTrackUrlToYouTube(PlaylistTrack track) =>
+      _apiService.resolveToYouTubeUrl(
+        track.url,
+        track.title,
+        track.artist,
+        album: track.album,
+        duration: track.duration,
+        spotifyId: ApiService.spotifyTrackId(track.url, id: track.id),
+      );
 
   Future<void> _playTrack(PlaylistTrack track) async {
     try {
@@ -328,11 +339,15 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
         // Play from downloads - use formatted title and artist
         final displayTitle = getDisplayTitle(track.title, track.filename);
         // Pass URL if it exists (even if file is downloaded, we want to store URL for streaming later)
-        final url = (track.url != null && track.url!.isNotEmpty) ? track.url : null;
+        final url =
+            (track.url != null && track.url!.isNotEmpty) ? track.url : null;
         await widget.playerStateService.playTrack(
-          track.filename, 
+          track.filename,
           trackName: displayTitle,
           trackArtist: track.artist,
+          album: track.album,
+          duration: track.duration,
+          spotifyId: ApiService.spotifyTrackId(track.url, id: track.id),
           url: url,
         );
         // Tracking is now done in PlayerStateService when song starts
@@ -349,26 +364,9 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
         // Resolve to YouTube if URL is Spotify or other non-YouTube
         if (widget.playerStateService != null) {
           try {
-            String youtubeUrl = track.url!;
-            if (!youtubeUrl.contains('youtube.com') && !youtubeUrl.contains('youtu.be')) {
-              final resolved = await _apiService.resolveToYouTubeUrl(
-                youtubeUrl,
-                track.title,
-                track.artist,
-              );
-              if (resolved == null || resolved.isEmpty) {
-                if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text('Could not find "${track.title}" on YouTube'),
-                      backgroundColor: Colors.red,
-                    ),
-                  );
-                }
-                return;
-              }
-              youtubeUrl = resolved;
-            }
+            final youtubeUrl = await _resolveTrackUrlToYouTube(track);
+            if (youtubeUrl == null)
+              throw StateError('No matching recording found');
 
             final result = await _apiService.getStreamingUrl(
               url: youtubeUrl,
@@ -381,6 +379,9 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
               result.streamingUrl,
               trackName: result.title,
               trackArtist: result.artist,
+              album: track.album,
+              duration: track.duration,
+              spotifyId: ApiService.spotifyTrackId(track.url, id: track.id),
               url: youtubeUrl,
             );
             // Tracking is now done in PlayerStateService when song starts
@@ -415,7 +416,6 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
       }
     }
   }
-
 
   Future<void> _toggleVisibility() async {
     final newValue = !_playlist.isPublic;
@@ -489,17 +489,17 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
       try {
         await widget.playlistService.updatePlaylist(_playlist.id, result);
         await _loadPlaylist();
-        
+
         if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('Playlist renamed'),
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(8),
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Text('Playlist renamed'),
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
             ),
-          ),
-        );
+          );
         }
       } catch (e) {
         if (mounted) {
@@ -516,7 +516,8 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
 
   String? _getCoverImageUrl() {
     if (_playlist.coverImage == null) return null;
-    if (_playlist.coverImage!.startsWith('http://') || _playlist.coverImage!.startsWith('https://')) {
+    if (_playlist.coverImage!.startsWith('http://') ||
+        _playlist.coverImage!.startsWith('https://')) {
       return _playlist.coverImage;
     }
     // Local cover image
@@ -549,7 +550,8 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
             if (_playlist.coverImage != null)
               ListTile(
                 leading: const Icon(Icons.delete, color: Colors.red),
-                title: const Text('Remove Cover', style: TextStyle(color: Colors.red)),
+                title: const Text('Remove Cover',
+                    style: TextStyle(color: Colors.red)),
                 onTap: () => Navigator.of(context).pop('remove'),
               ),
           ],
@@ -578,7 +580,8 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
       }
 
       if (result == 'url') {
-        final urlController = TextEditingController(text: _playlist.coverImage ?? '');
+        final urlController =
+            TextEditingController(text: _playlist.coverImage ?? '');
         final urlResult = await showDialog<String>(
           context: context,
           builder: (context) => AlertDialog(
@@ -609,7 +612,8 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
         );
 
         if (urlResult != null && urlResult.isNotEmpty) {
-          await widget.playlistService.updatePlaylistCover(_playlist.id, urlResult);
+          await widget.playlistService
+              .updatePlaylistCover(_playlist.id, urlResult);
           await _loadPlaylist();
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
@@ -623,7 +627,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
       // Handle image picker
       final ImagePicker picker = ImagePicker();
       XFile? image;
-      
+
       if (result == 'gallery') {
         image = await picker.pickImage(source: ImageSource.gallery);
       } else if (result == 'camera') {
@@ -632,7 +636,8 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
 
       if (image != null) {
         final imageBytes = await image.readAsBytes();
-        await widget.playlistService.uploadPlaylistCover(_playlist.id, imageBytes, image.name);
+        await widget.playlistService
+            .uploadPlaylistCover(_playlist.id, imageBytes, image.name);
         await _loadPlaylist();
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -654,9 +659,12 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
 
   Future<void> _downloadUndownloadedTracks() async {
     // Find all tracks that need to be downloaded
-    final tracksToDownload = _playlist.tracks.where((track) => 
-      !_isTrackDownloaded(track) && track.url != null && track.url!.isNotEmpty
-    ).toList();
+    final tracksToDownload = _playlist.tracks
+        .where((track) =>
+            !_isTrackDownloaded(track) &&
+            track.url != null &&
+            track.url!.isNotEmpty)
+        .toList();
 
     if (tracksToDownload.isEmpty) {
       if (mounted) {
@@ -698,14 +706,16 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
 
     try {
       // Prepare batch download requests
-      final downloads = tracksToDownload.map((track) => {
-        'url': track.url!,
-        'title': track.title,
-        'artist': track.artist ?? '',
-        'album': track.album ?? '',
-        'output_format': 'm4a',
-        'embed_thumbnail': true,
-      }).toList();
+      final downloads = tracksToDownload
+          .map((track) => {
+                'url': track.url!,
+                'title': track.title,
+                'artist': track.artist ?? '',
+                'album': track.album ?? '',
+                'output_format': 'm4a',
+                'embed_thumbnail': true,
+              })
+          .toList();
 
       // Start batch download
       final result = await _apiService.startBatchDownload(downloads);
@@ -840,7 +850,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
         if (queueItems.isNotEmpty) {
           widget.queueService!.clearQueue();
           widget.queueService!.addAllToQueue(queueItems, isPlaylistQueue: true);
-          
+
           // Record playlist in recently played
           if (widget.recentlyPlayedService != null) {
             await widget.recentlyPlayedService!.addPlaylist(
@@ -849,7 +859,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
               thumbnail: _getCoverImageUrl(),
             );
           }
-          
+
           // Start playing the first item
           await widget.queueService!.playItem(0, widget.playerStateService!);
         }
@@ -962,7 +972,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
           if (shuffle) {
             widget.queueService!.clearQueue();
           }
-          
+
           widget.queueService!.addAllToQueue(queueItems, isPlaylistQueue: true);
 
           // If shuffle is enabled, start playing the first song
@@ -983,7 +993,8 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Failed to ${shuffle ? 'shuffle and ' : ''}add playlist to queue: $e'),
+            content: Text(
+                'Failed to ${shuffle ? 'shuffle and ' : ''}add playlist to queue: $e'),
             backgroundColor: Colors.red,
             behavior: SnackBarBehavior.floating,
             shape: RoundedRectangleBorder(
@@ -1083,7 +1094,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
   Widget build(BuildContext context) {
     final primaryColor = Theme.of(context).colorScheme.primary;
     final surfaceHover = Theme.of(context).colorScheme.surfaceVariant;
-    
+
     // If showing add songs screen, display that instead
     if (_showAddSongs) {
       return AddToPlaylistScreen(
@@ -1124,7 +1135,9 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                       primaryColor: primaryColor,
                       onTap: _editPlaylistCover,
                     ),
-                    SizedBox(width: ResponsiveUtils.responsiveValue<double>(context, compact: 12, medium: 16, expanded: 20)),
+                    SizedBox(
+                        width: ResponsiveUtils.responsiveValue<double>(context,
+                            compact: 12, medium: 16, expanded: 20)),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1136,7 +1149,10 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                               Expanded(
                                 child: Text(
                                   _playlist.name,
-                                  style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .headlineMedium
+                                      ?.copyWith(
                                         fontWeight: FontWeight.bold,
                                       ),
                                   maxLines: 1,
@@ -1155,12 +1171,16 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                                   Icon(
                                     Icons.music_note,
                                     size: 18,
-                                    color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .onSurface
+                                        .withOpacity(0.5),
                                   ),
                                   const SizedBox(width: 6),
                                   Text(
                                     '${_playlist.tracks.length} ${_playlist.tracks.length == 1 ? 'track' : 'tracks'}',
-                                    style: Theme.of(context).textTheme.bodyMedium,
+                                    style:
+                                        Theme.of(context).textTheme.bodyMedium,
                                   ),
                                 ],
                               ),
@@ -1171,7 +1191,8 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                                   child: Wrap(
                                     spacing: 8,
                                     runSpacing: 4,
-                                    crossAxisAlignment: WrapCrossAlignment.center,
+                                    crossAxisAlignment:
+                                        WrapCrossAlignment.center,
                                     children: [
                                       TextButton.icon(
                                         onPressed: _addSongs,
@@ -1185,7 +1206,9 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                                       ),
                                       IconButton(
                                         icon: Icon(
-                                          _playlist.isPublic ? Icons.public : Icons.lock_outline,
+                                          _playlist.isPublic
+                                              ? Icons.public
+                                              : Icons.lock_outline,
                                           size: 20,
                                         ),
                                         onPressed: _toggleVisibility,
@@ -1193,14 +1216,17 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                                             ? 'Public — tap to make private'
                                             : 'Private — tap to make public',
                                       ),
-                                      if (widget.queueService != null && widget.playerStateService != null)
+                                      if (widget.queueService != null &&
+                                          widget.playerStateService != null)
                                         IconButton(
-                                          icon: const Icon(Icons.queue_music, size: 20),
+                                          icon: const Icon(Icons.queue_music,
+                                              size: 20),
                                           onPressed: _addPlaylistToQueue,
                                           tooltip: 'Add playlist to queue',
                                         ),
                                       IconButton(
-                                        icon: const Icon(Icons.download, size: 20),
+                                        icon: const Icon(Icons.download,
+                                            size: 20),
                                         onPressed: _downloadUndownloadedTracks,
                                         tooltip: 'Download undownloaded tracks',
                                       ),
@@ -1215,36 +1241,44 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                           Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
-                              if (widget.queueService != null && widget.playerStateService != null)
+                              if (widget.queueService != null &&
+                                  widget.playerStateService != null)
                                 Row(
                                   children: [
                                     FilledButton.icon(
                                       onPressed: _playPlaylist,
                                       style: FilledButton.styleFrom(
-                                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 20, vertical: 12),
                                         shape: RoundedRectangleBorder(
-                                          borderRadius: BorderRadius.circular(24),
+                                          borderRadius:
+                                              BorderRadius.circular(24),
                                         ),
                                       ),
-                                      icon: const Icon(Icons.play_arrow_rounded, size: 26),
+                                      icon: const Icon(Icons.play_arrow_rounded,
+                                          size: 26),
                                       label: const Text(
                                         'Play',
-                                        style: TextStyle(fontWeight: FontWeight.w600),
+                                        style: TextStyle(
+                                            fontWeight: FontWeight.w600),
                                       ),
                                     ),
                                     const SizedBox(width: 8),
                                     OutlinedButton.icon(
                                       onPressed: _shufflePlaylistToQueue,
                                       style: OutlinedButton.styleFrom(
-                                        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 11),
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 18, vertical: 11),
                                         shape: RoundedRectangleBorder(
-                                          borderRadius: BorderRadius.circular(24),
+                                          borderRadius:
+                                              BorderRadius.circular(24),
                                         ),
                                       ),
                                       icon: const Icon(Icons.shuffle, size: 22),
                                       label: const Text(
                                         'Shuffle',
-                                        style: TextStyle(fontWeight: FontWeight.w500),
+                                        style: TextStyle(
+                                            fontWeight: FontWeight.w500),
                                       ),
                                     ),
                                   ],
@@ -1256,7 +1290,10 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                                 children: [
                                   Text(
                                     'Sort by:',
-                                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .bodyMedium
+                                        ?.copyWith(
                                           fontWeight: FontWeight.w500,
                                         ),
                                   ),
@@ -1269,7 +1306,8 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                                       onChanged: _changeSortOption,
                                       items: const [
                                         DropdownMenuItem(
-                                          value: PlaylistSortOption.defaultOrder,
+                                          value:
+                                              PlaylistSortOption.defaultOrder,
                                           child: Text('Default'),
                                         ),
                                         DropdownMenuItem(
@@ -1290,136 +1328,190 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                         ],
                       ),
                     ),
-                    ],
-                  ),
+                  ],
                 ),
-                // Tracks list
-                Expanded(
-                  child: _playlist.tracks.isEmpty
-                      ? Center(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
+              ),
+              // Tracks list
+              Expanded(
+                child: _playlist.tracks.isEmpty
+                    ? Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.queue_music,
+                              size: 64,
+                              color: Colors.grey[400],
+                            ),
+                            const SizedBox(height: 16),
+                            Text(
+                              'No tracks in this playlist',
+                              style: Theme.of(context).textTheme.titleLarge,
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              'Add songs to get started',
+                              style: Theme.of(context).textTheme.bodyMedium,
+                            ),
+                            const SizedBox(height: 24),
+                            ElevatedButton.icon(
+                              onPressed: _addSongs,
+                              icon: const Icon(Icons.add),
+                              label: const Text('Add Songs'),
+                            ),
+                          ],
+                        ),
+                      )
+                    : ListView.builder(
+                        padding: const EdgeInsets.symmetric(vertical: 8.0),
+                        itemCount: _sortedTracks.length,
+                        itemBuilder: (context, index) {
+                          final track = _sortedTracks[index];
+                          final isCurrentlyPlaying =
+                              widget.playerStateService != null &&
+                                  widget.playerStateService.currentTrackUrl
+                                          ?.contains(track.filename ?? '') ==
+                                      true;
+
+                          final displayTitle =
+                              getDisplayTitle(track.title, track.filename);
+
+                          return Column(
                             children: [
-                              Icon(
-                                Icons.queue_music,
-                                size: 64,
-                                color: Colors.grey[400],
-                              ),
-                              const SizedBox(height: 16),
-                              Text(
-                                'No tracks in this playlist',
-                                style: Theme.of(context).textTheme.titleLarge,
-                              ),
-                              const SizedBox(height: 8),
-                              Text(
-                                'Add songs to get started',
-                                style: Theme.of(context).textTheme.bodyMedium,
-                              ),
-                              const SizedBox(height: 24),
-                              ElevatedButton.icon(
-                                onPressed: _addSongs,
-                                icon: const Icon(Icons.add),
-                                label: const Text('Add Songs'),
-                              ),
-                            ],
-                          ),
-                        )
-                      : ListView.builder(
-                          padding: const EdgeInsets.symmetric(vertical: 8.0),
-                          itemCount: _sortedTracks.length,
-                          itemBuilder: (context, index) {
-                            final track = _sortedTracks[index];
-                            final isCurrentlyPlaying = widget.playerStateService != null &&
-                                widget.playerStateService.currentTrackUrl?.contains(track.filename ?? '') == true;
-                            
-                            final displayTitle = getDisplayTitle(track.title, track.filename);
-                            
-                            return Column(
-                              children: [
-                                Material(
-                                  color: isCurrentlyPlaying 
-                                      ? primaryColor.withOpacity(0.1) 
-                                      : Colors.transparent,
+                              Material(
+                                color: isCurrentlyPlaying
+                                    ? primaryColor.withOpacity(0.1)
+                                    : Colors.transparent,
+                                borderRadius: BorderRadius.circular(8),
+                                child: InkWell(
+                                  onTap: () => _playTrack(track),
                                   borderRadius: BorderRadius.circular(8),
-                                  child: InkWell(
-                                    onTap: () => _playTrack(track),
-                                    borderRadius: BorderRadius.circular(8),
-                                    hoverColor: surfaceHover,
-                                    child: Padding(
-                                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                                      child: Row(
-                                        children: [
-                                          AlbumCover(
-                                            filename: track.filename.isNotEmpty ? track.filename : null,
-                                            title: track.title,
-                                            artist: track.artist,
-                                            album: track.album,
-                                            artworkUrl: (track.thumbnail != null && !track.thumbnail!.contains('img.youtube.com'))
-                                            ? track.thumbnail
-                                            : null,
-                                            size: ResponsiveUtils.responsiveIconSize(context, base: 40),
-                                            backgroundColor: isCurrentlyPlaying
-                                                ? primaryColor.withOpacity(0.2)
-                                                : surfaceHover,
-                                            iconColor: isCurrentlyPlaying
-                                                ? primaryColor
-                                                : Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
-                                          ),
-                                          const SizedBox(width: 12),
-                                          Expanded(
-                                            child: Column(
-                                              crossAxisAlignment: CrossAxisAlignment.start,
-                                              children: [
-                                                Text(
-                                                  displayTitle,
-                                                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                                    fontWeight: isCurrentlyPlaying ? FontWeight.w600 : FontWeight.w400,
-                                                    color: isCurrentlyPlaying ? primaryColor : null,
-                                                  ),
-                                                  maxLines: 1,
-                                                  overflow: TextOverflow.ellipsis,
-                                                ),
-                                                if (track.artist != null && track.artist!.isNotEmpty) ...[
-                                                  const SizedBox(height: 2),
-                                                  Text(
-                                                    track.artist!,
-                                                    style: Theme.of(context).textTheme.bodySmall,
-                                                    maxLines: 1,
-                                                    overflow: TextOverflow.ellipsis,
-                                                  ),
-                                                ],
-                                              ],
-                                            ),
-                                          ),
-                                          Row(
-                                            mainAxisSize: MainAxisSize.min,
+                                  hoverColor: surfaceHover,
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 12, vertical: 8),
+                                    child: Row(
+                                      children: [
+                                        AlbumCover(
+                                          filename: track.filename.isNotEmpty
+                                              ? track.filename
+                                              : null,
+                                          title: track.title,
+                                          artist: track.artist,
+                                          album: track.album,
+                                          artworkUrl: (track.thumbnail !=
+                                                      null &&
+                                                  !track.thumbnail!.contains(
+                                                      'img.youtube.com'))
+                                              ? track.thumbnail
+                                              : null,
+                                          size: ResponsiveUtils
+                                              .responsiveIconSize(context,
+                                                  base: 40),
+                                          backgroundColor: isCurrentlyPlaying
+                                              ? primaryColor.withOpacity(0.2)
+                                              : surfaceHover,
+                                          iconColor: isCurrentlyPlaying
+                                              ? primaryColor
+                                              : Theme.of(context)
+                                                  .colorScheme
+                                                  .onSurface
+                                                  .withOpacity(0.5),
+                                        ),
+                                        const SizedBox(width: 12),
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
                                             children: [
-                                              // Add to queue button
-                                              SaveTrackButton(track: track),
-                                              if (MediaQuery.sizeOf(context).width < 600)
-                                                PopupMenuButton<String>(
-                                                  tooltip: 'More song actions',
-                                                  onSelected: (value) {
-                                                    switch (value) {
-                                                      case 'queue': _addToQueue(track);
-                                                      case 'download': _downloadTrack(track);
-                                                      case 'remove': _removeTrack(track);
-                                                    }
-                                                  },
-                                                  itemBuilder: (_) => [
-                                                    if (widget.queueService != null) const PopupMenuItem(value: 'queue', child: Text('Add to queue')),
-                                                    if (!_isTrackDownloaded(track)) const PopupMenuItem(value: 'download', child: Text('Download')),
-                                                    const PopupMenuItem(value: 'remove', child: Text('Remove from playlist')),
-                                                  ],
+                                              Text(
+                                                displayTitle,
+                                                style: Theme.of(context)
+                                                    .textTheme
+                                                    .bodyMedium
+                                                    ?.copyWith(
+                                                      fontWeight:
+                                                          isCurrentlyPlaying
+                                                              ? FontWeight.w600
+                                                              : FontWeight.w400,
+                                                      color: isCurrentlyPlaying
+                                                          ? primaryColor
+                                                          : null,
+                                                    ),
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                              ),
+                                              if (track.artist != null &&
+                                                  track.artist!.isNotEmpty) ...[
+                                                const SizedBox(height: 2),
+                                                Text(
+                                                  track.artist!,
+                                                  style: Theme.of(context)
+                                                      .textTheme
+                                                      .bodySmall,
+                                                  maxLines: 1,
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
                                                 ),
-                                              if (widget.queueService != null && MediaQuery.sizeOf(context).width >= 600)
-                                                IconButton(
-                                                  icon: const Icon(Icons.queue_music, size: 20),
-                                                  onPressed: () => _addToQueue(track),
-                                                  tooltip: 'Add to queue',
-                                                ),
-                                              // Download status icon
-                                              if (MediaQuery.sizeOf(context).width >= 600)
+                                              ],
+                                            ],
+                                          ),
+                                        ),
+                                        Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            // Add to queue button
+                                            SaveTrackButton(track: track),
+                                            if (MediaQuery.sizeOf(context)
+                                                    .width <
+                                                600)
+                                              PopupMenuButton<String>(
+                                                tooltip: 'More song actions',
+                                                onSelected: (value) {
+                                                  switch (value) {
+                                                    case 'queue':
+                                                      _addToQueue(track);
+                                                    case 'download':
+                                                      _downloadTrack(track);
+                                                    case 'remove':
+                                                      _removeTrack(track);
+                                                  }
+                                                },
+                                                itemBuilder: (_) => [
+                                                  if (widget.queueService !=
+                                                      null)
+                                                    const PopupMenuItem(
+                                                        value: 'queue',
+                                                        child: Text(
+                                                            'Add to queue')),
+                                                  if (!_isTrackDownloaded(
+                                                      track))
+                                                    const PopupMenuItem(
+                                                        value: 'download',
+                                                        child:
+                                                            Text('Download')),
+                                                  const PopupMenuItem(
+                                                      value: 'remove',
+                                                      child: Text(
+                                                          'Remove from playlist')),
+                                                ],
+                                              ),
+                                            if (widget.queueService != null &&
+                                                MediaQuery.sizeOf(context)
+                                                        .width >=
+                                                    600)
+                                              IconButton(
+                                                icon: const Icon(
+                                                    Icons.queue_music,
+                                                    size: 20),
+                                                onPressed: () =>
+                                                    _addToQueue(track),
+                                                tooltip: 'Add to queue',
+                                              ),
+                                            // Download status icon
+                                            if (MediaQuery.sizeOf(context)
+                                                    .width >=
+                                                600)
                                               _isTrackDownloaded(track)
                                                   ? IconButton(
                                                       icon: Icon(
@@ -1431,32 +1523,41 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                                                       tooltip: 'Downloaded',
                                                     )
                                                   : IconButton(
-                                                      icon: const Icon(Icons.download_outlined, size: 20),
-                                                      onPressed: () => _downloadTrack(track),
+                                                      icon: const Icon(
+                                                          Icons
+                                                              .download_outlined,
+                                                          size: 20),
+                                                      onPressed: () =>
+                                                          _downloadTrack(track),
                                                       tooltip: 'Download',
                                                     ),
-                                              // Delete button
-                                              if (MediaQuery.sizeOf(context).width >= 600)
+                                            // Delete button
+                                            if (MediaQuery.sizeOf(context)
+                                                    .width >=
+                                                600)
                                               IconButton(
-                                                icon: const Icon(Icons.delete_outline, size: 20),
-                                                onPressed: () => _removeTrack(track),
+                                                icon: const Icon(
+                                                    Icons.delete_outline,
+                                                    size: 20),
+                                                onPressed: () =>
+                                                    _removeTrack(track),
                                                 tooltip: 'Remove from playlist',
                                               ),
-                                            ],
-                                          ),
-                                        ],
-                                      ),
+                                          ],
+                                        ),
+                                      ],
                                     ),
                                   ),
                                 ),
-                                const Divider(height: 1),
-                              ],
-                            );
-                          },
-                        ),
-                ),
-              ],
-        );
+                              ),
+                              const Divider(height: 1),
+                            ],
+                          );
+                        },
+                      ),
+              ),
+            ],
+          );
   }
 }
 
@@ -1480,7 +1581,8 @@ class _PlaylistCoverWidgetState extends State<_PlaylistCoverWidget> {
 
   @override
   Widget build(BuildContext context) {
-    final coverSize = ResponsiveUtils.responsiveLargeIconSize(context, base: 160);
+    final coverSize =
+        ResponsiveUtils.responsiveLargeIconSize(context, base: 160);
     return MouseRegion(
       cursor: SystemMouseCursors.click,
       onEnter: (_) => setState(() => _isHovered = true),
@@ -1500,8 +1602,10 @@ class _PlaylistCoverWidgetState extends State<_PlaylistCoverWidget> {
                   child: Stack(
                     children: [
                       Image.network(
-                        AuthHttpClient.shared.cacheScopedUrl(widget.coverImageUrl!),
-                        headers: AuthHttpClient.shared.authHeadersForUrl(widget.coverImageUrl!),
+                        AuthHttpClient.shared
+                            .cacheScopedUrl(widget.coverImageUrl!),
+                        headers: AuthHttpClient.shared
+                            .authHeadersForUrl(widget.coverImageUrl!),
                         width: coverSize,
                         height: coverSize,
                         fit: BoxFit.cover,
