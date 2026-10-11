@@ -303,7 +303,7 @@ class _MyAppState extends State<MyApp> {
       home: ListenableBuilder(
         listenable: _authService,
         builder: (context, _) {
-          if (!_authService.isInitialized || _authService.isLoading) {
+          if (!_authService.isInitialized) {
             return const Scaffold(
               body: Center(
                 child: CircularProgressIndicator(),

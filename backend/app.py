@@ -491,11 +491,10 @@ async def stream_audio(encoded_url: str, request: Request):
             "Accept-Language": "en-US,en;q=0.9",
             "Referer": "https://www.youtube.com/",
             "Origin": "https://www.youtube.com",
-            "User-Agent": request.headers.get(
-                "user-agent",
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            ),
+            # Native players send libmpv/Lavf identifiers, which are not the
+            # browser identity used to resolve the YouTube media URL.
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                          "(KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
         }
         if range_header:
             upstream_headers["Range"] = range_header
@@ -517,8 +516,20 @@ async def stream_audio(encoded_url: str, request: Request):
             "Access-Control-Expose-Headers": "Content-Length, Content-Range, Accept-Ranges",
         }
 
-        # If upstream denies/blocks, fall back to cached local stream file.
-        if response.status_code >= 300 and response.status_code != 416:
+        # HTML errors and manifests can arrive with HTTP 200. Passing those
+        # bytes to a decoder produces a misleading "wrong format" failure.
+        mime_type = content_type.split(";", 1)[0].strip().lower()
+        is_audio_payload = mime_type.startswith("audio/") or mime_type in {
+            "video/mp4", "video/webm", "application/octet-stream",
+        }
+        is_manifest = mime_type in {
+            "audio/mpegurl", "audio/x-mpegurl", "application/vnd.apple.mpegurl",
+            "application/x-mpegurl", "application/dash+xml",
+        }
+        # Preserve range errors so the client can correct its byte request.
+        if response.status_code != 416 and (
+            response.status_code >= 300 or not is_audio_payload or is_manifest
+        ):
             await close_resources()
             loop = asyncio.get_event_loop()
             return await loop.run_in_executor(None, stream_from_cached_download, youtube_url)
@@ -550,7 +561,7 @@ async def stream_audio(encoded_url: str, request: Request):
         except Exception:
             import traceback
             print(f"Stream error: {traceback.format_exc()}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=502, detail="YouTube audio is unavailable. Please try again later.")
 
 
 @app.post("/download")

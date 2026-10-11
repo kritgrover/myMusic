@@ -127,6 +127,21 @@ pip install -r requirements.txt
 - **macOS**: `brew install ffmpeg`
 - **Linux**: `sudo apt-get install ffmpeg`
 
+   YouTube playback also needs **Node.js 22+** or **Deno 2.3+** on `PATH`.
+   The backend detects and enables that runtime automatically. The pinned
+   `yt-dlp[default]` dependency includes the matching JavaScript solver package;
+   installing plain `yt-dlp` alone can leave playback unable to resolve audio.
+   See the [yt-dlp JavaScript setup guide](https://github.com/yt-dlp/yt-dlp/wiki/EJS).
+
+   If YouTube playback starts failing after a provider change, update the
+   extractor and its solver together, then restart the backend:
+   ```bash
+   python -m pip install --upgrade "yt-dlp[default]"
+   ```
+   After verifying playback, update the version pin in `backend/requirements.txt`
+   so a fresh installation uses the verified version too. Public playback does
+   not automatically read cookies from your browser.
+
 4. Configure authentication (required):
    - Generate a random signing secret:
    ```bash
@@ -479,6 +494,18 @@ flutter test
 flutter analyze
 flutter build web
 ```
+
+For a Windows decoder check against a real YouTube source, build Windows Release,
+start the regular backend, then run this from the repository root:
+
+```powershell
+py backend/scripts/check_native_playback.py --username YOUR_USERNAME --youtube-url "https://www.youtube.com/watch?v=VIDEO_ID"
+```
+
+The script prompts for your password, authenticates the stream, and decodes two
+seconds with the app's bundled libmpv library into a silent output. It leaves the
+open app untouched and reports no credentials or signed URLs. This checks the
+live provider and native decoder separately from the fixture and widget tests.
 
 For a served fixture build, use separate terminals from the repository root:
 

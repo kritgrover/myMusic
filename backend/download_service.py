@@ -11,11 +11,11 @@ from datetime import timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from mutagen.easyid3 import EasyID3
 from mutagen.mp4 import MP4, MP4Tags
-from source_security import youtube_url, search_query
+from source_security import youtube_url, search_query, streaming_target
+from urllib.parse import urlsplit
 import uuid
 import tempfile
 import signal
-from pathlib import Path
 
 
 class DownloadService:
@@ -23,6 +23,16 @@ class DownloadService:
         self.output_dir = output_dir
         os.makedirs(output_dir, exist_ok=True)
         self._init_executables()
+        self._js_runtime = self._find_js_runtime()
+
+    @staticmethod
+    def _find_js_runtime():
+        """Discover a local YouTube challenge runtime once per service instance."""
+        for runtime in ("deno", "node"):
+            executable = shutil.which(runtime)
+            if executable:
+                return f"{runtime}:{os.path.abspath(executable)}"
+        return None
     
     def _init_executables(self):
         """Initialize paths to yt-dlp and ffmpeg"""
@@ -100,6 +110,12 @@ class DownloadService:
             cmd = [self.yt_dlp_exe]
         cmd.append("--no-config")
         cmd.append("--force-ipv4")
+        # yt-dlp enables Deno by default, but Node must be explicitly enabled.
+        # Use the discovered absolute path, including on Windows with spaces.
+        if not hasattr(self, "_js_runtime"):
+            self._js_runtime = self._find_js_runtime()
+        if self._js_runtime:
+            cmd += ["--js-runtimes", self._js_runtime]
         # Only add ffmpeg-location if ffmpeg is in a specific directory
         ffmpeg_dir = os.path.dirname(self.ffmpeg_exe) if isinstance(self.ffmpeg_exe, str) and os.path.dirname(self.ffmpeg_exe) else ""
         if ffmpeg_dir and os.path.isdir(ffmpeg_dir):
@@ -107,26 +123,23 @@ class DownloadService:
         cmd += ["--no-playlist", "--use-extractors", "youtube,youtube:tab,youtube:search"] + extra_args + ["--", search_spec]
         return cmd
 
-    def _run_yt_with_strategies(self, base_args, search_spec, creationflags):
-        """Run yt-dlp with a few fallback strategies for YouTube 403 issues."""
-        strategies = [
-            [],
-            ["--extractor-args", "youtube:player_client=android"],
-            ["--cookies-from-browser", "chrome"],
-            ["--cookies-from-browser", "edge"],
-            ["--extractor-args", "youtube:player_client=android", "--cookies-from-browser", "chrome"],
-        ]
-        errors = []
-        for strategy_args in strategies:
-            cmd = self._yt_cmd(strategy_args + base_args, search_spec)
-            ret = subprocess.run(cmd, capture_output=True, text=True, creationflags=creationflags)
-            if ret.returncode == 0:
-                return ret
-            stderr = (ret.stderr or "").strip()
-            if stderr:
-                errors.append(stderr)
-        error_detail = "\n---\n".join(errors[-3:]) if errors else "Unknown yt-dlp error"
-        raise Exception(error_detail)
+    def _resolve_stream(self, base_args, search_spec, creationflags):
+        """Use yt-dlp's current default clients without reading browser cookies."""
+        cmd = self._yt_cmd(
+            ["--socket-timeout", "10", "--retries", "1", "--extractor-retries", "1"] + base_args,
+            search_spec,
+        )
+        try:
+            ret = subprocess.run(cmd, capture_output=True, text=True,
+                                 creationflags=creationflags, timeout=30)
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError("YouTube stream resolution timed out after 30 seconds") from exc
+        if ret.returncode == 0:
+            return ret
+        # Keep the original provider failure, rather than replacing it with an
+        # unrelated browser-cookie/DPAPI error from a sequence of retries.
+        error_detail = (ret.stderr or ret.stdout or "Unknown yt-dlp error").strip()
+        raise RuntimeError(error_detail[-4096:])
     
     def _get_creationflags(self):
         """Get subprocess creation flags for the current platform."""
@@ -352,20 +365,25 @@ class DownloadService:
         if not self.yt_dlp_exe:
             raise Exception(f"yt-dlp not found. Please install it: pip install yt-dlp")
         
-        # Get the best audio stream URL using -g flag
+        # The proxy serves a single seekable byte stream; HLS/DASH manifests
+        # cannot be handed to it as though their contents were audio bytes.
         base_args = [
-            '-f', '140/251/bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio[acodec*=mp4a]/bestaudio/best',
+            '-f', 'bestaudio[protocol=https][acodec^=mp4a]/bestaudio[protocol=https]/best[protocol=https][acodec!=none]',
             '-g'
         ]
 
         try:
-            ret = self._run_yt_with_strategies(base_args, url, creationflags)
+            ret = self._resolve_stream(base_args, url, creationflags)
         except Exception as e:
             raise Exception(f"Failed to get streaming URL: {e}")
         
-        streaming_url = ret.stdout.strip()
-        if not streaming_url or not streaming_url.startswith('http'):
-            raise Exception("Invalid streaming URL received")
+        try:
+            streaming_url = streaming_target(ret.stdout.strip())
+            path = urlsplit(streaming_url).path.lower()
+            if "/manifest/" in path or path.endswith((".m3u8", ".mpd")):
+                raise ValueError("A manifest cannot be proxied as audio")
+        except ValueError as exc:
+            raise RuntimeError("Invalid direct audio streaming URL received") from exc
         
         return streaming_url
     
@@ -378,7 +396,7 @@ class DownloadService:
         if not self.yt_dlp_exe:
             raise Exception(f"yt-dlp not found. Please install it: pip install yt-dlp")
         
-        # Keep a real extension template: remuxing can change the source
+        # Keep a real extension template: conversion can change the source
         # container extension, so a literal '.tmp' filename is unreliable.
         temp_prefix = output_path + ".work"
         temp_output = temp_prefix + ".m4a"
@@ -386,7 +404,7 @@ class DownloadService:
         # Download as M4A (AAC) which is browser-compatible
         base_args = [
             '-f', 'bestaudio[ext=m4a]/bestaudio',
-            '--remux-video', 'm4a',
+            '--extract-audio', '--audio-format', 'm4a', '--audio-quality', '192K',
             '--postprocessor-args', 'ffmpeg:-movflags +faststart',
             '--output', temp_prefix + '.%(ext)s',
             '--no-playlist',
