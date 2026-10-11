@@ -210,9 +210,10 @@ class DownloadService:
         
         return int(score)
     
-    def search_youtube(self, query: str, duration_min: int = 0, duration_max: float = float("inf")):
+    def search_youtube(self, query: str, duration_min: int = 0, duration_max: float = float("inf"), max_results: int = 3):
         """Search YouTube and return video information"""
         query = search_query(query)
+        max_results = max(1, min(int(max_results), 20))
         creationflags = self._get_creationflags()
         
         # Check if yt-dlp is available
@@ -221,7 +222,7 @@ class DownloadService:
         
         # Always use deep search
         proc_q = subprocess.run(
-            self._yt_cmd(["--flat-playlist", "--dump-single-json", "--no-playlist"], query if query.startswith("https://") else f"ytsearch3:{query}"),
+            self._yt_cmd(["--flat-playlist", "--dump-single-json", "--no-playlist"], query if query.startswith("https://") else f"ytsearch{max_results}:{query}"),
             capture_output=True, text=True, creationflags=creationflags, timeout=30
         )
         if proc_q.returncode != 0:
@@ -237,8 +238,7 @@ class DownloadService:
         entries = data_q.get('entries') if isinstance(data_q.get('entries'), list) else ([data_q] if data_q.get('id') else [])
         results = []
         
-        # Get top 10 results
-        for entry in entries[:10]:  
+        for entry in entries[:max_results]:
             if not isinstance(entry, dict):
                 continue
             vid_id = entry.get('id', '')

@@ -16,7 +16,9 @@ from config import settings
 import httpx
 from download_service import DownloadService
 from database import db
-from spotify_service import spotify_service
+from spotify_service import spotify_service, SpotifyCatalogError
+from search_routes import build_search_router
+from unified_search import recording_key
 from lyrics_service import lyrics_service
 from metadata_service import MetadataService, _regex_parse as _enhanced_regex_parse
 from auth_utils import create_access_token, decode_access_token, create_media_token, decode_media_token
@@ -118,6 +120,8 @@ class DownloadRequest(BaseModel):
     album: str = ""
     output_format: str = "m4a"  # "m4a" or "mp3"
     embed_thumbnail: bool = False
+    spotify_id: str = ""
+    recording_type: str = ""
 
 
 class VideoInfo(BaseModel):
@@ -569,6 +573,12 @@ def download_audio(request: DownloadRequest, http_request: Request):
     """Download audio from YouTube URL"""
     user = _require_current_user(http_request)
     source = _source_url(request.url)
+    chosen = db.get_source_preference(user['id'], recording_key({
+        'title': request.title, 'artist': request.artist, 'album': request.album,
+        'spotify_id': request.spotify_id, 'recording_type': request.recording_type,
+    }))
+    if chosen:
+        source = _source_url(chosen)
     if request.output_format not in ("m4a", "mp3"):
         raise HTTPException(status_code=400, detail="Unsupported audio format")
     try:
@@ -606,6 +616,12 @@ def start_batch_download(request: BatchDownloadRequest, http_request: Request):
     user = _require_current_user(http_request)
     for entry in request.downloads:
         entry.url = _source_url(entry.url)
+        chosen = db.get_source_preference(user['id'], recording_key({
+            'title': entry.title, 'artist': entry.artist, 'album': entry.album,
+            'spotify_id': entry.spotify_id, 'recording_type': entry.recording_type,
+        }))
+        if chosen:
+            entry.url = _source_url(chosen)
         if entry.output_format not in ("m4a", "mp3"):
             raise HTTPException(status_code=400, detail="Unsupported audio format")
     download_id = str(uuid.uuid4())
@@ -1895,6 +1911,8 @@ def get_spotify_playlist_tracks(playlist_id: str):
     try:
         tracks = spotify_service.get_playlist_tracks(playlist_id)
         return tracks
+    except SpotifyCatalogError:
+        raise HTTPException(status_code=503, detail='Playlist tracks are temporarily unavailable. Please try again.') from None
     except Exception as e:
         print(f"Error getting playlist tracks: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -1906,6 +1924,8 @@ def get_album_tracks(album_id: str):
     try:
         tracks = spotify_service.get_album_tracks(album_id)
         return tracks
+    except SpotifyCatalogError:
+        raise HTTPException(status_code=503, detail='Album tracks are temporarily unavailable. Please try again.') from None
     except Exception as e:
         print(f"Error getting album tracks: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -2056,6 +2076,8 @@ def get_artist_albums_endpoint(artist_id: str):
     """Get an artist's albums and singles."""
     try:
         return spotify_service.get_artist_albums(artist_id, limit=20)
+    except SpotifyCatalogError:
+        raise HTTPException(status_code=503, detail='Artist releases are temporarily unavailable. Please try again.') from None
     except Exception as e:
         print(f"Error getting artist albums: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -2097,6 +2119,12 @@ def get_lyrics(track_name: str, artist_name: str = "",
     except Exception as e:
         print(f"Error getting lyrics: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+app.include_router(build_search_router(
+    database=lambda: db, spotify=lambda: spotify_service, downloads=lambda: download_service,
+    current_user=_require_current_user, saved_library=get_saved_library, list_downloads=list_downloads,
+))
 
 
 if __name__ == "__main__":

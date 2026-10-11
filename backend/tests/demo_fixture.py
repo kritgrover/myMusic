@@ -9,6 +9,7 @@ import shutil
 import sqlite3
 import struct
 import subprocess
+import types
 import zlib
 from contextlib import ExitStack, closing, contextmanager
 from pathlib import Path
@@ -153,6 +154,30 @@ class DemoFixture:
                 if all(word in f"{track['title']} {track['artist']} {track['album']}".casefold() for word in words)
                 and duration_min <= track["duration"] <= duration_max]
 
+    def catalog_search(self, q, **kwargs):
+        """Spotify-shaped search payload; contains only the synthetic public catalogue."""
+        words = q.casefold().split()
+        def matches(*values):
+            text = ' '.join(str(value) for value in values).casefold()
+            return all(word in text for word in words)
+        tracks = []
+        for track in TRACKS:
+            if matches(track['title'], track['artist'], track['album']):
+                tracks.append({'id': 'catalog' + track['id'], 'name': track['title'],
+                               'artists': [{'id': track['artist_id'], 'name': track['artist']}],
+                               'album': {'id': track['album_id'], 'name': track['album'], 'images': []},
+                               'duration_ms': track['duration'] * 1000,
+                               'external_urls': {'spotify': 'https://open.spotify.com/track/catalog' + track['id']}})
+        artists = [{'id': artist['id'], 'name': artist['name'], 'images': [], 'genres': artist['genres']}
+                   for artist in catalogue_artists() if matches(artist['name'])]
+        albums = [{**album, 'artists': [{'id': album['artist_id'], 'name': album['artist']}],
+                   'images': [], 'album_type': album['type']} for album in catalogue_albums()
+                  if matches(album['name'], album['artist'])]
+        playlists = [{'id': 'demo-catalog-playlist', 'name': 'Evening discovery', 'images': [],
+                      'description': 'Synthetic public playlist', 'owner': {'display_name': 'Demo curator'}}]
+        return {'tracks': {'items': tracks}, 'artists': {'items': artists}, 'albums': {'items': albums},
+                'playlists': {'items': [p for p in playlists if matches(p['name'])]}}
+
     def download(self, url, title="", artist="", album="", output_format="m4a", **kwargs):
         track = find_track(url)
         if not track:
@@ -231,6 +256,7 @@ def browser_fixture(ffmpeg=None):
     with isolated_backend() as (api, root), ExitStack() as stack:
         fixture = DemoFixture(api, root, executable)
         provider = api.spotify_service
+        stack.enter_context(patch.object(provider, 'sp', types.SimpleNamespace(search=fixture.provider(fixture.catalog_search))))
         substitutions = {
             "get_new_releases": lambda **kwargs: catalogue_albums(),
             "get_album": lambda album_id: next((a for a in catalogue_albums() if a["id"] == album_id), None),
