@@ -39,6 +39,8 @@ class UnifiedSearchController extends ChangeNotifier {
   int _generation = 0;
   int _historyRevision = 0;
   bool _disposed = false;
+  SearchResults? _libraryResponse;
+  bool _combinedLibraryFailed = false;
   Future<void> _writes = Future.value();
   String query = '';
   SearchResults results = const SearchResults();
@@ -133,6 +135,8 @@ class UnifiedSearchController extends ChangeNotifier {
     _timer?.cancel();
     _generation++;
     query = value.trim();
+    _libraryResponse = null;
+    _combinedLibraryFailed = false;
     results = _withDeviceResults(const SearchResults(), query);
     isSearching = query.isNotEmpty;
     hasSearched = false;
@@ -145,7 +149,8 @@ class UnifiedSearchController extends ChangeNotifier {
     try {
       final response = await _search(text);
       if (_disposed || request != _generation) return;
-      results = _withDeviceResults(response, text);
+      _combinedLibraryFailed = response.warnings.any(_isLibraryFailure);
+      results = _withDeviceResults(_restoreLibrary(response), text);
     } catch (_) {
       await local;
       if (_disposed || request != _generation) return;
@@ -170,12 +175,44 @@ class UnifiedSearchController extends ChangeNotifier {
     if (_librarySearch == null) return;
     try {
       final local = await _librarySearch!(text);
-      if (_disposed || request != _generation || !isSearching) return;
-      results = _withDeviceResults(local, text);
+      if (_disposed || request != _generation) return;
+      _libraryResponse = local;
+      if (isSearching) {
+        results = _withDeviceResults(local, text);
+      } else if (_combinedLibraryFailed) {
+        results = _withDeviceResults(_restoreLibrary(results), text);
+      } else {
+        return;
+      }
       notifyListeners();
     } catch (_) {
       // The combined response supplies a library warning or a second attempt.
     }
+  }
+
+  bool _isLibraryFailure(String warning) =>
+      warning.startsWith('Your library could not be searched');
+
+  SearchResults _restoreLibrary(SearchResults remote) {
+    final local = _libraryResponse;
+    if (!_combinedLibraryFailed || local == null) return remote;
+    final localPlaylists =
+        local.playlists.map((entry) => '${entry.provider}:${entry.id}').toSet();
+    return SearchResults(
+      songs: remote.songs,
+      artists: remote.artists,
+      albums: remote.albums,
+      playlists: [
+        ...local.playlists,
+        ...remote.playlists.where((entry) =>
+            !localPlaylists.contains('${entry.provider}:${entry.id}')),
+      ],
+      library: local.library,
+      suggestions: remote.suggestions,
+      warnings: remote.warnings
+          .where((warning) => !_isLibraryFailure(warning))
+          .toList(),
+    );
   }
 
   SearchResults _withDeviceResults(SearchResults remote, String text) {

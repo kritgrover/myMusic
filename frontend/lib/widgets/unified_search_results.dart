@@ -168,12 +168,7 @@ class _UnifiedSearchResultsState extends State<UnifiedSearchResults> {
                                       Padding(
                                           padding: const EdgeInsets.symmetric(
                                               vertical: 48),
-                                          child: _message(
-                                              Icons.search_off,
-                                              _filter == 'All'
-                                                  ? 'No results for “${state.query}”'
-                                                  : 'No ${_filter.toLowerCase()} found',
-                                              'Try another spelling, an artist name, or a shorter search.')),
+                                          child: _emptyMessage(state)),
                                     for (final category in _categories)
                                       if ((_filter == 'All' ||
                                               _filter == category) &&
@@ -236,6 +231,43 @@ class _UnifiedSearchResultsState extends State<UnifiedSearchResults> {
                                   ])),
               ]);
         });
+  }
+
+  Widget _emptyMessage(UnifiedSearchController state) {
+    final warnings = state.results.warnings;
+    final catalogUnavailable =
+        warnings.any((warning) => warning.toLowerCase().contains('catalog'));
+    final videoUnavailable = warnings.any((warning) =>
+        warning.startsWith('Video search is temporarily unavailable'));
+    final libraryUnavailable = warnings.any(
+        (warning) => warning.startsWith('Your library could not be searched'));
+    final unavailable = switch (_filter) {
+      'All' => warnings.isNotEmpty,
+      'Songs' => catalogUnavailable || videoUnavailable,
+      'Your Library' => libraryUnavailable,
+      _ => catalogUnavailable,
+    };
+    if (unavailable) {
+      return _message(
+          Icons.cloud_off,
+          switch (_filter) {
+            'Songs' => 'Song search is unavailable',
+            'Artists' => 'Artist search is unavailable',
+            'Albums' => 'Album search is unavailable',
+            'Playlists' => 'Playlist search is unavailable',
+            'Your Library' => 'Library search is unavailable',
+            _ => 'Search is unavailable',
+          },
+          'This category could not be fully searched. See the message above for details.');
+    }
+    return _message(
+        Icons.search_off,
+        switch (_filter) {
+          'All' => 'No results for “${state.query}”',
+          'Your Library' => 'No matches in your library',
+          _ => 'No ${_filter.toLowerCase()} found',
+        },
+        'Try another spelling, an artist name, or a shorter search.');
   }
 
   String _origin(String origin) => switch (origin) {
