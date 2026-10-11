@@ -161,6 +161,10 @@ pip install -r requirements.txt
 
 5. Configure Spotify API (optional, for external catalogue recommendations):
    - Go to [Spotify Developer Dashboard](https://developer.spotify.com/dashboard)
+   - Development-mode apps require an active Spotify Premium subscription on the
+     account that owns the API app. Without it, Spotify rejects catalog requests
+     with HTTP 403; video search and your local library remain available. See
+     [Spotify's development-mode requirements](https://developer.spotify.com/documentation/web-api/concepts/quota-modes).
    - Create a new application
    - Copy your Client ID and Client Secret
    - Create a `.env` file in the `backend/` directory:
