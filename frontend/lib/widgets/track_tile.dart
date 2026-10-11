@@ -1,5 +1,7 @@
+import '../services/auth_http_client.dart';
 import 'package:flutter/material.dart';
 import '../models/playlist.dart';
+import 'save_track_button.dart';
 
 /// A reusable track row (thumbnail + title/artist + play + overflow menu) used by
 /// the album and artist detail screens. Track metadata is already clean (Spotify),
@@ -43,7 +45,8 @@ class TrackTile extends StatelessWidget {
                 borderRadius: BorderRadius.circular(4),
                 child: (thumb != null && thumb.isNotEmpty)
                     ? Image.network(
-                        thumb,
+                        AuthHttpClient.shared.cacheScopedUrl(thumb),
+                        headers: AuthHttpClient.shared.authHeadersForUrl(thumb),
                         width: 48,
                         height: 48,
                         fit: BoxFit.cover,
@@ -79,6 +82,7 @@ class TrackTile extends StatelessWidget {
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  SaveTrackButton(track: track),
                   IconButton(
                     icon: const Icon(Icons.play_arrow),
                     tooltip: 'Play',

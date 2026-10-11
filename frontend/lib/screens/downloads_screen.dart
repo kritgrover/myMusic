@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
+import '../widgets/save_track_button.dart';
 import '../utils/responsive_utils.dart';
 import '../services/api_service.dart';
+import '../services/auth_http_client.dart';
+import '../services/saved_music_service.dart';
 import '../services/player_state_service.dart';
 import '../services/queue_service.dart';
 import '../services/recently_played_service.dart';
@@ -17,12 +20,16 @@ class DownloadsScreen extends StatefulWidget {
   final PlayerStateService playerStateService;
   final QueueService? queueService;
   final RecentlyPlayedService? recentlyPlayedService;
-  
+  final ApiService? apiService;
+  final SavedMusicService? savedMusicService;
+
   const DownloadsScreen({
-    super.key, 
-    required this.playerStateService, 
+    super.key,
+    required this.playerStateService,
     this.queueService,
     this.recentlyPlayedService,
+    this.apiService,
+    this.savedMusicService,
   });
 
   @override
@@ -30,7 +37,8 @@ class DownloadsScreen extends StatefulWidget {
 }
 
 class _DownloadsScreenState extends State<DownloadsScreen> {
-  final ApiService _apiService = ApiService();
+  late final ApiService _apiService;
+  late final SavedMusicService _savedMusic;
   final PlaylistService _playlistService = PlaylistService();
   final TextEditingController _searchController = TextEditingController();
   List<DownloadedFile> _downloads = [];
@@ -40,6 +48,8 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
   @override
   void initState() {
     super.initState();
+    _apiService = widget.apiService ?? ApiService();
+    _savedMusic = widget.savedMusicService ?? SavedMusicService.shared;
     _loadDownloads();
     // Listen to player state changes to update highlighting
     widget.playerStateService.addListener(_onPlayerStateChanged);
@@ -74,11 +84,13 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
 
     try {
       final downloads = await _apiService.listDownloads();
+      if (!mounted) return;
       setState(() {
         _downloads = downloads;
         _isLoading = false;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _isLoading = false;
       });
@@ -89,7 +101,6 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
       }
     }
   }
-
 
   List<DownloadedFile> get _filteredDownloads {
     final query = _searchQuery;
@@ -102,7 +113,8 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
     try {
       return _downloads.where((file) {
         try {
-          final displayName = getDisplayTitle(file.title, file.filename).toLowerCase();
+          final displayName =
+              getDisplayTitle(file.title, file.filename).toLowerCase();
           final filename = file.filename.toLowerCase();
           return displayName.contains(query) || filename.contains(query);
         } catch (e) {
@@ -119,7 +131,7 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
       // Use formatted display name for track name to show proper song name
       final trackName = getDisplayTitle(file.title, file.filename);
       await widget.playerStateService.playTrack(
-        file.filename, 
+        file.filename,
         trackName: trackName,
         trackArtist: file.artist,
       );
@@ -154,8 +166,12 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
     );
 
     if (confirmed == true) {
+      final session = AuthHttpClient.shared.cacheScope;
       try {
         await _apiService.deleteDownload(file.filename);
+        if (!mounted || session != AuthHttpClient.shared.cacheScope) return;
+        await _savedMusic.refreshAfterDownloadDeletion(file.filename);
+        if (!mounted || session != AuthHttpClient.shared.cacheScope) return;
         await _loadDownloads();
       } catch (e) {
         if (mounted) {
@@ -244,14 +260,15 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
                 decoration: InputDecoration(
                   hintText: 'Search your library...',
                   prefixIcon: const Icon(Icons.search, size: 24),
-                  suffixIcon: _searchQuery.isNotEmpty && _searchQuery.trim().isNotEmpty
-                      ? IconButton(
-                          icon: const Icon(Icons.clear, size: 20),
-                          onPressed: () {
-                            _searchController.clear();
-                          },
-                        )
-                      : null,
+                  suffixIcon:
+                      _searchQuery.isNotEmpty && _searchQuery.trim().isNotEmpty
+                          ? IconButton(
+                              icon: const Icon(Icons.clear, size: 20),
+                              onPressed: () {
+                                _searchController.clear();
+                              },
+                            )
+                          : null,
                 ),
               ),
             ],
@@ -275,13 +292,20 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
                             subtitle: 'Try a different search term.',
                           )
                         : ListView.separated(
-                            padding: ResponsiveUtils.responsiveHorizontalPadding(context),
+                            padding:
+                                ResponsiveUtils.responsiveHorizontalPadding(
+                                    context),
                             itemCount: filteredDownloads.length,
-                            separatorBuilder: (context, index) => const SizedBox(height: 8),
+                            separatorBuilder: (context, index) =>
+                                const SizedBox(height: 8),
                             itemBuilder: (context, index) {
                               final file = filteredDownloads[index];
-                              final isCurrentlyPlaying = widget.playerStateService.currentTrackUrl?.contains(file.filename) ?? false;
-                              final trackName = getDisplayTitle(file.title, file.filename);
+                              final isCurrentlyPlaying = widget
+                                      .playerStateService.currentTrackUrl
+                                      ?.contains(file.filename) ??
+                                  false;
+                              final trackName =
+                                  getDisplayTitle(file.title, file.filename);
 
                               return Material(
                                 color: Colors.transparent,
@@ -290,7 +314,8 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
                                   borderRadius: BorderRadius.circular(12),
                                   hoverColor: surfaceHover.withOpacity(0.5),
                                   child: Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 16, vertical: 12),
                                     decoration: BoxDecoration(
                                       borderRadius: BorderRadius.circular(12),
                                       gradient: isCurrentlyPlaying
@@ -303,47 +328,71 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
                                               ],
                                             )
                                           : null,
-                                      color: isCurrentlyPlaying ? null : Theme.of(context).colorScheme.surface,
+                                      color: isCurrentlyPlaying
+                                          ? null
+                                          : Theme.of(context)
+                                              .colorScheme
+                                              .surface,
                                       border: isCurrentlyPlaying
                                           ? Border(
-                                              left: BorderSide(color: primaryColor, width: 3),
+                                              left: BorderSide(
+                                                  color: primaryColor,
+                                                  width: 3),
                                             )
                                           : Border.all(
-                                              color: Theme.of(context).colorScheme.surfaceVariant.withOpacity(0.5),
+                                              color: Theme.of(context)
+                                                  .colorScheme
+                                                  .surfaceVariant
+                                                  .withOpacity(0.5),
                                               width: 1,
                                             ),
                                     ),
                                     child: Row(
                                       children: [
                                         ClipRRect(
-                                          borderRadius: BorderRadius.circular(8),
+                                          borderRadius:
+                                              BorderRadius.circular(8),
                                           child: AlbumCover(
                                             filename: file.filename,
                                             title: file.title,
                                             artist: file.artist,
-                                            size: ResponsiveUtils.responsiveIconSize(context, base: 48),
+                                            size: ResponsiveUtils
+                                                .responsiveIconSize(context,
+                                                    base: 48),
                                           ),
                                         ),
                                         const SizedBox(width: 16),
                                         Expanded(
                                           child: Column(
-                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
                                             children: [
                                               Text(
                                                 trackName,
-                                                style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                                                  color: isCurrentlyPlaying ? primaryColor : null,
-                                                  fontWeight: isCurrentlyPlaying ? FontWeight.w600 : FontWeight.w400,
-                                                ),
+                                                style: Theme.of(context)
+                                                    .textTheme
+                                                    .bodyLarge
+                                                    ?.copyWith(
+                                                      color: isCurrentlyPlaying
+                                                          ? primaryColor
+                                                          : null,
+                                                      fontWeight:
+                                                          isCurrentlyPlaying
+                                                              ? FontWeight.w600
+                                                              : FontWeight.w400,
+                                                    ),
                                                 maxLines: 1,
                                                 overflow: TextOverflow.ellipsis,
                                               ),
                                               const SizedBox(height: 4),
                                               Text(
-                                                file.artist != null && file.artist!.isNotEmpty
+                                                file.artist != null &&
+                                                        file.artist!.isNotEmpty
                                                     ? file.artist!
                                                     : file.formattedSize,
-                                                style: Theme.of(context).textTheme.bodySmall,
+                                                style: Theme.of(context)
+                                                    .textTheme
+                                                    .bodySmall,
                                                 maxLines: 1,
                                                 overflow: TextOverflow.ellipsis,
                                               ),
@@ -353,30 +402,86 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
                                         Row(
                                           mainAxisSize: MainAxisSize.min,
                                           children: [
-                                            IconButton(
-                                              icon: const Icon(Icons.playlist_add, size: 20),
-                                              onPressed: () => _addToPlaylist(file),
-                                              tooltip: 'Add to playlist',
-                                            ),
-                                            if (widget.queueService != null)
+                                            if (MediaQuery.sizeOf(context)
+                                                    .width >=
+                                                600)
                                               IconButton(
-                                                icon: const Icon(Icons.queue_music, size: 20),
-                                                onPressed: () => _addToQueue(file),
+                                                icon: const Icon(
+                                                    Icons.playlist_add,
+                                                    size: 20),
+                                                onPressed: () =>
+                                                    _addToPlaylist(file),
+                                                tooltip: 'Add to playlist',
+                                              ),
+                                            if (widget.queueService != null &&
+                                                MediaQuery.sizeOf(context)
+                                                        .width >=
+                                                    600)
+                                              IconButton(
+                                                icon: const Icon(
+                                                    Icons.queue_music,
+                                                    size: 20),
+                                                onPressed: () =>
+                                                    _addToQueue(file),
                                                 tooltip: 'Add to queue',
                                               ),
                                             IconButton(
                                               icon: Icon(
                                                 Icons.play_arrow,
-                                                color: isCurrentlyPlaying ? primaryColor : null,
+                                                color: isCurrentlyPlaying
+                                                    ? primaryColor
+                                                    : null,
                                               ),
                                               onPressed: () => _playFile(file),
                                               tooltip: 'Play',
                                             ),
-                                            IconButton(
-                                              icon: const Icon(Icons.delete_outline, size: 20),
-                                              onPressed: () => _deleteFile(file),
-                                              tooltip: 'Delete',
-                                            ),
+                                            SaveTrackButton(
+                                                track: PlaylistTrack
+                                                    .fromDownloadedFile(file),
+                                                service: _savedMusic),
+                                            if (MediaQuery.sizeOf(context)
+                                                    .width <
+                                                600)
+                                              PopupMenuButton<String>(
+                                                tooltip: 'More song actions',
+                                                onSelected: (value) {
+                                                  switch (value) {
+                                                    case 'playlist':
+                                                      _addToPlaylist(file);
+                                                    case 'queue':
+                                                      _addToQueue(file);
+                                                    case 'delete':
+                                                      _deleteFile(file);
+                                                  }
+                                                },
+                                                itemBuilder: (_) => [
+                                                  const PopupMenuItem(
+                                                      value: 'playlist',
+                                                      child: Text(
+                                                          'Add to playlist')),
+                                                  if (widget.queueService !=
+                                                      null)
+                                                    const PopupMenuItem(
+                                                        value: 'queue',
+                                                        child: Text(
+                                                            'Add to queue')),
+                                                  const PopupMenuItem(
+                                                      value: 'delete',
+                                                      child: Text(
+                                                          'Delete download')),
+                                                ],
+                                              ),
+                                            if (MediaQuery.sizeOf(context)
+                                                    .width >=
+                                                600)
+                                              IconButton(
+                                                icon: const Icon(
+                                                    Icons.delete_outline,
+                                                    size: 20),
+                                                onPressed: () =>
+                                                    _deleteFile(file),
+                                                tooltip: 'Delete',
+                                              ),
                                           ],
                                         ),
                                       ],
@@ -391,7 +496,4 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
       ],
     );
   }
-
 }
-
-

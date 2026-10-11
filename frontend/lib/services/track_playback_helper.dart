@@ -34,8 +34,10 @@ class TrackPlaybackHelper {
     if (originalUrl == null) return null;
     try {
       String youtubeUrl = originalUrl;
-      if (!youtubeUrl.contains('youtube.com') && !youtubeUrl.contains('youtu.be')) {
-        final results = await apiService.searchYoutube('${item.title} ${item.artist ?? ''}');
+      if (!youtubeUrl.contains('youtube.com') &&
+          !youtubeUrl.contains('youtu.be')) {
+        final results = await apiService
+            .searchYoutube('${item.title} ${item.artist ?? ''}');
         if (results.isEmpty) return null;
         final found = results.first.url;
         if (found.isEmpty) return null;
@@ -55,7 +57,20 @@ class TrackPlaybackHelper {
   /// Play a single track immediately (replaces the queue with just this track).
   Future<void> playTrack(BuildContext context, PlaylistTrack track) async {
     try {
-      final yt = await apiService.resolveToYouTubeUrl(track.url, track.title, track.artist);
+      if (track.filename.isNotEmpty) {
+        queueService.clearQueue();
+        await queueService.addAndPlay(
+            QueueItem.fromDownloadedFile(
+              filename: track.filename,
+              title: track.title,
+              artist: track.artist,
+              album: track.album,
+            ),
+            playerStateService);
+        return;
+      }
+      final yt = await apiService.resolveToYouTubeUrl(
+          track.url, track.title, track.artist);
       if (yt == null || yt.isEmpty) {
         _notFound(context, track.title);
         return;
@@ -67,8 +82,8 @@ class TrackPlaybackHelper {
       );
       final item = QueueItem(
         id: 'track_${track.id}',
-        title: result.title,
-        artist: result.artist,
+        title: track.title,
+        artist: track.artist ?? result.artist,
         album: track.album,
         url: result.streamingUrl,
         originalUrl: yt,
@@ -86,26 +101,47 @@ class TrackPlaybackHelper {
     if (tracks.isEmpty) return;
     try {
       final items = tracks
-          .map((t) => QueueItem.fromPlaylistTrackLazy(
-                trackId: t.id,
-                title: t.title,
-                artist: t.artist,
-                originalUrl: t.url ?? '',
-                album: t.album,
-                thumbnail: t.thumbnail,
-              ))
+          .map((t) => t.filename.isNotEmpty
+              ? QueueItem.fromDownloadedFile(
+                  filename: t.filename,
+                  title: t.title,
+                  artist: t.artist,
+                  album: t.album,
+                )
+              : QueueItem.fromPlaylistTrackLazy(
+                  trackId: t.id,
+                  title: t.title,
+                  artist: t.artist,
+                  originalUrl: t.url ?? '',
+                  album: t.album,
+                  thumbnail: t.thumbnail,
+                ))
           .toList();
       queueService.clearQueue();
-      queueService.addAllToQueue(items, isPlaylistQueue: true, loadStreamingUrl: loadStreamingUrl);
-      await queueService.playItem(0, playerStateService, loadStreamingUrl: loadStreamingUrl);
+      queueService.addAllToQueue(items,
+          isPlaylistQueue: true, loadStreamingUrl: loadStreamingUrl);
+      await queueService.playItem(0, playerStateService,
+          loadStreamingUrl: loadStreamingUrl);
     } catch (e) {
       _error(context, 'Could not play: $e');
     }
   }
 
-  Future<void> addToQueue(BuildContext context, PlaylistTrack track, {bool showSnackbar = true}) async {
+  Future<void> addToQueue(BuildContext context, PlaylistTrack track,
+      {bool showSnackbar = true}) async {
     try {
-      final yt = await apiService.resolveToYouTubeUrl(track.url, track.title, track.artist);
+      if (track.filename.isNotEmpty) {
+        queueService.addToQueue(QueueItem.fromDownloadedFile(
+          filename: track.filename,
+          title: track.title,
+          artist: track.artist,
+          album: track.album,
+        ));
+        if (showSnackbar) _info(context, 'Added "${track.title}" to queue');
+        return;
+      }
+      final yt = await apiService.resolveToYouTubeUrl(
+          track.url, track.title, track.artist);
       if (yt == null || yt.isEmpty) {
         if (showSnackbar) _notFound(context, track.title);
         return;
@@ -117,8 +153,8 @@ class TrackPlaybackHelper {
       );
       final item = QueueItem(
         id: 'track_${track.id}',
-        title: result.title,
-        artist: result.artist,
+        title: track.title,
+        artist: track.artist ?? result.artist,
         album: track.album,
         url: result.streamingUrl,
         originalUrl: yt,
@@ -134,7 +170,8 @@ class TrackPlaybackHelper {
   Future<void> download(BuildContext context, PlaylistTrack track) async {
     String? yt;
     try {
-      yt = await apiService.resolveToYouTubeUrl(track.url, track.title, track.artist);
+      yt = await apiService.resolveToYouTubeUrl(
+          track.url, track.title, track.artist);
     } catch (_) {}
     if (yt == null || yt.isEmpty) {
       _notFound(context, track.title);
@@ -170,29 +207,36 @@ class TrackPlaybackHelper {
   }
 
   Future<void> addToPlaylist(BuildContext context, PlaylistTrack track) async {
-    final yt = await apiService.resolveToYouTubeUrl(track.url, track.title, track.artist);
-    if (yt == null || yt.isEmpty) {
-      _notFound(context, track.title);
-      return;
+    try {
+      final yt = track.filename.isNotEmpty
+          ? track.url
+          : await apiService.resolveToYouTubeUrl(
+              track.url, track.title, track.artist);
+      if (track.filename.isEmpty && (yt == null || yt.isEmpty)) {
+        _notFound(context, track.title);
+        return;
+      }
+      final playlistTrack = PlaylistTrack(
+        id: track.id,
+        title: track.title,
+        artist: track.artist,
+        album: track.album,
+        filename: track.filename,
+        url: yt,
+        thumbnail: track.thumbnail,
+        duration: track.duration,
+      );
+      if (!context.mounted) return;
+      await showDialog(
+        context: context,
+        builder: (_) => PlaylistSelectionDialog(
+          playlistService: playlistService,
+          track: playlistTrack,
+        ),
+      );
+    } catch (error) {
+      _error(context, 'Could not add to playlist: $error');
     }
-    final playlistTrack = PlaylistTrack(
-      id: track.id,
-      title: track.title,
-      artist: track.artist,
-      album: track.album,
-      filename: '',
-      url: yt,
-      thumbnail: track.thumbnail,
-      duration: track.duration,
-    );
-    if (!context.mounted) return;
-    await showDialog(
-      context: context,
-      builder: (_) => PlaylistSelectionDialog(
-        playlistService: playlistService,
-        track: playlistTrack,
-      ),
-    );
   }
 
   void _info(BuildContext context, String msg) {
@@ -205,7 +249,10 @@ class TrackPlaybackHelper {
   void _error(BuildContext context, String msg) {
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(msg), backgroundColor: Colors.red, behavior: SnackBarBehavior.floating),
+      SnackBar(
+          content: Text(msg),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating),
     );
   }
 

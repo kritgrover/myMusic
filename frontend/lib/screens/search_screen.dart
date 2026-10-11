@@ -4,6 +4,7 @@ import '../services/api_service.dart';
 import '../services/player_state_service.dart';
 import '../services/playlist_service.dart';
 import '../services/queue_service.dart';
+import '../services/search_controller.dart';
 import '../models/queue_item.dart';
 import '../widgets/video_card.dart';
 import '../widgets/playlist_selection_dialog.dart';
@@ -12,7 +13,7 @@ import '../models/playlist.dart';
 class SearchScreen extends StatefulWidget {
   final PlayerStateService? playerStateService;
   final QueueService? queueService;
-  
+
   const SearchScreen({super.key, this.playerStateService, this.queueService});
 
   @override
@@ -23,41 +24,37 @@ class _SearchScreenState extends State<SearchScreen> {
   final ApiService _apiService = ApiService();
   final PlaylistService _playlistService = PlaylistService();
   final TextEditingController _searchController = TextEditingController();
-  List<VideoInfo> _searchResults = [];
-  bool _isSearching = false;
+  late final MusicSearchController _searchState;
+  List<VideoInfo> get _searchResults => _searchState.results;
+  bool get _isSearching => _searchState.isSearching;
+
+  @override
+  void initState() {
+    super.initState();
+    _searchState = MusicSearchController(search: _apiService.searchYoutube)
+      ..addListener(_onSearchStateChanged);
+    _searchController.addListener(_onQueryChanged);
+  }
+
+  void _onSearchStateChanged() {
+    if (mounted) setState(() {});
+  }
+
+  void _onQueryChanged() {
+    _searchState.updateQuery(_searchController.text);
+    // Whitespace changes still need to update the clear button.
+    if (mounted) setState(() {});
+  }
 
   @override
   void dispose() {
+    _searchState.dispose();
     _searchController.dispose();
     super.dispose();
   }
 
-  Future<void> _performSearch() async {
-    final query = _searchController.text.trim();
-    if (query.isEmpty) return;
-
-    setState(() {
-      _isSearching = true;
-      _searchResults = [];
-    });
-
-    try {
-      final results = await _apiService.searchYoutube(query);
-      setState(() {
-        _searchResults = results;
-        _isSearching = false;
-      });
-    } catch (e) {
-      setState(() {
-        _isSearching = false;
-      });
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Search failed: $e')),
-        );
-      }
-    }
-  }
+  Future<void> _performSearch() =>
+      _searchState.searchNow(_searchController.text);
 
   @override
   Widget build(BuildContext context) {
@@ -71,8 +68,8 @@ class _SearchScreenState extends State<SearchScreen> {
               Text(
                 'Discover Music',
                 style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                  fontWeight: FontWeight.w700,
-                ),
+                      fontWeight: FontWeight.w700,
+                    ),
               ),
               const SizedBox(height: 20),
               TextField(
@@ -83,12 +80,8 @@ class _SearchScreenState extends State<SearchScreen> {
                   suffixIcon: _searchController.text.isNotEmpty
                       ? IconButton(
                           icon: const Icon(Icons.clear, size: 20),
-                          onPressed: () {
-                            _searchController.clear();
-                            setState(() {
-                              _searchResults = [];
-                            });
-                          },
+                          tooltip: 'Clear search',
+                          onPressed: _searchController.clear,
                         )
                       : null,
                 ),
@@ -101,61 +94,89 @@ class _SearchScreenState extends State<SearchScreen> {
         Expanded(
           child: _isSearching
               ? const Center(child: CircularProgressIndicator())
-              : _searchResults.isEmpty
+              : _searchState.error != null
                   ? Center(
                       child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
+                        mainAxisSize: MainAxisSize.min,
                         children: [
-                          Icon(
-                            _searchController.text.isEmpty
-                                ? Icons.search
-                                : Icons.search_off,
-                            size: 64,
-                            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.3),
+                          Text(_searchState.error!,
+                              textAlign: TextAlign.center),
+                          const SizedBox(height: 12),
+                          TextButton.icon(
+                            onPressed: _searchState.retry,
+                            icon: const Icon(Icons.refresh),
+                            label: const Text('Retry search'),
                           ),
-                          const SizedBox(height: 16),
-                          Text(
-                            _searchController.text.isEmpty
-                                ? 'Search for your favorite music'
-                                : 'No results found',
-                            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                              color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
-                            ),
-                          ),
-                          if (_searchController.text.isNotEmpty) ...[
-                            const SizedBox(height: 8),
-                            Text(
-                              'Try a different search term',
-                              style: Theme.of(context).textTheme.bodySmall,
-                            ),
-                          ],
                         ],
                       ),
                     )
-                  : ListView.separated(
-                      padding: ResponsiveUtils.responsiveHorizontalPadding(context),
-                      itemCount: _searchResults.length,
-                      separatorBuilder: (context, index) => const SizedBox(height: 12),
-                      itemBuilder: (context, index) {
-                        return VideoCard(
-                          video: _searchResults[index],
-                          onStream: () async {
-                            await _streamVideo(_searchResults[index]);
+                  : _searchResults.isEmpty
+                      ? Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(
+                                _searchController.text.isEmpty
+                                    ? Icons.search
+                                    : Icons.search_off,
+                                size: 64,
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .onSurface
+                                    .withOpacity(0.3),
+                              ),
+                              const SizedBox(height: 16),
+                              Text(
+                                _searchController.text.isEmpty
+                                    ? 'Search for your favorite music'
+                                    : 'No results found',
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .titleMedium
+                                    ?.copyWith(
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .onSurface
+                                          .withOpacity(0.6),
+                                    ),
+                              ),
+                              if (_searchController.text.isNotEmpty) ...[
+                                const SizedBox(height: 8),
+                                Text(
+                                  'Try a different search term',
+                                  style: Theme.of(context).textTheme.bodySmall,
+                                ),
+                              ],
+                            ],
+                          ),
+                        )
+                      : ListView.separated(
+                          padding: ResponsiveUtils.responsiveHorizontalPadding(
+                              context),
+                          itemCount: _searchResults.length,
+                          separatorBuilder: (context, index) =>
+                              const SizedBox(height: 12),
+                          itemBuilder: (context, index) {
+                            return VideoCard(
+                              video: _searchResults[index],
+                              onStream: () async {
+                                await _streamVideo(_searchResults[index]);
+                              },
+                              onDownload: () async {
+                                await _downloadVideo(_searchResults[index]);
+                              },
+                              onAddToPlaylist: () async {
+                                await _showAddToPlaylistDialog(
+                                    _searchResults[index]);
+                              },
+                              onAddToQueue: widget.queueService != null
+                                  ? () async {
+                                      await _addToQueue(_searchResults[index]);
+                                    }
+                                  : null,
+                            );
                           },
-                          onDownload: () async {
-                            await _downloadVideo(_searchResults[index]);
-                          },
-                          onAddToPlaylist: () async {
-                            await _showAddToPlaylistDialog(_searchResults[index]);
-                          },
-                          onAddToQueue: widget.queueService != null
-                              ? () async {
-                                  await _addToQueue(_searchResults[index]);
-                                }
-                              : null,
-                        );
-                      },
-                    ),
+                        ),
         ),
       ],
     );
@@ -261,33 +282,40 @@ class _SearchScreenState extends State<SearchScreen> {
   }
 
   Future<void> _showAddToPlaylistDialog(VideoInfo video) async {
-    final cleaned = await _apiService.cleanMetadata(
-      title: video.title,
-      uploader: video.uploader,
-      videoId: video.id,
-      videoUrl: video.url,
-    );
+    try {
+      final cleaned = await _apiService.cleanMetadata(
+        title: video.title,
+        uploader: video.uploader,
+        videoId: video.id,
+        videoUrl: video.url,
+      );
 
-    final track = PlaylistTrack(
-      id: video.id,
-      title: cleaned['title'] ?? video.title,
-      artist: cleaned['artist'] ?? video.uploader,
-      album: cleaned['album'],
-      filename: '',
-      url: video.url,
-      thumbnail: video.thumbnail,
-      duration: video.duration,
-    );
+      final track = PlaylistTrack(
+        id: video.id,
+        title: cleaned['title'] ?? video.title,
+        artist: cleaned['artist'] ?? video.uploader,
+        album: cleaned['album'],
+        filename: '',
+        url: video.url,
+        thumbnail: video.thumbnail,
+        duration: video.duration,
+      );
 
-    if (!mounted) return;
+      if (!mounted) return;
 
-    await showDialog(
-      context: context,
-      builder: (context) => PlaylistSelectionDialog(
-        playlistService: _playlistService,
-        track: track,
-      ),
-    );
+      await showDialog(
+        context: context,
+        builder: (context) => PlaylistSelectionDialog(
+          playlistService: _playlistService,
+          track: track,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to add to playlist: $e')),
+      );
+    }
   }
 
   Future<void> _addToQueue(VideoInfo video) async {
@@ -329,5 +357,3 @@ class _SearchScreenState extends State<SearchScreen> {
     }
   }
 }
-
-

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../models/playlist.dart';
+import '../services/auth_http_client.dart';
 
 /// The persistent left sidebar (medium/expanded widths). Holds the three primary
 /// destinations — Home, Search, Your Library — and, when expanded, a shortcut list
@@ -11,6 +12,7 @@ class AppSidebar extends StatelessWidget {
   final List<Playlist> playlists;
   final ValueChanged<Playlist> onOpenPlaylist;
   final VoidCallback onCreate;
+  final VoidCallback? onLikedSongs;
 
   const AppSidebar({
     super.key,
@@ -20,24 +22,47 @@ class AppSidebar extends StatelessWidget {
     required this.playlists,
     required this.onOpenPlaylist,
     required this.onCreate,
+    this.onLikedSongs,
   });
 
   @override
   Widget build(BuildContext context) {
     return Container(
       decoration: BoxDecoration(
-        border: Border(right: BorderSide(color: Theme.of(context).dividerColor)),
+        border:
+            Border(right: BorderSide(color: Theme.of(context).dividerColor)),
       ),
-      padding: EdgeInsets.symmetric(horizontal: expanded ? 12 : 8, vertical: 14),
+      padding:
+          EdgeInsets.symmetric(horizontal: expanded ? 12 : 8, vertical: 14),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           _brand(context),
           const SizedBox(height: 14),
-          _navItem(context, index: 0, icon: Icons.home_outlined, selectedIcon: Icons.home, label: 'Home'),
-          _navItem(context, index: 1, icon: Icons.search, selectedIcon: Icons.search, label: 'Search'),
-          _navItem(context, index: 2, icon: Icons.library_music_outlined, selectedIcon: Icons.library_music, label: 'Your Library'),
+          _navItem(context,
+              index: 0,
+              icon: Icons.home_outlined,
+              selectedIcon: Icons.home,
+              label: 'Home'),
+          _navItem(context,
+              index: 1,
+              icon: Icons.search,
+              selectedIcon: Icons.search,
+              label: 'Search'),
+          _navItem(context,
+              index: 2,
+              icon: Icons.library_music_outlined,
+              selectedIcon: Icons.library_music,
+              label: 'Your Library'),
           if (expanded) ...[
+            if (onLikedSongs != null)
+              ListTile(
+                dense: true,
+                contentPadding: const EdgeInsets.symmetric(horizontal: 10),
+                leading: Icon(Icons.favorite, color: Theme.of(context).colorScheme.primary),
+                title: const Text('Liked Songs'),
+                onTap: onLikedSongs,
+              ),
             const SizedBox(height: 10),
             Divider(color: Theme.of(context).dividerColor, height: 1),
             const SizedBox(height: 8),
@@ -46,7 +71,10 @@ class AppSidebar extends StatelessWidget {
                 Expanded(
                   child: Text(
                     'PLAYLISTS',
-                    style: Theme.of(context).textTheme.labelSmall?.copyWith(letterSpacing: 0.6),
+                    style: Theme.of(context)
+                        .textTheme
+                        .labelSmall
+                        ?.copyWith(letterSpacing: 0.6),
                   ),
                 ),
                 IconButton(
@@ -72,7 +100,8 @@ class AppSidebar extends StatelessWidget {
                   : ListView.builder(
                       padding: EdgeInsets.zero,
                       itemCount: playlists.length,
-                      itemBuilder: (context, index) => _playlistRow(context, playlists[index]),
+                      itemBuilder: (context, index) =>
+                          _playlistRow(context, playlists[index]),
                     ),
             ),
           ] else
@@ -114,11 +143,14 @@ class AppSidebar extends StatelessWidget {
   }) {
     final scheme = Theme.of(context).colorScheme;
     final selected = selectedIndex == index;
-    final color = selected ? scheme.onSurface : Theme.of(context).textTheme.labelMedium?.color;
+    final color = selected
+        ? scheme.onSurface
+        : Theme.of(context).textTheme.labelMedium?.color;
     final content = expanded
         ? Row(
             children: [
-              Icon(selected ? selectedIcon : icon, size: 22, color: selected ? scheme.primary : color),
+              Icon(selected ? selectedIcon : icon,
+                  size: 22, color: selected ? scheme.primary : color),
               const SizedBox(width: 14),
               Text(
                 label,
@@ -130,7 +162,9 @@ class AppSidebar extends StatelessWidget {
               ),
             ],
           )
-        : Center(child: Icon(selected ? selectedIcon : icon, size: 24, color: selected ? scheme.primary : color));
+        : Center(
+            child: Icon(selected ? selectedIcon : icon,
+                size: 24, color: selected ? scheme.primary : color));
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2),
@@ -143,7 +177,8 @@ class AppSidebar extends StatelessWidget {
           child: Tooltip(
             message: expanded ? '' : label,
             child: Padding(
-              padding: EdgeInsets.symmetric(horizontal: expanded ? 10 : 4, vertical: 10),
+              padding: EdgeInsets.symmetric(
+                  horizontal: expanded ? 10 : 4, vertical: 10),
               child: content,
             ),
           ),
@@ -154,7 +189,8 @@ class AppSidebar extends StatelessWidget {
 
   Widget _playlistRow(BuildContext context, Playlist playlist) {
     final cover = playlist.coverImage;
-    final hasHttp = cover != null && (cover.startsWith('http://') || cover.startsWith('https://'));
+    final hasHttp = cover != null &&
+        (cover.startsWith('http://') || cover.startsWith('https://'));
     return InkWell(
       onTap: () => onOpenPlaylist(playlist),
       borderRadius: BorderRadius.circular(6),
@@ -166,7 +202,8 @@ class AppSidebar extends StatelessWidget {
               borderRadius: BorderRadius.circular(4),
               child: hasHttp
                   ? Image.network(
-                      cover,
+                      AuthHttpClient.shared.cacheScopedUrl(cover),
+                      headers: AuthHttpClient.shared.authHeadersForUrl(cover),
                       width: 38,
                       height: 38,
                       fit: BoxFit.cover,

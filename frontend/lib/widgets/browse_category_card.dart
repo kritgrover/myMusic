@@ -1,3 +1,4 @@
+import '../services/auth_http_client.dart';
 import 'package:flutter/material.dart';
 
 /// A vibrant Spotify-style "Browse all" category tile: a rich colored card with
@@ -108,7 +109,8 @@ class _BrowseCategoryCardState extends State<BrowseCategoryCard> {
                         borderRadius: BorderRadius.circular(6),
                         child: hasImage
                             ? Image.network(
-                                widget.imageUrl!,
+                                AuthHttpClient.shared.cacheScopedUrl(widget.imageUrl!),
+                                headers: AuthHttpClient.shared.authHeadersForUrl(widget.imageUrl!),
                                 width: 78,
                                 height: 78,
                                 fit: BoxFit.cover,

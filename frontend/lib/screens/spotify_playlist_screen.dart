@@ -1,3 +1,4 @@
+import '../services/auth_http_client.dart';
 import 'dart:math';
 import 'package:flutter/material.dart';
 import '../utils/responsive_utils.dart';
@@ -1067,7 +1068,8 @@ class _PlaylistCoverWidget extends StatelessWidget {
           ? ClipRRect(
               borderRadius: BorderRadius.circular(12),
               child: Image.network(
-                coverImageUrl!,
+                AuthHttpClient.shared.cacheScopedUrl(coverImageUrl!),
+                headers: AuthHttpClient.shared.authHeadersForUrl(coverImageUrl!),
                 width: coverSize,
                 height: coverSize,
                 fit: BoxFit.cover,

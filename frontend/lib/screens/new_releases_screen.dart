@@ -1,3 +1,4 @@
+import '../services/auth_http_client.dart';
 import 'package:flutter/material.dart';
 import '../utils/responsive_utils.dart';
 
@@ -113,7 +114,8 @@ class NewReleasesScreen extends StatelessWidget {
                         borderRadius: BorderRadius.circular(8),
                         child: thumbnail != null && thumbnail.isNotEmpty
                             ? Image.network(
-                                thumbnail,
+                                AuthHttpClient.shared.cacheScopedUrl(thumbnail),
+                                headers: AuthHttpClient.shared.authHeadersForUrl(thumbnail),
                                 width: cardSize,
                                 height: cardSize,
                                 fit: BoxFit.cover,

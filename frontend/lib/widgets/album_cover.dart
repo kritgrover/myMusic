@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/album_cover_service.dart';
+import '../services/auth_http_client.dart';
 
 /// Widget that fetches and displays album covers for tracks
 /// Tries: 1) Pre-resolved URL, 2) Embedded artwork from file, 3) iTunes API, 4) Placeholder
@@ -13,7 +14,8 @@ class AlbumCover extends StatefulWidget {
   final Color? backgroundColor;
   final Color? iconColor;
   final BorderRadius? borderRadius;
-  final Function(String?)? onArtworkResolved; // Callback when artwork is resolved
+  final Function(String?)?
+      onArtworkResolved; // Callback when artwork is resolved
 
   const AlbumCover({
     super.key,
@@ -38,6 +40,7 @@ class _AlbumCoverState extends State<AlbumCover> {
   String? _artworkUrl;
   bool _isLoading = true;
   bool _hasError = false;
+  int _loadRequest = 0;
 
   @override
   void initState() {
@@ -58,6 +61,8 @@ class _AlbumCoverState extends State<AlbumCover> {
   }
 
   Future<void> _loadAlbumCover() async {
+    final request = ++_loadRequest;
+    final session = AuthHttpClient.shared.cacheScope;
     final needsFetch = widget.artworkUrl == null || widget.artworkUrl!.isEmpty;
     if (needsFetch) {
       setState(() {
@@ -75,7 +80,9 @@ class _AlbumCoverState extends State<AlbumCover> {
       existingUrl: widget.artworkUrl,
     );
 
-    if (!mounted) return;
+    if (!mounted ||
+        request != _loadRequest ||
+        session != AuthHttpClient.shared.cacheScope) return;
     setState(() {
       _artworkUrl = artworkUrl;
       _isLoading = false;
@@ -87,8 +94,8 @@ class _AlbumCoverState extends State<AlbumCover> {
 
   @override
   Widget build(BuildContext context) {
-    final defaultBgColor = widget.backgroundColor ??
-        Theme.of(context).colorScheme.surfaceVariant;
+    final defaultBgColor =
+        widget.backgroundColor ?? Theme.of(context).colorScheme.surfaceVariant;
     final defaultIconColor = widget.iconColor ??
         Theme.of(context).colorScheme.onSurface.withOpacity(0.5);
     final defaultBorderRadius = widget.borderRadius ?? BorderRadius.circular(8);
@@ -124,7 +131,8 @@ class _AlbumCoverState extends State<AlbumCover> {
     return ClipRRect(
       borderRadius: defaultBorderRadius,
       child: Image.network(
-        _artworkUrl!,
+        AuthHttpClient.shared.cacheScopedUrl(_artworkUrl!),
+        headers: AuthHttpClient.shared.authHeadersForUrl(_artworkUrl!),
         width: widget.size,
         height: widget.size,
         fit: BoxFit.cover,
@@ -150,4 +158,3 @@ class _AlbumCoverState extends State<AlbumCover> {
     );
   }
 }
-

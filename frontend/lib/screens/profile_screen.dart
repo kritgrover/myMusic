@@ -1,3 +1,4 @@
+import '../services/auth_http_client.dart';
 import 'package:flutter/material.dart';
 import '../utils/responsive_utils.dart';
 
@@ -536,7 +537,8 @@ class _PublicPlaylistTile extends StatelessWidget {
                 borderRadius: BorderRadius.circular(12),
                 child: (coverUrl != null && coverUrl!.isNotEmpty)
                     ? Image.network(
-                        coverUrl!,
+                        AuthHttpClient.shared.cacheScopedUrl(coverUrl!),
+                        headers: AuthHttpClient.shared.authHeadersForUrl(coverUrl!),
                         fit: BoxFit.cover,
                         errorBuilder: (_, __, ___) => _placeholder(context),
                       )

@@ -1,3 +1,4 @@
+import '../services/auth_http_client.dart';
 import 'package:flutter/material.dart';
 import '../utils/responsive_utils.dart';
 import '../services/recommendation_service.dart';
@@ -10,6 +11,8 @@ import '../services/track_playback_helper.dart';
 import '../models/playlist.dart';
 import '../models/discovery.dart';
 import '../widgets/track_tile.dart';
+import '../widgets/save_music_button.dart';
+import '../services/saved_music_service.dart';
 import 'artist_screen.dart';
 
 /// Tracklist view for a Spotify album (opened from New Releases / artist discography).
@@ -116,7 +119,8 @@ class _AlbumDetailScreenState extends State<AlbumDetailScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text(widget.albumName, overflow: TextOverflow.ellipsis)),
+      appBar: AppBar(
+          title: Text(widget.albumName, overflow: TextOverflow.ellipsis)),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : ListView(
@@ -124,6 +128,17 @@ class _AlbumDetailScreenState extends State<AlbumDetailScreen> {
               children: [
                 const SizedBox(height: 12),
                 _buildHeader(context),
+                Align(
+                    alignment: Alignment.centerLeft,
+                    child: Padding(
+                      padding: const EdgeInsets.only(top: 16),
+                      child: SaveAlbumButton(
+                          album: SavedAlbum(
+                              id: widget.albumId,
+                              title: widget.albumName,
+                              artist: _artistName,
+                              thumbnail: _cover)),
+                    )),
                 const SizedBox(height: 12),
                 if (_tracks.isNotEmpty)
                   Row(
@@ -137,7 +152,10 @@ class _AlbumDetailScreenState extends State<AlbumDetailScreen> {
                       Text(
                         '${_tracks.length} tracks',
                         style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                              color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .onSurface
+                                  .withOpacity(0.6),
                             ),
                       ),
                     ],
@@ -149,9 +167,13 @@ class _AlbumDetailScreenState extends State<AlbumDetailScreen> {
                     child: Center(
                       child: Text(
                         'No tracks found for this album',
-                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                              color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
-                            ),
+                        style:
+                            Theme.of(context).textTheme.titleMedium?.copyWith(
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onSurface
+                                      .withOpacity(0.6),
+                                ),
                       ),
                     ),
                   )
@@ -162,9 +184,12 @@ class _AlbumDetailScreenState extends State<AlbumDetailScreen> {
                         onPlay: () => _playback.playTrack(context, t),
                         onAddToQueue: () => _playback.addToQueue(context, t),
                         onDownload: () => _playback.download(context, t),
-                        onAddToPlaylist: () => _playback.addToPlaylist(context, t),
+                        onAddToPlaylist: () =>
+                            _playback.addToPlaylist(context, t),
                       )),
-                SizedBox(height: ResponsiveUtils.responsivePlayerBottomPadding(context)),
+                SizedBox(
+                    height:
+                        ResponsiveUtils.responsivePlayerBottomPadding(context)),
               ],
             ),
     );
@@ -180,7 +205,8 @@ class _AlbumDetailScreenState extends State<AlbumDetailScreen> {
           borderRadius: BorderRadius.circular(8),
           child: (cover != null && cover.isNotEmpty)
               ? Image.network(
-                  cover,
+                  AuthHttpClient.shared.cacheScopedUrl(cover),
+                  headers: AuthHttpClient.shared.authHeadersForUrl(cover),
                   width: 140,
                   height: 140,
                   fit: BoxFit.cover,
@@ -196,7 +222,10 @@ class _AlbumDetailScreenState extends State<AlbumDetailScreen> {
             children: [
               Text(
                 widget.albumName,
-                style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700),
+                style: Theme.of(context)
+                    .textTheme
+                    .headlineSmall
+                    ?.copyWith(fontWeight: FontWeight.w700),
                 maxLines: 3,
                 overflow: TextOverflow.ellipsis,
               ),
@@ -235,7 +264,8 @@ class _AlbumDetailScreenState extends State<AlbumDetailScreen> {
       width: 140,
       height: 140,
       color: Theme.of(context).colorScheme.surfaceVariant,
-      child: Icon(Icons.album, size: 56, color: Theme.of(context).colorScheme.onSurfaceVariant),
+      child: Icon(Icons.album,
+          size: 56, color: Theme.of(context).colorScheme.onSurfaceVariant),
     );
   }
 }

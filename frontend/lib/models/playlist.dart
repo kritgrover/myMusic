@@ -37,8 +37,10 @@ class Playlist {
               ?.map((track) => PlaylistTrack.fromJson(track))
               .toList() ??
           [],
-      createdAt: DateTime.parse(json['createdAt'] ?? DateTime.now().toIso8601String()),
-      updatedAt: DateTime.parse(json['updatedAt'] ?? DateTime.now().toIso8601String()),
+      createdAt:
+          DateTime.parse(json['createdAt'] ?? DateTime.now().toIso8601String()),
+      updatedAt:
+          DateTime.parse(json['updatedAt'] ?? DateTime.now().toIso8601String()),
       coverImage: json['coverImage'],
       isPublic: json['isPublic'] as bool? ?? false,
     );
@@ -118,17 +120,20 @@ class PlaylistTrack {
       id: videoInfo.id ?? '',
       title: videoInfo.title ?? '',
       artist: videoInfo.uploader,
-      filename: '', // Not downloaded yet
+      album: videoInfo.album,
+      filename: videoInfo.filename ?? '',
       url: videoInfo.url,
       thumbnail: videoInfo.thumbnail,
-      duration: videoInfo.duration is double ? videoInfo.duration : (videoInfo.duration?.toDouble()),
+      duration: videoInfo.duration is double
+          ? videoInfo.duration
+          : (videoInfo.duration?.toDouble()),
     );
   }
 
   // Create from DownloadedFile
   factory PlaylistTrack.fromDownloadedFile(dynamic downloadedFile) {
     String displayTitle = downloadedFile.title ?? downloadedFile.filename;
-    
+
     return PlaylistTrack(
       id: downloadedFile.filename,
       title: displayTitle,

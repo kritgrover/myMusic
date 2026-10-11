@@ -26,6 +26,7 @@ void main() {
   // Guard with kIsWeb first: on web `Platform` (dart:io) is unavailable and
   // throws, so the const kIsWeb short-circuits before Platform is touched.
   if (!kIsWeb && (Platform.isWindows || Platform.isLinux)) {
+    JustAudioMediaKit.prefetchPlaylist = true;
     JustAudioMediaKit.ensureInitialized(windows: true, linux: true);
   }
   runApp(const MyApp());
@@ -153,24 +154,85 @@ class _MyAppState extends State<MyApp> {
           ),
           hintStyle: const TextStyle(color: textTertiary),
           labelStyle: const TextStyle(color: textSecondary),
-          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
         ),
         textTheme: const TextTheme(
-          displayLarge: TextStyle(color: textPrimary, fontSize: 57, fontWeight: FontWeight.w400, letterSpacing: -0.25),
-          displayMedium: TextStyle(color: textPrimary, fontSize: 45, fontWeight: FontWeight.w400, letterSpacing: 0),
-          displaySmall: TextStyle(color: textPrimary, fontSize: 36, fontWeight: FontWeight.w400, letterSpacing: 0),
-          headlineLarge: TextStyle(color: textPrimary, fontSize: 32, fontWeight: FontWeight.w600, letterSpacing: 0),
-          headlineMedium: TextStyle(color: textPrimary, fontSize: 28, fontWeight: FontWeight.w600, letterSpacing: 0),
-          headlineSmall: TextStyle(color: textPrimary, fontSize: 24, fontWeight: FontWeight.w600, letterSpacing: 0),
-          titleLarge: TextStyle(color: textPrimary, fontSize: 22, fontWeight: FontWeight.w600, letterSpacing: 0),
-          titleMedium: TextStyle(color: textPrimary, fontSize: 16, fontWeight: FontWeight.w500, letterSpacing: 0.15),
-          titleSmall: TextStyle(color: textPrimary, fontSize: 14, fontWeight: FontWeight.w500, letterSpacing: 0.1),
-          bodyLarge: TextStyle(color: textPrimary, fontSize: 16, fontWeight: FontWeight.w400, letterSpacing: 0.5),
-          bodyMedium: TextStyle(color: textPrimary, fontSize: 14, fontWeight: FontWeight.w400, letterSpacing: 0.25),
-          bodySmall: TextStyle(color: textSecondary, fontSize: 12, fontWeight: FontWeight.w400, letterSpacing: 0.4),
-          labelLarge: TextStyle(color: textPrimary, fontSize: 14, fontWeight: FontWeight.w500, letterSpacing: 0.1),
-          labelMedium: TextStyle(color: textSecondary, fontSize: 12, fontWeight: FontWeight.w500, letterSpacing: 0.5),
-          labelSmall: TextStyle(color: textTertiary, fontSize: 11, fontWeight: FontWeight.w500, letterSpacing: 0.5),
+          displayLarge: TextStyle(
+              color: textPrimary,
+              fontSize: 57,
+              fontWeight: FontWeight.w400,
+              letterSpacing: -0.25),
+          displayMedium: TextStyle(
+              color: textPrimary,
+              fontSize: 45,
+              fontWeight: FontWeight.w400,
+              letterSpacing: 0),
+          displaySmall: TextStyle(
+              color: textPrimary,
+              fontSize: 36,
+              fontWeight: FontWeight.w400,
+              letterSpacing: 0),
+          headlineLarge: TextStyle(
+              color: textPrimary,
+              fontSize: 32,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 0),
+          headlineMedium: TextStyle(
+              color: textPrimary,
+              fontSize: 28,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 0),
+          headlineSmall: TextStyle(
+              color: textPrimary,
+              fontSize: 24,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 0),
+          titleLarge: TextStyle(
+              color: textPrimary,
+              fontSize: 22,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 0),
+          titleMedium: TextStyle(
+              color: textPrimary,
+              fontSize: 16,
+              fontWeight: FontWeight.w500,
+              letterSpacing: 0.15),
+          titleSmall: TextStyle(
+              color: textPrimary,
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+              letterSpacing: 0.1),
+          bodyLarge: TextStyle(
+              color: textPrimary,
+              fontSize: 16,
+              fontWeight: FontWeight.w400,
+              letterSpacing: 0.5),
+          bodyMedium: TextStyle(
+              color: textPrimary,
+              fontSize: 14,
+              fontWeight: FontWeight.w400,
+              letterSpacing: 0.25),
+          bodySmall: TextStyle(
+              color: textSecondary,
+              fontSize: 12,
+              fontWeight: FontWeight.w400,
+              letterSpacing: 0.4),
+          labelLarge: TextStyle(
+              color: textPrimary,
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+              letterSpacing: 0.1),
+          labelMedium: TextStyle(
+              color: textSecondary,
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
+              letterSpacing: 0.5),
+          labelSmall: TextStyle(
+              color: textTertiary,
+              fontSize: 11,
+              fontWeight: FontWeight.w500,
+              letterSpacing: 0.5),
         ),
         cardTheme: CardThemeData(
           color: surfaceElevated,
@@ -183,20 +245,23 @@ class _MyAppState extends State<MyApp> {
         listTileTheme: ListTileThemeData(
           textColor: textPrimary,
           iconColor: textSecondary,
-          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(8),
           ),
         ),
         navigationRailTheme: NavigationRailThemeData(
           backgroundColor: surfaceDark,
-          selectedIconTheme: const IconThemeData(color: primaryAccent, size: 24),
+          selectedIconTheme:
+              const IconThemeData(color: primaryAccent, size: 24),
           selectedLabelTextStyle: const TextStyle(
             color: primaryAccent,
             fontSize: 12,
             fontWeight: FontWeight.w600,
           ),
-          unselectedIconTheme: const IconThemeData(color: textTertiary, size: 24),
+          unselectedIconTheme:
+              const IconThemeData(color: textTertiary, size: 24),
           unselectedLabelTextStyle: const TextStyle(
             color: textTertiary,
             fontSize: 12,
@@ -246,7 +311,8 @@ class _MyAppState extends State<MyApp> {
             );
           }
           if (_authService.isAuthenticated) {
-            return HomeScreen(authService: _authService);
+            return HomeScreen(
+                key: ValueKey(_authService.userId), authService: _authService);
           }
           return LoginScreen(authService: _authService);
         },
@@ -254,5 +320,3 @@ class _MyAppState extends State<MyApp> {
     );
   }
 }
-
-
