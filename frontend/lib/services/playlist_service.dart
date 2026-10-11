@@ -84,7 +84,7 @@ class PlaylistService {
 
   Future<void> removeTrackFromPlaylist(String playlistId, String trackId) async {
     final response = await _client.delete(
-      Uri.parse('$baseUrl/playlists/$playlistId/songs/$trackId'),
+      Uri.parse('$baseUrl/playlists/$playlistId/songs/${Uri.encodeComponent(trackId)}'),
     );
     
     if (response.statusCode != 200) {

@@ -5,6 +5,10 @@ import '../services/player_state_service.dart';
 import '../services/queue_service.dart';
 import '../utils/song_display_utils.dart';
 import 'album_cover.dart';
+import 'save_track_button.dart';
+import '../services/saved_music_service.dart';
+import '../models/playlist.dart';
+import 'playback_settings_sheet.dart';
 
 class BottomPlayer extends StatefulWidget {
   final AudioPlayerService playerService;
@@ -16,6 +20,7 @@ class BottomPlayer extends StatefulWidget {
   final VoidCallback? onLyricsToggle;
   final VoidCallback? onDownload;
   final VoidCallback? onAddToPlaylist;
+  final SavedMusicService? savedMusicService;
   const BottomPlayer(
       {super.key,
       required this.playerService,
@@ -26,7 +31,8 @@ class BottomPlayer extends StatefulWidget {
       this.onQueueToggle,
       this.onLyricsToggle,
       this.onDownload,
-      this.onAddToPlaylist});
+      this.onAddToPlaylist,
+      this.savedMusicService});
   @override
   State<BottomPlayer> createState() => _BottomPlayerState();
 }
@@ -62,7 +68,7 @@ class _BottomPlayerState extends State<BottomPlayer> {
     _duration = audio.duration;
     _isPlaying = audio.isPlaying;
     _isBuffering = audio.isBuffering;
-    _volume = audio.player.volume.clamp(0.0, 1.0);
+    _volume = audio.volume.clamp(0.0, 1.0);
     if (_volume > 0) _lastAudibleVolume = _volume;
     _seekValue = null;
     _subscriptions.addAll([
@@ -94,7 +100,7 @@ class _BottomPlayerState extends State<BottomPlayer> {
           ));
         }
       }),
-      audio.player.volumeStream.listen((v) {
+      audio.volumeStream.listen((v) {
         if (mounted)
           setState(() {
             _volume = v.clamp(0.0, 1.0);
@@ -132,7 +138,28 @@ class _BottomPlayerState extends State<BottomPlayer> {
     return '${seconds ~/ 60}:${(seconds % 60).toString().padLeft(2, '0')}';
   }
 
-  bool get _hasTrack => widget.playerService.currentUrl != null;
+  bool get _hasTrack =>
+      widget.playerService.currentUrl != null ||
+      widget.playerStateService?.currentTrack != null;
+  bool get _isPreparing => widget.playerStateService?.isPreparing ?? false;
+  PlaylistTrack? get _savedTrack {
+    final track = widget.playerStateService?.currentTrack;
+    if (track == null) return null;
+    final queued = widget.queueService?.currentItem;
+    final matches =
+        queued?.title == track.title && queued?.artist == track.artist;
+    return PlaylistTrack(
+      id: track.id,
+      title: track.title,
+      artist: track.artist,
+      album: matches ? queued?.album : track.album,
+      filename: track.filename,
+      url: track.url ?? (matches ? queued?.originalUrl : null),
+      thumbnail: matches ? queued?.thumbnail : track.thumbnail,
+      duration: _duration.inMilliseconds / 1000,
+    );
+  }
+
   Future<void> _previous() async {
     if (widget.queueService?.currentItem != null &&
         widget.playerStateService != null) {
@@ -156,12 +183,13 @@ class _BottomPlayerState extends State<BottomPlayer> {
           backgroundColor: Colors.white,
           foregroundColor: Colors.black,
           disabledBackgroundColor: Colors.white12),
-      onPressed: _hasTrack
+      onPressed: _hasTrack && !_isPreparing
           ? () => _run(_isPlaying
-              ? widget.playerService.pause
-              : widget.playerService.resume)
+              ? (widget.playerStateService?.pause ?? widget.playerService.pause)
+              : (widget.playerStateService?.resume ??
+                  widget.playerService.resume))
           : null,
-      icon: _isBuffering
+      icon: _isBuffering || _isPreparing
           ? const SizedBox(
               width: 22,
               height: 22,
@@ -256,7 +284,7 @@ class _BottomPlayerState extends State<BottomPlayer> {
     ]);
   }
 
-  Widget _trackInfo() {
+  Widget _trackInfo({bool showSave = true}) {
     final item = widget.queueService?.currentItem;
     final title = item?.title ?? widget.currentTrackName;
     final artist = item?.artist ?? widget.currentTrackArtist;
@@ -293,6 +321,8 @@ class _BottomPlayerState extends State<BottomPlayer> {
                 overflow: TextOverflow.ellipsis,
                 style: Theme.of(context).textTheme.bodySmall),
           ])),
+      if (showSave && _hasTrack && _savedTrack != null)
+        SaveTrackButton(track: _savedTrack!, service: widget.savedMusicService),
     ]);
   }
 
@@ -300,7 +330,7 @@ class _BottomPlayerState extends State<BottomPlayer> {
         _button(
             _volume == 0 ? Icons.volume_off : Icons.volume_up,
             _volume == 0 ? 'Unmute' : 'Mute',
-            () => _run(() => widget.playerService.player
+            () => _run(() => widget.playerService
                 .setVolume(_volume == 0 ? _lastAudibleVolume : 0))),
         SizedBox(
             width: 90,
@@ -309,7 +339,7 @@ class _BottomPlayerState extends State<BottomPlayer> {
                 semanticFormatterCallback: (v) =>
                     '${(v * 100).round()} percent',
                 onChanged: (v) =>
-                    _run(() => widget.playerService.player.setVolume(v)))),
+                    _run(() => widget.playerService.setVolume(v)))),
       ]);
   Widget _moreMenu() {
     final queue = widget.queueService;
@@ -330,6 +360,13 @@ class _BottomPlayerState extends State<BottomPlayer> {
               widget.onAddToPlaylist?.call();
             case 'download':
               widget.onDownload?.call();
+            case 'settings':
+              if (queue != null) {
+                showModalBottomSheet<void>(
+                    context: context,
+                    isScrollControlled: true,
+                    builder: (_) => PlaybackSettingsSheet(queue: queue));
+              }
             case 'volume':
               showModalBottomSheet<void>(
                   context: context,
@@ -337,7 +374,7 @@ class _BottomPlayerState extends State<BottomPlayer> {
                       child: Padding(
                           padding: const EdgeInsets.all(24),
                           child: StreamBuilder<double>(
-                              stream: widget.playerService.player.volumeStream,
+                              stream: widget.playerService.volumeStream,
                               initialData: _volume,
                               builder: (context, snapshot) => Row(children: [
                                     const Icon(Icons.volume_up),
@@ -346,7 +383,7 @@ class _BottomPlayerState extends State<BottomPlayer> {
                                             value: (snapshot.data ?? 1)
                                                 .clamp(0.0, 1.0),
                                             onChanged: (v) => _run(() => widget
-                                                .playerService.player
+                                                .playerService
                                                 .setVolume(v)))),
                                   ])))));
           }
@@ -375,6 +412,9 @@ class _BottomPlayerState extends State<BottomPlayer> {
                   widget.queueService?.currentItem?.filename == null)
                 const PopupMenuItem(value: 'download', child: Text('Download')),
               const PopupMenuItem(value: 'volume', child: Text('Volume')),
+              if (queue != null)
+                const PopupMenuItem(
+                    value: 'settings', child: Text('Playback settings')),
             ]);
   }
 
@@ -384,12 +424,15 @@ class _BottomPlayerState extends State<BottomPlayer> {
           padding: const EdgeInsets.fromLTRB(12, 8, 8, 2),
           child: Column(mainAxisSize: MainAxisSize.min, children: [
             Row(children: [
-              Expanded(child: _trackInfo()),
+              Expanded(child: _trackInfo(showSave: false)),
               _transport(compact: true),
               _moreMenu()
             ]),
             Row(children: [
               Expanded(child: _progress()),
+              if (_hasTrack && _savedTrack != null)
+                SaveTrackButton(
+                    track: _savedTrack!, service: widget.savedMusicService),
               if (widget.onQueueToggle != null)
                 _button(Icons.queue_music, 'Queue', widget.onQueueToggle)
             ]),

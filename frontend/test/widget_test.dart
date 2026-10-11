@@ -7,6 +7,11 @@ import 'package:music_downloader/services/player_state_service.dart';
 import 'package:music_downloader/services/queue_service.dart';
 import 'package:music_downloader/widgets/bottom_player.dart';
 import 'package:music_downloader/widgets/app_top_bar.dart';
+import 'package:music_downloader/models/playlist.dart';
+import 'package:music_downloader/services/saved_music_service.dart';
+import 'package:music_downloader/services/auth_http_client.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 
 class TestNativePlayer extends Fake implements native.AudioPlayer {
   final volumes = StreamController<double>.broadcast();
@@ -23,6 +28,12 @@ class TestNativePlayer extends Fake implements native.AudioPlayer {
 }
 
 class TestAudio extends Fake implements AudioPlayerService {
+  @override
+  double get volume => player.volume;
+  @override
+  Stream<double> get volumeStream => player.volumeStream;
+  @override
+  Future<void> setVolume(double value) => player.setVolume(value);
   final nativePlayer = TestNativePlayer();
   final positions = StreamController<Duration>.broadcast();
   final durations = StreamController<Duration?>.broadcast();
@@ -63,7 +74,14 @@ class TestAudio extends Fake implements AudioPlayerService {
   }
 }
 
-class TestPlayerState extends Fake implements PlayerStateService {}
+class TestPlayerState extends Fake implements PlayerStateService {
+  @override
+  bool get isPreparing => false;
+  final PlaylistTrack? track;
+  TestPlayerState({this.track});
+  @override
+  PlaylistTrack? get currentTrack => track;
+}
 
 void main() {
   for (final width in [320.0, 390.0, 768.0, 1100.0, 1440.0]) {
@@ -74,19 +92,33 @@ void main() {
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
       final audio = TestAudio();
+      final saved = SavedMusicService(
+          client: AuthHttpClient(
+              client: MockClient((_) async => http.Response(
+                  '{"tracks":[],"albums":[],"artists":[]}', 200))));
+      addTearDown(saved.dispose);
       await tester.pumpWidget(MaterialApp(
           theme: ThemeData.dark(),
           home: Scaffold(
               bottomNavigationBar: BottomPlayer(
                   playerService: audio,
+                  savedMusicService: saved,
+                  playerStateService: TestPlayerState(
+                      track: PlaylistTrack(
+                          id: 'song',
+                          title:
+                              'A long song title that should fit beside the save control',
+                          artist: 'An artist with a long name',
+                          filename: 'song.mp3')),
                   onQueueToggle: () {},
                   onLyricsToggle: () {}))));
-      await tester.pump();
+      await tester.pumpAndSettle();
+      expect(find.byTooltip('Save to Liked Songs'), findsOneWidget);
       expect(tester.takeException(), isNull);
       final seek = tester.widget<Slider>(find.byType(Slider).first);
       expect(seek.value, seek.max);
       audio.durations.add(null);
-      await tester.pump();
+      await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
       expect(
           tester.widget<Slider>(find.byType(Slider).first).onChanged, isNull);

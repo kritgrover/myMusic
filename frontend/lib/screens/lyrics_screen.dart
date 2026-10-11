@@ -1,3 +1,4 @@
+import '../services/auth_http_client.dart';
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import '../utils/responsive_utils.dart';
@@ -264,7 +265,8 @@ class _LyricsScreenState extends State<LyricsScreen> {
               child: Transform.scale(
                 scale: 1.2,
                 child: Image.network(
-                  _artworkUrl!,
+                  AuthHttpClient.shared.cacheScopedUrl(_artworkUrl!),
+                  headers: AuthHttpClient.shared.authHeadersForUrl(_artworkUrl!),
                   fit: BoxFit.cover,
                   errorBuilder: (_, __, ___) => const SizedBox.expand(),
                 ),
@@ -400,7 +402,8 @@ class _LyricsScreenState extends State<LyricsScreen> {
                       borderRadius: BorderRadius.circular(8),
                       child: _artworkUrl != null && _artworkUrl!.isNotEmpty
                           ? Image.network(
-                              _artworkUrl!,
+                              AuthHttpClient.shared.cacheScopedUrl(_artworkUrl!),
+                              headers: AuthHttpClient.shared.authHeadersForUrl(_artworkUrl!),
                               width: 48,
                               height: 48,
                               fit: BoxFit.cover,

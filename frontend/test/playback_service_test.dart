@@ -5,6 +5,8 @@ import 'package:music_downloader/services/audio_player_service.dart';
 import 'package:music_downloader/services/player_state_service.dart';
 import 'package:music_downloader/services/recently_played_service.dart';
 import 'package:music_downloader/services/recommendation_service.dart';
+import 'package:music_downloader/config.dart';
+import 'package:music_downloader/models/queue_item.dart';
 
 class _NativePlayer extends Fake implements just_audio.AudioPlayer {
   final states = StreamController<just_audio.PlayerState>.broadcast();
@@ -14,6 +16,34 @@ class _NativePlayer extends Fake implements just_audio.AudioPlayer {
   bool failLoad = false;
   Completer<void>? loadGate;
   bool started = false;
+  @override
+  double get volume => 1;
+  @override
+  Duration get position => Duration.zero;
+  @override
+  Duration? get duration => const Duration(minutes: 3);
+  @override
+  Stream<Duration> get positionStream => const Stream.empty();
+  @override
+  Stream<Duration?> get durationStream => const Stream.empty();
+  @override
+  Stream<just_audio.SequenceState?> get sequenceStateStream =>
+      const Stream.empty();
+  @override
+  just_audio.SequenceState? get sequenceState => null;
+  @override
+  Future<void> setVolume(double value) async {}
+  @override
+  Future<Duration?> setAudioSource(just_audio.AudioSource source,
+          {bool preload = true,
+          int? initialIndex,
+          Duration? initialPosition}) =>
+      setUrl(
+          ((source as just_audio.ConcatenatingAudioSource).children.first
+                  as just_audio.UriAudioSource)
+              .uri
+              .toString(),
+          initialPosition: initialPosition);
   @override
   just_audio.ProcessingState get processingState => processing;
   @override
@@ -60,6 +90,14 @@ class _Audio extends Fake implements AudioPlayerService {
   String? loaded;
   bool failLoad = false;
   @override
+  bool get isPlaying => loaded != null;
+  @override
+  bool get isBuffering => false;
+  @override
+  Duration get duration => const Duration(minutes: 3);
+  @override
+  Stream<void> get completionStream => const Stream.empty();
+  @override
   Stream<PlayerState> get stateStream => states.stream;
   @override
   Stream<String> get errorStream => errors.stream;
@@ -102,6 +140,12 @@ class _History extends Fake implements RecentlyPlayedService {
 
 class _Recommendations extends Fake implements RecommendationService {
   final List<String> titles = [];
+  final events = <Map<String, dynamic>>[];
+  @override
+  String get sessionScope => 'test';
+  @override
+  Future<void> recordListeningEvent(Map<String, dynamic> body) async =>
+      events.add(Map.of(body));
   @override
   Future<void> logHistory(
       {required String title,
@@ -235,14 +279,33 @@ void main() {
       await Future<void>.delayed(Duration.zero);
     });
 
-    test('history failure does not fail playback or recommendation logging',
+    test('queued media keeps its exact source when liked from the player',
+        () async {
+      const source = 'https://www.youtube.com/watch?v=abcdefghijk';
+      final streaming =
+          '${AppConfig.apiBaseUrl}/stream/${Uri.encodeComponent(source)}';
+      final queued = QueueItem.fromVideoInfo(
+          videoId: 'abcdefghijk',
+          title: 'Song',
+          artist: 'Artist',
+          streamingUrl: streaming);
+      expect(queued.originalUrl, source);
+      await player.streamTrack(streaming,
+          trackName: 'Song', trackArtist: 'Artist');
+      expect(player.currentTrack?.url, source);
+      expect(history.urls, [source]);
+    });
+
+    test('local history failure does not fail playback or listening reports',
         () async {
       history.fail = true;
       await player.streamTrack('audio/a', trackName: 'A');
       await Future<void>.delayed(Duration.zero);
       expect(player.currentTrackName, 'A');
       expect(player.playbackError, isNull);
-      expect(recommendations.titles, ['A']);
+      expect(recommendations.titles, isEmpty);
+      await player.flushListeningHistory();
+      expect(recommendations.events.single['song_title'], 'A');
     });
 
     test('playlist tracks still contribute to recommendations', () async {
@@ -250,7 +313,19 @@ void main() {
           trackName: 'A', skipRecentlyPlayed: true);
       await Future<void>.delayed(Duration.zero);
       expect(history.ids, isEmpty);
-      expect(recommendations.titles, ['A']);
+      expect(recommendations.titles, isEmpty);
+      await player.flushListeningHistory();
+      expect(recommendations.events.single['song_title'], 'A');
+    });
+
+    test('legacy media capabilities never persist into history IDs or URLs',
+        () async {
+      const canonical = '${AppConfig.apiBaseUrl}/downloads/song.m4a';
+      await player.streamTrack('$canonical?media_token=expired',
+          trackName: 'A', url: '$canonical?media_token=expired');
+      await Future<void>.delayed(Duration.zero);
+      expect(history.ids, [canonical]);
+      expect(history.urls, [canonical]);
     });
   });
 }

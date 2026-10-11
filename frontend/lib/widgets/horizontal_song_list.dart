@@ -1,4 +1,7 @@
+import '../services/auth_http_client.dart';
 import 'package:flutter/material.dart';
+import '../models/playlist.dart';
+import 'save_track_button.dart';
 import '../utils/responsive_utils.dart';
 import '../services/api_service.dart'; // For VideoInfo
 import 'section_header.dart';
@@ -29,8 +32,10 @@ class HorizontalSongList extends StatelessWidget {
   Widget build(BuildContext context) {
     if (songs.isEmpty) return const SizedBox.shrink();
 
-    final displayedSongs = songs.length > maxItems ? songs.sublist(0, maxItems) : songs;
-    final showAll = (onShowAll != null && songs.length > maxItems) ? onShowAll : null;
+    final displayedSongs =
+        songs.length > maxItems ? songs.sublist(0, maxItems) : songs;
+    final showAll =
+        (onShowAll != null && songs.length > maxItems) ? onShowAll : null;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -43,7 +48,8 @@ class HorizontalSongList extends StatelessWidget {
             scrollDirection: Axis.horizontal,
             itemCount: displayedSongs.length,
             separatorBuilder: (context, index) => SizedBox(
-              width: ResponsiveUtils.responsiveValue<double>(context, compact: 16, medium: 20, expanded: 24),
+              width: ResponsiveUtils.responsiveValue<double>(context,
+                  compact: 16, medium: 20, expanded: 24),
             ),
             itemBuilder: (context, index) {
               final song = displayedSongs[index];
@@ -51,8 +57,11 @@ class HorizontalSongList extends StatelessWidget {
                 song: song,
                 width: ResponsiveUtils.responsiveHorizontalCardWidth(context),
                 onPlay: () => onPlay(song),
+                onAddToQueue: () => onAddToQueue(song),
                 onDownload: onDownload != null ? () => onDownload!(song) : null,
-                onAddToPlaylist: onAddToPlaylist != null ? () => onAddToPlaylist!(song) : null,
+                onAddToPlaylist: onAddToPlaylist != null
+                    ? () => onAddToPlaylist!(song)
+                    : null,
               );
             },
           ),
@@ -68,6 +77,7 @@ class _SongCard extends StatefulWidget {
   final VideoInfo song;
   final double width;
   final VoidCallback onPlay;
+  final VoidCallback onAddToQueue;
   final VoidCallback? onDownload;
   final VoidCallback? onAddToPlaylist;
 
@@ -75,6 +85,7 @@ class _SongCard extends StatefulWidget {
     required this.song,
     required this.width,
     required this.onPlay,
+    required this.onAddToQueue,
     this.onDownload,
     this.onAddToPlaylist,
   });
@@ -88,7 +99,7 @@ class _SongCardState extends State<_SongCard> {
 
   @override
   Widget build(BuildContext context) {
-    final hasActions = widget.onDownload != null || widget.onAddToPlaylist != null;
+    final isDownloaded = widget.song.filename?.isNotEmpty ?? false;
     return MouseRegion(
       cursor: SystemMouseCursors.click,
       onEnter: (_) => setState(() => _hover = true),
@@ -110,11 +121,16 @@ class _SongCardState extends State<_SongCard> {
                         child: ClipRRect(
                           borderRadius: BorderRadius.circular(12),
                           child: Image.network(
-                            widget.song.thumbnail,
+                            AuthHttpClient.shared
+                                .cacheScopedUrl(widget.song.thumbnail),
+                            headers: AuthHttpClient.shared
+                                .authHeadersForUrl(widget.song.thumbnail),
                             fit: BoxFit.cover,
                             errorBuilder: (context, error, stackTrace) {
                               return Container(
-                                color: Theme.of(context).colorScheme.surfaceVariant,
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .surfaceVariant,
                                 child: const Icon(Icons.music_note, size: 40),
                               );
                             },
@@ -139,7 +155,10 @@ class _SongCardState extends State<_SongCard> {
                 widget.song.title,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+                style: Theme.of(context)
+                    .textTheme
+                    .bodyMedium
+                    ?.copyWith(fontWeight: FontWeight.w600),
               ),
               Text(
                 widget.song.uploader,
@@ -147,30 +166,56 @@ class _SongCardState extends State<_SongCard> {
                 overflow: TextOverflow.ellipsis,
                 style: Theme.of(context).textTheme.bodySmall,
               ),
-              if (hasActions) ...[
+              ...[
                 const SizedBox(height: 2),
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (widget.onDownload != null)
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (widget.onDownload != null)
+                        SaveTrackButton(
+                            track: PlaylistTrack.fromVideoInfo(widget.song),
+                            compact: true),
                       IconButton(
-                        icon: const Icon(Icons.download, size: 18),
-                        onPressed: widget.onDownload,
-                        tooltip: 'Download',
+                        icon: const Icon(Icons.queue_music, size: 18),
+                        onPressed: widget.onAddToQueue,
+                        tooltip: 'Add to queue',
                         padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-                        style: IconButton.styleFrom(tapTargetSize: MaterialTapTargetSize.shrinkWrap),
+                        constraints:
+                            const BoxConstraints(minWidth: 28, minHeight: 28),
+                        style: IconButton.styleFrom(
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap),
                       ),
-                    if (widget.onAddToPlaylist != null)
-                      IconButton(
-                        icon: const Icon(Icons.playlist_add, size: 18),
-                        onPressed: widget.onAddToPlaylist,
-                        tooltip: 'Add to playlist',
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-                        style: IconButton.styleFrom(tapTargetSize: MaterialTapTargetSize.shrinkWrap),
-                      ),
-                  ],
+                      if (widget.onDownload != null)
+                        IconButton(
+                          icon: Icon(
+                              isDownloaded
+                                  ? Icons.download_done
+                                  : Icons.download,
+                              size: 18),
+                          onPressed: isDownloaded ? null : widget.onDownload,
+                          tooltip: isDownloaded ? 'Downloaded' : 'Download',
+                          padding: EdgeInsets.zero,
+                          constraints:
+                              const BoxConstraints(minWidth: 28, minHeight: 28),
+                          style: IconButton.styleFrom(
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap),
+                        ),
+                      if (widget.onAddToPlaylist != null)
+                        IconButton(
+                          icon: const Icon(Icons.playlist_add, size: 18),
+                          onPressed: widget.onAddToPlaylist,
+                          tooltip: 'Add to playlist',
+                          padding: EdgeInsets.zero,
+                          constraints:
+                              const BoxConstraints(minWidth: 28, minHeight: 28),
+                          style: IconButton.styleFrom(
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap),
+                        ),
+                    ],
+                  ),
                 ),
               ],
             ],

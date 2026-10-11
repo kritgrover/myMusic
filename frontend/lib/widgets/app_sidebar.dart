@@ -12,6 +12,7 @@ class AppSidebar extends StatelessWidget {
   final List<Playlist> playlists;
   final ValueChanged<Playlist> onOpenPlaylist;
   final VoidCallback onCreate;
+  final VoidCallback? onLikedSongs;
 
   const AppSidebar({
     super.key,
@@ -21,6 +22,7 @@ class AppSidebar extends StatelessWidget {
     required this.playlists,
     required this.onOpenPlaylist,
     required this.onCreate,
+    this.onLikedSongs,
   });
 
   @override
@@ -53,6 +55,14 @@ class AppSidebar extends StatelessWidget {
               selectedIcon: Icons.library_music,
               label: 'Your Library'),
           if (expanded) ...[
+            if (onLikedSongs != null)
+              ListTile(
+                dense: true,
+                contentPadding: const EdgeInsets.symmetric(horizontal: 10),
+                leading: Icon(Icons.favorite, color: Theme.of(context).colorScheme.primary),
+                title: const Text('Liked Songs'),
+                onTap: onLikedSongs,
+              ),
             const SizedBox(height: 10),
             Divider(color: Theme.of(context).dividerColor, height: 1),
             const SizedBox(height: 8),
@@ -192,7 +202,7 @@ class AppSidebar extends StatelessWidget {
               borderRadius: BorderRadius.circular(4),
               child: hasHttp
                   ? Image.network(
-                      cover,
+                      AuthHttpClient.shared.cacheScopedUrl(cover),
                       headers: AuthHttpClient.shared.authHeadersForUrl(cover),
                       width: 38,
                       height: 38,

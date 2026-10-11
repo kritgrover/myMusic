@@ -1,3 +1,4 @@
+import '../services/auth_http_client.dart';
 import 'package:flutter/material.dart';
 import '../models/discovery.dart';
 
@@ -34,7 +35,8 @@ class ArtistCard extends StatelessWidget {
             child: ClipOval(
               child: hasThumb
                   ? Image.network(
-                      artist.thumbnail!,
+                      AuthHttpClient.shared.cacheScopedUrl(artist.thumbnail!),
+                      headers: AuthHttpClient.shared.authHeadersForUrl(artist.thumbnail!),
                       fit: BoxFit.cover,
                       errorBuilder: (_, __, ___) => _placeholder(context),
                     )

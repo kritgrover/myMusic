@@ -88,11 +88,16 @@ class QueuePanel extends StatelessWidget {
                             ],
                             _sectionTitle(context, 'Next up · $upcomingCount'),
                             if (upcomingCount == 0)
-                              const Padding(
-                                padding: EdgeInsets.symmetric(
+                              Padding(
+                                padding: const EdgeInsets.symmetric(
                                     horizontal: 12, vertical: 20),
-                                child: Text(
-                                    'Nothing queued next. Add a song or turn on repeat.'),
+                                child: Text(switch (queueService.loopMode) {
+                                  LoopMode.queue =>
+                                    'The queue will repeat when this track ends.',
+                                  LoopMode.single => 'This track will repeat.',
+                                  LoopMode.none =>
+                                    'Nothing queued next. Add a song or turn on repeat.',
+                                }),
                               ),
                           ],
                         ),

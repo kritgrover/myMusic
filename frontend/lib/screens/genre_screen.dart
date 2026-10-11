@@ -1,3 +1,4 @@
+import '../services/auth_http_client.dart';
 import 'package:flutter/material.dart';
 import '../utils/responsive_utils.dart';
 import '../services/recommendation_service.dart';
@@ -299,7 +300,8 @@ class _GenreScreenState extends State<GenreScreen> {
                       borderRadius: BorderRadius.circular(4),
                       child: track.thumbnail != null
                           ? Image.network(
-                              track.thumbnail!,
+                              AuthHttpClient.shared.cacheScopedUrl(track.thumbnail!),
+                              headers: AuthHttpClient.shared.authHeadersForUrl(track.thumbnail!),
                               width: ResponsiveUtils.responsiveIconSize(context, base: 48),
                               height: ResponsiveUtils.responsiveIconSize(context, base: 48),
                               fit: BoxFit.cover,

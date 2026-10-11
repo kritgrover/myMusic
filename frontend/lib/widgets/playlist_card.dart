@@ -1,3 +1,4 @@
+import '../services/auth_http_client.dart';
 import 'package:flutter/material.dart';
 import '../models/discovery.dart';
 
@@ -51,7 +52,8 @@ class _PlaylistCardState extends State<PlaylistCard> {
                       borderRadius: BorderRadius.circular(12),
                       child: hasThumb
                           ? Image.network(
-                              playlist.thumbnail!,
+                              AuthHttpClient.shared.cacheScopedUrl(playlist.thumbnail!),
+                              headers: AuthHttpClient.shared.authHeadersForUrl(playlist.thumbnail!),
                               fit: BoxFit.cover,
                               errorBuilder: (_, __, ___) => _placeholder(context),
                             )

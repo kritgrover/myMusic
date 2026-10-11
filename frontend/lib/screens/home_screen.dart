@@ -44,6 +44,9 @@ import 'artist_screen.dart';
 import 'mood_playlists_screen.dart';
 import 'profile_screen.dart';
 import 'friends_screen.dart';
+import 'saved_music_screen.dart';
+import '../services/saved_music_service.dart';
+import '../services/playback_session_service.dart';
 
 /// Fires a callback whenever a route is pushed onto the content navigator, used
 /// to dismiss the lyrics overlay so it doesn't hide freshly-opened screens.
@@ -67,7 +70,7 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   int _currentIndex = 0;
   // Nested navigator for the center content pane, so secondary screens (genre,
   // artist, album, playlist, mood, friends, profile) open in-pane while the
@@ -85,6 +88,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   late final RecentlyPlayedService _recentlyPlayedService;
   late final PlayerStateService _playerStateService;
+  late final PlaybackSessionService _playbackSession;
   final QueueService _queueService = QueueService();
   final LyricsService _lyricsService = LyricsService();
   bool _showQueuePanel = false;
@@ -145,7 +149,7 @@ class _HomeScreenState extends State<HomeScreen> {
   List<MoodCategory> _moods = [];
 
   // Library hub state
-  int _libraryTab = 0; // 0 playlists · 1 downloads
+  int _libraryTab = 0; // playlists, downloads, liked songs, albums, artists
   int _libraryRefreshKey = 0;
   List<Playlist> _sidebarPlaylists = [];
 
@@ -165,13 +169,23 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    unawaited(SavedMusicService.shared.load().catchError((_) {}));
     _musicSearch.addListener(_onSearchStateChanged);
     _recentlyPlayedService = RecentlyPlayedService(
-        userNamespace: widget.authService.username ?? 'default');
+        userNamespace: PlaybackSessionService.storageKeyFor(
+            userId: widget.authService.userId!));
     _playerStateService = PlayerStateService(
       recentlyPlayedService: _recentlyPlayedService,
       recommendationService: _recommendationService,
     );
+    _playbackSession = PlaybackSessionService(
+        userId: widget.authService.userId!,
+        queue: _queueService,
+        player: _playerStateService);
+    _queueService.connectPlayback(_playerStateService,
+        loadStreamingUrl: _loadStreamingUrlForAlbumItem);
+    unawaited(_restorePlaybackSession());
 
     // Listen for track changes to update lyrics panel
     _playerStateService.addListener(_onTrackChanged);
@@ -225,14 +239,57 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  VideoInfo _trackToVideo(PlaylistTrack t) => VideoInfo(
-        id: t.url ?? '',
-        title: t.title,
-        uploader: t.artist ?? 'Unknown',
-        duration: t.duration ?? 0,
-        url: t.url ?? '',
-        thumbnail: t.thumbnail ?? '',
-      );
+  Future<void> _restorePlaybackSession() async {
+    var interacted = false;
+    void onInteraction() => interacted = true;
+    void onPlayerInteraction() {
+      if (_playerStateService.currentTrack != null ||
+          _playerStateService.isPreparing ||
+          _playerStateService.audioPlayer.isPlaying ||
+          _playerStateService.audioPlayer.isBuffering) {
+        interacted = true;
+      }
+    }
+
+    _queueService.addListener(onInteraction);
+    _playerStateService.addListener(onPlayerInteraction);
+    final snapshot = await _playbackSession.load();
+    _queueService.removeListener(onInteraction);
+    _playerStateService.removeListener(onPlayerInteraction);
+    if (!mounted) return;
+    try {
+      // A song chosen during storage loading takes precedence over old state.
+      if (!interacted && snapshot != null) {
+        _queueService.setCrossfadeDuration(snapshot.crossfadeDuration);
+        _queueService.restoreSnapshot(snapshot.queueSnapshot,
+            loadStreamingUrl: _loadStreamingUrlForAlbumItem);
+        final track = snapshot.activeTrack ?? _queueService.currentItem;
+        if (track != null) {
+          await _playerStateService.preparePaused(track,
+              position: snapshot.position,
+              duration: snapshot.duration,
+              volume: snapshot.volume,
+              loadStreamingUrl: _loadStreamingUrlForAlbumItem);
+        } else {
+          await _playerStateService.audioPlayer.setVolume(snapshot.volume);
+        }
+      }
+    } catch (_) {
+      // Bad or obsolete local state must never prevent a new listening session.
+    } finally {
+      if (mounted) _playbackSession.start();
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) {
+      unawaited(_playbackSession.flush());
+      unawaited(_playerStateService.flushListeningHistory());
+    }
+  }
+
+  VideoInfo _trackToVideo(PlaylistTrack t) => VideoInfo.fromPlaylistTrack(t);
 
   Future<void> _fetchRecommendations() async {
     setState(() {
@@ -531,6 +588,15 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
+  void _openLikedSongs() {
+    _contentNavigatorKey.currentState?.popUntil((r) => r.isFirst);
+    setState(() {
+      _currentIndex = 2;
+      _libraryTab = 2;
+      _showLyrics = false;
+    });
+  }
+
   void _onSearchTap() {
     _contentNavigatorKey.currentState?.popUntil((r) => r.isFirst);
     setState(() {
@@ -653,8 +719,16 @@ class _HomeScreenState extends State<HomeScreen> {
           _startDownloadProgressPolling(downloadId);
         },
       );
-    } else {
+    } else if (_libraryTab == 1) {
       body = DownloadsScreen(
+        playerStateService: _playerStateService,
+        queueService: _queueService,
+        recentlyPlayedService: _recentlyPlayedService,
+      );
+    } else {
+      body = SavedMusicScreen(
+        key: ValueKey('saved_music_$_libraryTab'),
+        kind: SavedMusicKind.values[_libraryTab - 2],
         playerStateService: _playerStateService,
         queueService: _queueService,
         recentlyPlayedService: _recentlyPlayedService,
@@ -695,20 +769,28 @@ class _HomeScreenState extends State<HomeScreen> {
                 compact: 12, medium: 20, expanded: 24),
             vertical: 4,
           ),
-          child: Row(
-            children: [
-              ChoiceChip(
-                label: const Text('Playlists'),
-                selected: _libraryTab == 0,
-                onSelected: (_) => setState(() => _libraryTab = 0),
-              ),
-              const SizedBox(width: 8),
-              ChoiceChip(
-                label: const Text('Downloads'),
-                selected: _libraryTab == 1,
-                onSelected: (_) => setState(() => _libraryTab = 1),
-              ),
-            ],
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                for (final entry in const [
+                  'Playlists',
+                  'Downloads',
+                  'Liked Songs',
+                  'Albums',
+                  'Artists'
+                ].asMap().entries)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: ChoiceChip(
+                      label: Text(entry.value),
+                      selected: _libraryTab == entry.key,
+                      onSelected: (_) =>
+                          setState(() => _libraryTab = entry.key),
+                    ),
+                  ),
+              ],
+            ),
           ),
         ),
         Expanded(child: body),
@@ -943,7 +1025,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(12),
                   child: cover != null && cover.startsWith('http')
-                      ? Image.network(cover,
+                      ? Image.network(
+                          AuthHttpClient.shared.cacheScopedUrl(cover),
                           fit: BoxFit.cover,
                           headers:
                               AuthHttpClient.shared.authHeadersForUrl(cover),
@@ -1270,7 +1353,10 @@ class _HomeScreenState extends State<HomeScreen> {
                           borderRadius: BorderRadius.circular(8),
                           child: thumbnail != null && thumbnail.isNotEmpty
                               ? Image.network(
-                                  thumbnail,
+                                  AuthHttpClient.shared
+                                      .cacheScopedUrl(thumbnail),
+                                  headers: AuthHttpClient.shared
+                                      .authHeadersForUrl(thumbnail),
                                   width: cardWidth,
                                   height: cardWidth,
                                   fit: BoxFit.cover,
@@ -1440,6 +1526,32 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  Future<void> _playRecentStream(String streamingUrl,
+      {String? trackName, String? trackArtist, String? url}) async {
+    _queueService.clearQueue();
+    await _queueService.addAndPlay(
+        QueueItem(
+            id: url ?? streamingUrl,
+            title: trackName,
+            artist: trackArtist,
+            url: streamingUrl,
+            originalUrl: url),
+        _playerStateService);
+  }
+
+  Future<void> _playRecentFile(String filename,
+      {String? trackName, String? trackArtist, String? url}) async {
+    _queueService.clearQueue();
+    await _queueService.addAndPlay(
+        QueueItem(
+            id: filename,
+            title: trackName,
+            artist: trackArtist,
+            filename: filename,
+            originalUrl: url),
+        _playerStateService);
+  }
+
   Widget _buildRecentlyPlayedCard(RecentlyPlayedItem item) {
     final primaryColor = Theme.of(context).colorScheme.primary;
     final surfaceHover = Theme.of(context).colorScheme.surfaceVariant;
@@ -1463,7 +1575,10 @@ class _HomeScreenState extends State<HomeScreen> {
                     child: item.type == RecentlyPlayedType.playlist
                         ? item.thumbnail != null && item.thumbnail!.isNotEmpty
                             ? Image.network(
-                                item.thumbnail!,
+                                AuthHttpClient.shared
+                                    .cacheScopedUrl(item.thumbnail!),
+                                headers: AuthHttpClient.shared
+                                    .authHeadersForUrl(item.thumbnail!),
                                 width: ResponsiveUtils.responsiveMediumIconSize(
                                     context,
                                     base: 80),
@@ -1509,7 +1624,10 @@ class _HomeScreenState extends State<HomeScreen> {
                               )
                         : item.thumbnail != null
                             ? Image.network(
-                                item.thumbnail!,
+                                AuthHttpClient.shared
+                                    .cacheScopedUrl(item.thumbnail!),
+                                headers: AuthHttpClient.shared
+                                    .authHeadersForUrl(item.thumbnail!),
                                 width: ResponsiveUtils.responsiveMediumIconSize(
                                     context,
                                     base: 80),
@@ -1660,7 +1778,7 @@ class _HomeScreenState extends State<HomeScreen> {
             artist: item.artist ?? '',
           );
 
-          await _playerStateService.streamTrack(
+          await _playRecentStream(
             result.streamingUrl,
             trackName: result.title,
             trackArtist: result.artist,
@@ -1679,7 +1797,7 @@ class _HomeScreenState extends State<HomeScreen> {
           // Streaming failed, try playing from file if filename exists
           if (item.filename != null && item.filename!.isNotEmpty) {
             try {
-              await _playerStateService.playTrack(
+              await _playRecentFile(
                 item.filename!,
                 trackName: item.title,
                 trackArtist: item.artist,
@@ -1721,7 +1839,7 @@ class _HomeScreenState extends State<HomeScreen> {
       } else if (item.filename != null && item.filename!.isNotEmpty) {
         // No URL, but filename exists - try to play from file
         try {
-          await _playerStateService.playTrack(
+          await _playRecentFile(
             item.filename!,
             trackName: item.title,
             trackArtist: item.artist,
@@ -1747,7 +1865,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 artist: item.artist ?? '',
               );
 
-              await _playerStateService.streamTrack(
+              await _playRecentStream(
                 result.streamingUrl,
                 trackName: result.title,
                 trackArtist: result.artist,
@@ -1798,7 +1916,7 @@ class _HomeScreenState extends State<HomeScreen> {
               artist: item.artist ?? '',
             );
 
-            await _playerStateService.streamTrack(
+            await _playRecentStream(
               result.streamingUrl,
               trackName: result.title,
               trackArtist: result.artist,
@@ -1940,46 +2058,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _streamRecommendedVideo(VideoInfo video) async {
     try {
-      final searchResults = await _apiService.searchYoutube(
-        '${video.title} ${video.uploader}',
-      );
-
-      if (searchResults.isEmpty) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Could not find "${video.title}" on YouTube'),
-              backgroundColor: Colors.red,
-              behavior: SnackBarBehavior.floating,
-            ),
-          );
-        }
-        return;
-      }
-
-      final ytVideo = searchResults.first;
-      final cleaned = await _apiService.cleanMetadata(
-        title: ytVideo.title,
-        uploader: ytVideo.uploader,
-        videoId: ytVideo.id,
-        videoUrl: ytVideo.url,
-      );
-
-      final result = await _apiService.getStreamingUrl(
-        url: ytVideo.url,
-        title: cleaned['title']!,
-        artist: cleaned['artist']!,
-      );
-
-      // Add to queue so bottom player add-to-playlist/download work
-      final queueItem = QueueItem(
-        id: 'video_${ytVideo.id}',
-        title: result.title,
-        artist: result.artist,
-        url: result.streamingUrl,
-        originalUrl: ytVideo.url,
-        thumbnail: video.thumbnail,
-      );
+      final queueItem = await _recommendedQueueItem(video);
       _queueService.clearQueue();
       await _queueService.addAndPlay(queueItem, _playerStateService);
     } catch (e) {
@@ -1993,6 +2072,33 @@ class _HomeScreenState extends State<HomeScreen> {
         );
       }
     }
+  }
+
+  Future<QueueItem> _recommendedQueueItem(VideoInfo video) async {
+    if ((video.filename ?? '').isNotEmpty) {
+      return QueueItem(
+          id: video.id,
+          title: video.title,
+          artist: video.uploader,
+          album: video.album,
+          filename: video.filename,
+          originalUrl: video.url.isEmpty ? null : video.url,
+          thumbnail: video.thumbnail);
+    }
+    final resolved = await _resolveToYouTubeVideo(video);
+    if (resolved == null) {
+      throw StateError('Could not find audio for "${video.title}".');
+    }
+    final result = await _apiService.getStreamingUrl(
+        url: resolved.url, title: video.title, artist: video.uploader);
+    return QueueItem(
+        id: video.id,
+        title: video.title,
+        artist: video.uploader,
+        album: video.album,
+        url: result.streamingUrl,
+        originalUrl: resolved.url,
+        thumbnail: video.thumbnail);
   }
 
   Future<void> _downloadCurrentTrack() async {
@@ -2184,6 +2290,13 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _downloadRecommendedVideo(VideoInfo video) async {
+    if ((video.filename ?? '').isNotEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('This song is already in Downloads.')));
+      }
+      return;
+    }
     final resolved = await _resolveToYouTubeVideo(video);
     if (resolved == null) {
       if (mounted) {
@@ -2201,6 +2314,10 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _addRecommendedToPlaylist(VideoInfo video) async {
+    if ((video.filename ?? '').isNotEmpty) {
+      await _showAddToPlaylistDialog(video);
+      return;
+    }
     final resolved = await _resolveToYouTubeVideo(video);
     if (resolved == null) {
       if (mounted) {
@@ -2219,45 +2336,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _addRecommendedToQueue(VideoInfo video) async {
     try {
-      final searchResults = await _apiService.searchYoutube(
-        '${video.title} ${video.uploader}',
-      );
-
-      if (searchResults.isEmpty) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Could not find "${video.title}" on YouTube'),
-              backgroundColor: Colors.red,
-              behavior: SnackBarBehavior.floating,
-            ),
-          );
-        }
-        return;
-      }
-
-      final ytVideo = searchResults.first;
-      final cleaned = await _apiService.cleanMetadata(
-        title: ytVideo.title,
-        uploader: ytVideo.uploader,
-        videoId: ytVideo.id,
-        videoUrl: ytVideo.url,
-      );
-
-      final result = await _apiService.getStreamingUrl(
-        url: ytVideo.url,
-        title: cleaned['title']!,
-        artist: cleaned['artist']!,
-      );
-
-      final queueItem = QueueItem.fromVideoInfo(
-        videoId: ytVideo.id,
-        title: result.title,
-        artist: result.artist,
-        streamingUrl: result.streamingUrl,
-        thumbnail: video.thumbnail,
-      );
-
+      final queueItem = await _recommendedQueueItem(video);
       _queueService.addToQueue(queueItem);
     } catch (e) {
       if (mounted) {
@@ -2325,20 +2404,26 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _showAddToPlaylistDialog(VideoInfo video) async {
-    final cleaned = await _apiService.cleanMetadata(
-      title: video.title,
-      uploader: video.uploader,
-      videoId: video.id,
-      videoUrl: video.url,
-    );
+    final cleaned = (video.filename ?? '').isNotEmpty
+        ? <String, String>{
+            'title': video.title,
+            'artist': video.uploader,
+            if (video.album != null) 'album': video.album!,
+          }
+        : await _apiService.cleanMetadata(
+            title: video.title,
+            uploader: video.uploader,
+            videoId: video.id,
+            videoUrl: video.url,
+          );
 
     final track = PlaylistTrack(
       id: video.id,
       title: cleaned['title'] ?? video.title,
       artist: cleaned['artist'] ?? video.uploader,
       album: cleaned['album'],
-      filename: '',
-      url: video.url,
+      filename: video.filename ?? '',
+      url: video.url.isEmpty ? null : video.url,
       thumbnail: video.thumbnail,
       duration: video.duration,
     );
@@ -2562,6 +2647,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           playlists: _sidebarPlaylists,
                           onOpenPlaylist: _openLibraryPlaylist,
                           onCreate: _showCreateOrImportMenu,
+                          onLikedSongs: _openLikedSongs,
                         ),
                       ),
                     // Top bar + current destination
@@ -2578,6 +2664,9 @@ class _HomeScreenState extends State<HomeScreen> {
                             onProfile: _openProfile,
                             onFriends: _openFriends,
                             onLogout: () async {
+                              await _playerStateService
+                                  .finishListeningSession();
+                              await _playbackSession.flush();
                               await widget.authService.logout();
                             },
                           ),
@@ -2743,6 +2832,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _playbackSession.dispose();
     _completionSubscription?.cancel();
     _csvProgressTimer?.cancel();
     _downloadProgressTimer?.cancel();
@@ -2752,8 +2843,8 @@ class _HomeScreenState extends State<HomeScreen> {
     _musicSearch.dispose();
     _recentlyPlayedService.removeListener(_onRecentlyPlayedChanged);
     _playerStateService.removeListener(_onTrackChanged);
-    _playerStateService.dispose();
     _queueService.dispose();
+    _playerStateService.dispose();
     super.dispose();
   }
 }

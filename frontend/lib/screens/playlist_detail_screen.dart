@@ -1,5 +1,6 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
+import '../widgets/save_track_button.dart';
 import 'package:image_picker/image_picker.dart';
 import '../utils/responsive_utils.dart';
 import '../services/playlist_service.dart';
@@ -1394,13 +1395,31 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                                             mainAxisSize: MainAxisSize.min,
                                             children: [
                                               // Add to queue button
-                                              if (widget.queueService != null)
+                                              SaveTrackButton(track: track),
+                                              if (MediaQuery.sizeOf(context).width < 600)
+                                                PopupMenuButton<String>(
+                                                  tooltip: 'More song actions',
+                                                  onSelected: (value) {
+                                                    switch (value) {
+                                                      case 'queue': _addToQueue(track);
+                                                      case 'download': _downloadTrack(track);
+                                                      case 'remove': _removeTrack(track);
+                                                    }
+                                                  },
+                                                  itemBuilder: (_) => [
+                                                    if (widget.queueService != null) const PopupMenuItem(value: 'queue', child: Text('Add to queue')),
+                                                    if (!_isTrackDownloaded(track)) const PopupMenuItem(value: 'download', child: Text('Download')),
+                                                    const PopupMenuItem(value: 'remove', child: Text('Remove from playlist')),
+                                                  ],
+                                                ),
+                                              if (widget.queueService != null && MediaQuery.sizeOf(context).width >= 600)
                                                 IconButton(
                                                   icon: const Icon(Icons.queue_music, size: 20),
                                                   onPressed: () => _addToQueue(track),
                                                   tooltip: 'Add to queue',
                                                 ),
                                               // Download status icon
+                                              if (MediaQuery.sizeOf(context).width >= 600)
                                               _isTrackDownloaded(track)
                                                   ? IconButton(
                                                       icon: Icon(
@@ -1417,6 +1436,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                                                       tooltip: 'Download',
                                                     ),
                                               // Delete button
+                                              if (MediaQuery.sizeOf(context).width >= 600)
                                               IconButton(
                                                 icon: const Icon(Icons.delete_outline, size: 20),
                                                 onPressed: () => _removeTrack(track),
@@ -1480,7 +1500,7 @@ class _PlaylistCoverWidgetState extends State<_PlaylistCoverWidget> {
                   child: Stack(
                     children: [
                       Image.network(
-                        widget.coverImageUrl!,
+                        AuthHttpClient.shared.cacheScopedUrl(widget.coverImageUrl!),
                         headers: AuthHttpClient.shared.authHeadersForUrl(widget.coverImageUrl!),
                         width: coverSize,
                         height: coverSize,

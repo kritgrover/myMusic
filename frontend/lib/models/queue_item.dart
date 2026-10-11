@@ -1,3 +1,5 @@
+import '../services/api_service.dart';
+
 class QueueItem {
   final String id;
   final String? title;
@@ -6,7 +8,8 @@ class QueueItem {
   final String? url; // For streaming URLs
   final String? filename; // For local files
   final String? thumbnail;
-  final String? originalUrl; // Original YouTube/Spotify URL for lazy loading streaming URL
+  final String?
+      originalUrl; // Original YouTube/Spotify URL for lazy loading streaming URL
 
   QueueItem({
     required this.id,
@@ -35,6 +38,7 @@ class QueueItem {
       album: album,
       url: streamingUrl,
       thumbnail: thumbnail,
+      originalUrl: ApiService.youtubeSourceFromMediaUrl(streamingUrl),
     );
   }
 
@@ -93,14 +97,15 @@ class QueueItem {
   }
 
   // Create a copy with updated streaming URL
-  QueueItem copyWithStreamingUrl(String streamingUrl) {
+  QueueItem copyWithStreamingUrl(String streamingUrl,
+      {bool clearFilename = false}) {
     return QueueItem(
       id: id,
       title: title,
       artist: artist,
       album: album,
       url: streamingUrl,
-      filename: filename,
+      filename: clearFilename ? null : filename,
       thumbnail: thumbnail,
       originalUrl: originalUrl,
     );
@@ -123,4 +128,3 @@ class QueueItem {
   String get displayTitle => title ?? filename ?? 'Unknown Track';
   String? get displayArtist => artist;
 }
-

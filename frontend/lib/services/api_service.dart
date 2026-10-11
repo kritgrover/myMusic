@@ -2,22 +2,147 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../config.dart';
+import '../models/playlist.dart';
 import 'auth_http_client.dart';
+import 'media_exceptions.dart';
 
 class ApiService {
   final String baseUrl;
   final AuthHttpClient _client;
-  
+
   ApiService({String? baseUrl, AuthHttpClient? client})
       : baseUrl = baseUrl ?? AppConfig.apiBaseUrl,
         _client = client ?? AuthHttpClient.shared;
-  
+
+  /// Audio elements cannot set bearer headers in browsers. Resolve a private,
+  /// short-lived media capability only at the point the audio source is loaded.
+  /// Callers keep the canonical URL, never this returned capability, in state.
+  Future<String> authorizeMediaUrl(String url) async {
+    final canonical = canonicalMediaUrl(url, baseUrl: baseUrl);
+    if (!isProtectedMediaUrl(canonical, baseUrl: baseUrl)) return canonical;
+    final path = Uri.parse(canonical).path;
+    final response = await _client.post(
+      Uri.parse('$baseUrl/media/authorize'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'path': path}),
+    );
+    if (response.statusCode != 200) {
+      if ((response.statusCode == 404 || response.statusCode == 410) &&
+          path.startsWith('/downloads/')) {
+        throw const DownloadUnavailableException();
+      }
+      throw StateError('Could not authorize media (${response.statusCode})');
+    }
+    final data = jsonDecode(response.body) as Map<String, dynamic>;
+    final value = data['url'];
+    if (value is! String) throw StateError('Invalid media authorization');
+    final authorized = Uri.parse(baseUrl).resolve(value);
+    if (!isProtectedMediaUrl(authorized.toString(), baseUrl: baseUrl) ||
+        _mediaIdentity(authorized.path) != _mediaIdentity(path) ||
+        authorized.fragment.isNotEmpty ||
+        (authorized.queryParameters['media_token'] ?? '').isEmpty) {
+      throw StateError('Invalid media authorization');
+    }
+    return authorized.toString();
+  }
+
+  static String _mediaIdentity(String path) {
+    final decoded = Uri.decodeComponent(path);
+    if (!decoded.startsWith('/stream/')) return decoded;
+    final sourceUrl =
+        _canonicalYouTubeUrl(decoded.substring('/stream/'.length));
+    return sourceUrl == null
+        ? decoded
+        : '/stream/${Uri.parse(sourceUrl).queryParameters['v']}';
+  }
+
+  /// Resolve supported YouTube aliases or a same-origin backend stream to the
+  /// exact canonical source. This never searches or retains media credentials.
+  static String? canonicalYouTubeSource(String? value) {
+    if (value == null || value.isEmpty) return null;
+    try {
+      return youtubeSourceFromMediaUrl(value) ?? _canonicalYouTubeUrl(value);
+    } on FormatException {
+      return null;
+    }
+  }
+
+  static String? _canonicalYouTubeUrl(String value) {
+    final source = Uri.tryParse(value);
+    if (source == null ||
+        source.userInfo.isNotEmpty ||
+        !const ['http', 'https'].contains(source.scheme) ||
+        (source.hasPort &&
+            source.port != (source.scheme == 'https' ? 443 : 80))) {
+      return null;
+    }
+    String? videoId;
+    if (source.host == 'youtu.be') {
+      videoId =
+          source.pathSegments.length == 1 ? source.pathSegments.first : null;
+    } else if (const [
+      'youtube.com',
+      'www.youtube.com',
+      'm.youtube.com',
+      'music.youtube.com'
+    ].contains(source.host)) {
+      if (source.path == '/watch') {
+        videoId = source.queryParameters['v'];
+      } else if (source.pathSegments.length == 2 &&
+          const ['shorts', 'embed', 'live']
+              .contains(source.pathSegments.first)) {
+        videoId = source.pathSegments.last;
+      }
+    }
+    return videoId != null && RegExp(r'^[A-Za-z0-9_-]{11}$').hasMatch(videoId)
+        ? 'https://www.youtube.com/watch?v=$videoId'
+        : null;
+  }
+
+  static bool isProtectedMediaUrl(String url, {String? baseUrl}) {
+    final uri = Uri.tryParse(url);
+    final backend = Uri.parse(baseUrl ?? AppConfig.apiBaseUrl);
+    if (uri == null ||
+        !uri.hasAuthority ||
+        uri.userInfo.isNotEmpty ||
+        uri.scheme != backend.scheme ||
+        uri.host != backend.host ||
+        uri.port != backend.port) {
+      return false;
+    }
+    return uri.path.startsWith('/downloads/') ||
+        uri.path.startsWith('/stream/');
+  }
+
+  /// Discard expired media capabilities from old persisted URLs before reuse.
+  static String canonicalMediaUrl(String url, {String? baseUrl}) {
+    final backend = Uri.parse(baseUrl ?? AppConfig.apiBaseUrl);
+    var uri = Uri.tryParse(url);
+    if (uri == null) return url;
+    if (!uri.hasAuthority && uri.path.startsWith('/')) {
+      uri = backend.resolveUri(uri);
+    }
+    if (!isProtectedMediaUrl(uri.toString(), baseUrl: baseUrl)) return url;
+    return uri.toString().split('?').first.split('#').first;
+  }
+
+  /// Recover the exact source from a canonical backend stream for later saving.
+  static String? youtubeSourceFromMediaUrl(String url) {
+    final canonical = canonicalMediaUrl(url);
+    if (!isProtectedMediaUrl(canonical)) return null;
+    final identity = _mediaIdentity(Uri.parse(canonical).path);
+    final match = RegExp(r'^/stream/([A-Za-z0-9_-]{11})$').firstMatch(identity);
+    return match == null ? null : 'https://www.youtube.com/watch?v=${match[1]}';
+  }
+
   /// Resolve a URL to a YouTube URL. If the given URL is already YouTube, returns it.
   /// If it's a non-YouTube URL (e.g. Spotify) or null/empty, searches YouTube by title+artist and returns the first result.
   /// Returns null if resolution fails.
-  Future<String?> resolveToYouTubeUrl(String? url, String title, String? artist) async {
+  Future<String?> resolveToYouTubeUrl(
+      String? url, String title, String? artist) async {
     // Already have a valid YouTube URL
-    if (url != null && url.isNotEmpty &&
+    if (url != null &&
+        url.isNotEmpty &&
         (url.contains('youtube.com') || url.contains('youtu.be'))) {
       return url;
     }
@@ -43,7 +168,7 @@ class ApiService {
           'duration_max': 600,
         }),
       );
-      
+
       if (response.statusCode == 200) {
         final List<dynamic> data = jsonDecode(response.body);
         return data.map((item) => VideoInfo.fromJson(item)).toList();
@@ -54,7 +179,7 @@ class ApiService {
       throw Exception('Search error: $e');
     }
   }
-  
+
   Future<StreamResult> getStreamingUrl({
     required String url,
     required String title,
@@ -84,7 +209,8 @@ class ApiService {
     String videoUrl = '',
   }) async {
     try {
-      final uri = Uri.parse('$baseUrl/clean-metadata').replace(queryParameters: {
+      final uri =
+          Uri.parse('$baseUrl/clean-metadata').replace(queryParameters: {
         'title': title,
         if (uploader.isNotEmpty) 'uploader': uploader,
         if (videoId.isNotEmpty) 'video_id': videoId,
@@ -127,7 +253,7 @@ class ApiService {
           'embed_thumbnail': embedThumbnail,
         }),
       );
-      
+
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         return DownloadResult.fromJson(data);
@@ -139,11 +265,11 @@ class ApiService {
       throw Exception('Download error: $e');
     }
   }
-  
+
   Future<List<DownloadedFile>> listDownloads() async {
     try {
       final response = await _client.get(Uri.parse('$baseUrl/downloads'));
-      
+
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         final List<dynamic> files = data['files'];
@@ -159,8 +285,9 @@ class ApiService {
   Future<void> deleteDownload(String filename) async {
     try {
       final encodedFilename = Uri.encodeComponent(filename);
-      final response = await _client.delete(Uri.parse('$baseUrl/downloads/$encodedFilename'));
-      
+      final response = await _client
+          .delete(Uri.parse('$baseUrl/downloads/$encodedFilename'));
+
       if (response.statusCode != 200) {
         final error = jsonDecode(response.body);
         throw Exception(error['detail'] ?? 'Delete failed');
@@ -170,7 +297,8 @@ class ApiService {
     }
   }
 
-  Future<Map<String, dynamic>> startBatchDownload(List<Map<String, dynamic>> downloads) async {
+  Future<Map<String, dynamic>> startBatchDownload(
+      List<Map<String, dynamic>> downloads) async {
     try {
       final response = await _client.post(
         Uri.parse('$baseUrl/downloads/batch'),
@@ -179,7 +307,7 @@ class ApiService {
           'downloads': downloads,
         }),
       );
-      
+
       if (response.statusCode == 200) {
         return jsonDecode(response.body);
       } else {
@@ -193,8 +321,9 @@ class ApiService {
 
   Future<DownloadProgress> getDownloadProgress(String downloadId) async {
     try {
-      final response = await _client.get(Uri.parse('$baseUrl/downloads/progress/$downloadId'));
-      
+      final response = await _client
+          .get(Uri.parse('$baseUrl/downloads/progress/$downloadId'));
+
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         return DownloadProgress.fromJson(data);
@@ -210,10 +339,11 @@ class ApiService {
   Future<CsvUploadResult> uploadCsv(String filePath) async {
     try {
       final file = await http.MultipartFile.fromPath('file', filePath);
-      final request = _client.multipartRequest('POST', Uri.parse('$baseUrl/csv/upload'));
+      final request =
+          _client.multipartRequest('POST', Uri.parse('$baseUrl/csv/upload'));
       request.files.add(file);
       final response = await _client.sendMultipart(request);
-      
+
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         return CsvUploadResult.fromJson(data);
@@ -226,17 +356,19 @@ class ApiService {
     }
   }
 
-  Future<CsvUploadResult> uploadCsvBytes(List<int> fileBytes, String filename) async {
+  Future<CsvUploadResult> uploadCsvBytes(
+      List<int> fileBytes, String filename) async {
     try {
       final file = http.MultipartFile.fromBytes(
         'file',
         fileBytes,
         filename: filename,
       );
-      final request = _client.multipartRequest('POST', Uri.parse('$baseUrl/csv/upload'));
+      final request =
+          _client.multipartRequest('POST', Uri.parse('$baseUrl/csv/upload'));
       request.files.add(file);
       final response = await _client.sendMultipart(request);
-      
+
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         return CsvUploadResult.fromJson(data);
@@ -251,8 +383,9 @@ class ApiService {
 
   Future<CsvProgress> getCsvProgress(String filename) async {
     try {
-      final response = await _client.get(Uri.parse('$baseUrl/csv/progress/$filename'));
-      
+      final response =
+          await _client.get(Uri.parse('$baseUrl/csv/progress/$filename'));
+
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         return CsvProgress.fromJson(data);
@@ -264,7 +397,8 @@ class ApiService {
     }
   }
 
-  Future<CsvConversionResult> convertCsv(String filename, {
+  Future<CsvConversionResult> convertCsv(
+    String filename, {
     int durationMin = 0,
     double durationMax = 600,
     bool excludeInstrumentals = false,
@@ -281,7 +415,7 @@ class ApiService {
           'variants': variants,
         }),
       );
-      
+
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         return CsvConversionResult.fromJson(data);
@@ -294,14 +428,15 @@ class ApiService {
     }
   }
 
-  Future<void> addSongToPlaylist(String playlistId, Map<String, dynamic> songData) async {
+  Future<void> addSongToPlaylist(
+      String playlistId, Map<String, dynamic> songData) async {
     try {
       final response = await _client.post(
         Uri.parse('$baseUrl/playlists/$playlistId/songs'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode(songData),
       );
-      
+
       if (response.statusCode != 200) {
         final error = jsonDecode(response.body);
         throw Exception(error['detail'] ?? 'Failed to add song');
@@ -314,8 +449,9 @@ class ApiService {
   Future<List<CsvConvertedFile>> listCsvFiles(String playlistName) async {
     try {
       final encodedName = Uri.encodeComponent(playlistName);
-      final response = await _client.get(Uri.parse('$baseUrl/csv/files/$encodedName'));
-      
+      final response =
+          await _client.get(Uri.parse('$baseUrl/csv/files/$encodedName'));
+
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         final List<dynamic> files = data['files'];
@@ -346,9 +482,9 @@ class ApiService {
         if (artist.isNotEmpty) 'artist': artist,
         if (album.isNotEmpty) 'album': album,
       });
-      
+
       final response = await _client.get(uri);
-      
+
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         return data['artwork_url'] as String?;
@@ -369,7 +505,9 @@ class VideoInfo {
   final double duration;
   final String url;
   final String thumbnail;
-  
+  final String? filename;
+  final String? album;
+
   VideoInfo({
     required this.id,
     required this.title,
@@ -377,8 +515,10 @@ class VideoInfo {
     required this.duration,
     required this.url,
     required this.thumbnail,
+    this.filename,
+    this.album,
   });
-  
+
   factory VideoInfo.fromJson(Map<String, dynamic> json) {
     return VideoInfo(
       id: json['id'] ?? '',
@@ -387,9 +527,22 @@ class VideoInfo {
       duration: (json['duration'] ?? 0).toDouble(),
       url: json['url'] ?? '',
       thumbnail: json['thumbnail'] ?? '',
+      filename: json['filename'] as String?,
+      album: json['album'] as String?,
     );
   }
-  
+
+  factory VideoInfo.fromPlaylistTrack(PlaylistTrack track) => VideoInfo(
+        id: track.id,
+        title: track.title,
+        uploader: track.artist ?? 'Unknown',
+        duration: track.duration ?? 0,
+        url: track.url ?? '',
+        thumbnail: track.thumbnail ?? '',
+        filename: track.filename.isEmpty ? null : track.filename,
+        album: track.album,
+      );
+
   String get formattedDuration {
     final minutes = (duration / 60).floor();
     final seconds = (duration % 60).floor();
@@ -402,14 +555,14 @@ class StreamResult {
   final String streamingUrl;
   final String title;
   final String artist;
-  
+
   StreamResult({
     required this.success,
     required this.streamingUrl,
     required this.title,
     required this.artist,
   });
-  
+
   factory StreamResult.fromJson(Map<String, dynamic> json) {
     return StreamResult(
       success: json['success'] ?? false,
@@ -427,7 +580,7 @@ class DownloadResult {
   final String title;
   final String artist;
   final String album;
-  
+
   DownloadResult({
     required this.success,
     required this.filePath,
@@ -436,7 +589,7 @@ class DownloadResult {
     required this.artist,
     required this.album,
   });
-  
+
   factory DownloadResult.fromJson(Map<String, dynamic> json) {
     return DownloadResult(
       success: json['success'] ?? false,
@@ -455,7 +608,7 @@ class DownloadedFile {
   final int size;
   final String? title;
   final String? artist;
-  
+
   DownloadedFile({
     required this.filename,
     required this.filePath,
@@ -463,7 +616,7 @@ class DownloadedFile {
     this.title,
     this.artist,
   });
-  
+
   factory DownloadedFile.fromJson(Map<String, dynamic> json) {
     return DownloadedFile(
       filename: json['filename'] ?? '',
@@ -473,7 +626,7 @@ class DownloadedFile {
       artist: json['artist'],
     );
   }
-  
+
   String get formattedSize {
     if (size < 1024) return '$size B';
     if (size < 1024 * 1024) return '${(size / 1024).toStringAsFixed(1)} KB';
@@ -485,13 +638,13 @@ class CsvUploadResult {
   final bool success;
   final String filename;
   final String filePath;
-  
+
   CsvUploadResult({
     required this.success,
     required this.filename,
     required this.filePath,
   });
-  
+
   factory CsvUploadResult.fromJson(Map<String, dynamic> json) {
     return CsvUploadResult(
       success: json['success'] ?? false,
@@ -510,7 +663,7 @@ class CsvConversionResult {
   final String? playlistId;
   final String? playlistName;
   final bool playlistCreated;
-  
+
   CsvConversionResult({
     required this.success,
     required this.tracks,
@@ -521,7 +674,7 @@ class CsvConversionResult {
     this.playlistName,
     this.playlistCreated = false,
   });
-  
+
   factory CsvConversionResult.fromJson(Map<String, dynamic> json) {
     final List<dynamic> tracksList = json['tracks'] ?? [];
     return CsvConversionResult(
@@ -542,14 +695,14 @@ class CsvConvertedFile {
   final String filePath;
   final int size;
   final String downloadUrl;
-  
+
   CsvConvertedFile({
     required this.filename,
     required this.filePath,
     required this.size,
     required this.downloadUrl,
   });
-  
+
   factory CsvConvertedFile.fromJson(Map<String, dynamic> json) {
     return CsvConvertedFile(
       filename: json['filename'] ?? '',
@@ -558,7 +711,7 @@ class CsvConvertedFile {
       downloadUrl: json['download_url'] ?? '',
     );
   }
-  
+
   String get formattedSize {
     if (size < 1024) return '$size B';
     if (size < 1024 * 1024) return '${(size / 1024).toStringAsFixed(1)} KB';
@@ -572,7 +725,7 @@ class CsvProgress {
   final String status;
   final int processed;
   final int notFound;
-  
+
   CsvProgress({
     required this.current,
     required this.total,
@@ -580,7 +733,7 @@ class CsvProgress {
     required this.processed,
     required this.notFound,
   });
-  
+
   factory CsvProgress.fromJson(Map<String, dynamic> json) {
     return CsvProgress(
       current: json['current'] ?? 0,
@@ -590,7 +743,7 @@ class CsvProgress {
       notFound: json['not_found'] ?? 0,
     );
   }
-  
+
   bool get isCompleted => status == 'completed';
   bool get hasError => status.startsWith('error');
   double get progress => total > 0 ? current / total : 0.0;
@@ -598,9 +751,9 @@ class CsvProgress {
 
 class BatchDownloadRequest {
   final List<Map<String, dynamic>> downloads;
-  
+
   BatchDownloadRequest({required this.downloads});
-  
+
   Map<String, dynamic> toJson() {
     return {
       'downloads': downloads,
@@ -615,7 +768,7 @@ class DownloadProgress {
   final int processed;
   final int failed;
   final List<Map<String, dynamic>> downloads;
-  
+
   DownloadProgress({
     required this.current,
     required this.total,
@@ -624,7 +777,7 @@ class DownloadProgress {
     required this.failed,
     required this.downloads,
   });
-  
+
   factory DownloadProgress.fromJson(Map<String, dynamic> json) {
     return DownloadProgress(
       current: json['current'] ?? 0,
@@ -635,9 +788,8 @@ class DownloadProgress {
       downloads: List<Map<String, dynamic>>.from(json['downloads'] ?? []),
     );
   }
-  
+
   bool get isCompleted => status == 'completed';
   bool get hasError => status.startsWith('error');
   double get progress => total > 0 ? current / total : 0.0;
 }
-

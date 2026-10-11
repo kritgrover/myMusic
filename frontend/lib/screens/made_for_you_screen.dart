@@ -1,3 +1,4 @@
+import '../services/auth_http_client.dart';
 import 'package:flutter/material.dart';
 import '../utils/responsive_utils.dart';
 import '../services/player_state_service.dart';
@@ -16,6 +17,8 @@ class MadeForYouScreen extends StatefulWidget {
   final RecentlyPlayedService? recentlyPlayedService;
   final VoidCallback? onBack;
   final String title;
+  final ApiService? apiService;
+  final PlaylistService? playlistService;
 
   const MadeForYouScreen({
     super.key,
@@ -25,6 +28,8 @@ class MadeForYouScreen extends StatefulWidget {
     this.recentlyPlayedService,
     this.onBack,
     this.title = 'Songs for You',
+    this.apiService,
+    this.playlistService,
   });
 
   @override
@@ -32,11 +37,29 @@ class MadeForYouScreen extends StatefulWidget {
 }
 
 class _MadeForYouScreenState extends State<MadeForYouScreen> {
-  final ApiService _apiService = ApiService();
-  final PlaylistService _playlistService = PlaylistService();
+  late final ApiService _apiService = widget.apiService ?? ApiService();
+  late final PlaylistService _playlistService =
+      widget.playlistService ?? PlaylistService();
+
+  bool _isDownloaded(VideoInfo song) => (song.filename ?? '').isNotEmpty;
+  QueueItem _localItem(VideoInfo song) => QueueItem(
+        id: song.id,
+        title: song.title,
+        artist: song.uploader,
+        album: song.album,
+        filename: song.filename,
+        thumbnail: song.thumbnail,
+        originalUrl: song.url.isEmpty ? null : song.url,
+      );
 
   Future<void> _playTrack(VideoInfo song) async {
     try {
+      if (_isDownloaded(song)) {
+        widget.queueService.clearQueue();
+        await widget.queueService
+            .addAndPlay(_localItem(song), widget.playerStateService);
+        return;
+      }
       // Search YouTube for this track first (like GenreScreen does)
       final searchResults = await _apiService.searchYoutube(
         '${song.title} ${song.uploader}',
@@ -45,7 +68,8 @@ class _MadeForYouScreenState extends State<MadeForYouScreen> {
       if (searchResults.isEmpty) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Could not find "${song.title}" on YouTube')),
+            SnackBar(
+                content: Text('Could not find "${song.title}" on YouTube')),
           );
         }
         return;
@@ -69,7 +93,8 @@ class _MadeForYouScreenState extends State<MadeForYouScreen> {
         thumbnail: song.thumbnail,
       );
       widget.queueService.clearQueue();
-      await widget.queueService.addAndPlay(queueItem, widget.playerStateService);
+      await widget.queueService
+          .addAndPlay(queueItem, widget.playerStateService);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -81,6 +106,14 @@ class _MadeForYouScreenState extends State<MadeForYouScreen> {
 
   Future<void> _addToQueue(VideoInfo song, {bool showSnackbar = true}) async {
     try {
+      if (_isDownloaded(song)) {
+        widget.queueService.addToQueue(_localItem(song));
+        if (mounted && showSnackbar) {
+          ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Added "${song.title}" to queue')));
+        }
+        return;
+      }
       // Search YouTube for this track first
       final searchResults = await _apiService.searchYoutube(
         '${song.title} ${song.uploader}',
@@ -89,7 +122,8 @@ class _MadeForYouScreenState extends State<MadeForYouScreen> {
       if (searchResults.isEmpty) {
         if (mounted && showSnackbar) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Could not find "${song.title}" on YouTube')),
+            SnackBar(
+                content: Text('Could not find "${song.title}" on YouTube')),
           );
         }
         return;
@@ -133,6 +167,7 @@ class _MadeForYouScreenState extends State<MadeForYouScreen> {
   }
 
   Future<void> _downloadTrack(VideoInfo song) async {
+    if (_isDownloaded(song)) return;
     try {
       final youtubeUrl = await _apiService.resolveToYouTubeUrl(
         song.url.isNotEmpty ? song.url : null,
@@ -191,7 +226,8 @@ class _MadeForYouScreenState extends State<MadeForYouScreen> {
       }
     } catch (e) {
       if (mounted) {
-        Navigator.of(context, rootNavigator: true).pop(); // Close loading dialog
+        Navigator.of(context, rootNavigator: true)
+            .pop(); // Close loading dialog
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Download failed: $e'),
@@ -204,6 +240,15 @@ class _MadeForYouScreenState extends State<MadeForYouScreen> {
   }
 
   Future<void> _showAddToPlaylistDialog(VideoInfo song) async {
+    if (_isDownloaded(song)) {
+      await showDialog(
+          context: context,
+          builder: (_) => PlaylistSelectionDialog(
+                playlistService: _playlistService,
+                track: PlaylistTrack.fromVideoInfo(song),
+              ));
+      return;
+    }
     // Resolve Spotify/non-YouTube URLs to YouTube so the playlist stores the correct URL
     final youtubeUrl = await _apiService.resolveToYouTubeUrl(
       song.url,
@@ -232,9 +277,9 @@ class _MadeForYouScreenState extends State<MadeForYouScreen> {
       title: song.title,
       artist: song.uploader,
       filename: '',
-      url: effectiveUrl!,
+      url: effectiveUrl,
       thumbnail: song.thumbnail,
-      duration: song.duration is double ? song.duration : (song.duration?.toDouble()),
+      duration: song.duration,
     );
 
     if (!mounted) return;
@@ -280,8 +325,8 @@ class _MadeForYouScreenState extends State<MadeForYouScreen> {
                   widget.title,
                   overflow: TextOverflow.ellipsis,
                   style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
+                        fontWeight: FontWeight.w700,
+                      ),
                 ),
               ),
             ],
@@ -297,14 +342,20 @@ class _MadeForYouScreenState extends State<MadeForYouScreen> {
                   Icon(
                     Icons.music_off,
                     size: 64,
-                    color: Theme.of(context).colorScheme.onSurface.withOpacity(0.3),
+                    color: Theme.of(context)
+                        .colorScheme
+                        .onSurface
+                        .withOpacity(0.3),
                   ),
                   const SizedBox(height: 16),
                   Text(
                     'No recommendations available',
                     style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
-                    ),
+                          color: Theme.of(context)
+                              .colorScheme
+                              .onSurface
+                              .withOpacity(0.6),
+                        ),
                   ),
                 ],
               ),
@@ -317,8 +368,10 @@ class _MadeForYouScreenState extends State<MadeForYouScreen> {
                 // Play All button
                 Padding(
                   padding: EdgeInsets.only(
-                    left: ResponsiveUtils.responsiveValue<double>(context, compact: 12, medium: 20, expanded: 24),
-                    right: ResponsiveUtils.responsiveValue<double>(context, compact: 12, medium: 20, expanded: 24),
+                    left: ResponsiveUtils.responsiveValue<double>(context,
+                        compact: 12, medium: 20, expanded: 24),
+                    right: ResponsiveUtils.responsiveValue<double>(context,
+                        compact: 12, medium: 20, expanded: 24),
                     top: 8,
                     bottom: 8,
                   ),
@@ -329,16 +382,21 @@ class _MadeForYouScreenState extends State<MadeForYouScreen> {
                         icon: const Icon(Icons.play_arrow),
                         label: const Text('Play All'),
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: Theme.of(context).colorScheme.primary,
-                          foregroundColor: Theme.of(context).colorScheme.onPrimary,
+                          backgroundColor:
+                              Theme.of(context).colorScheme.primary,
+                          foregroundColor:
+                              Theme.of(context).colorScheme.onPrimary,
                         ),
                       ),
                       const SizedBox(width: 8),
                       Text(
                         '${widget.songs.length} tracks',
                         style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
-                        ),
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .onSurface
+                                  .withOpacity(0.6),
+                            ),
                       ),
                     ],
                   ),
@@ -346,7 +404,8 @@ class _MadeForYouScreenState extends State<MadeForYouScreen> {
                 // Track list
                 Expanded(
                   child: ListView.builder(
-                    padding: ResponsiveUtils.responsiveHorizontalPadding(context),
+                    padding:
+                        ResponsiveUtils.responsiveHorizontalPadding(context),
                     itemCount: widget.songs.length,
                     itemBuilder: (context, index) {
                       final song = widget.songs[index];
@@ -356,52 +415,78 @@ class _MadeForYouScreenState extends State<MadeForYouScreen> {
                           onTap: () => _playTrack(song),
                           borderRadius: BorderRadius.circular(4),
                           child: Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 8),
                             child: Row(
                               children: [
                                 ClipRRect(
                                   borderRadius: BorderRadius.circular(4),
                                   child: song.thumbnail.isNotEmpty
                                       ? Image.network(
-                                          song.thumbnail,
-                                          width: ResponsiveUtils.responsiveIconSize(context, base: 48),
-                                          height: ResponsiveUtils.responsiveIconSize(context, base: 48),
+                                          AuthHttpClient.shared
+                                              .cacheScopedUrl(song.thumbnail),
+                                          headers: AuthHttpClient.shared
+                                              .authHeadersForUrl(
+                                                  song.thumbnail),
+                                          width: ResponsiveUtils
+                                              .responsiveIconSize(context,
+                                                  base: 48),
+                                          height: ResponsiveUtils
+                                              .responsiveIconSize(context,
+                                                  base: 48),
                                           fit: BoxFit.cover,
                                           errorBuilder: (_, __, ___) {
-                                            final size = ResponsiveUtils.responsiveIconSize(context, base: 48);
+                                            final size = ResponsiveUtils
+                                                .responsiveIconSize(context,
+                                                    base: 48);
                                             return Container(
                                               width: size,
                                               height: size,
-                                              color: Theme.of(context).colorScheme.surfaceVariant,
-                                              child: const Icon(Icons.music_note),
+                                              color: Theme.of(context)
+                                                  .colorScheme
+                                                  .surfaceVariant,
+                                              child:
+                                                  const Icon(Icons.music_note),
                                             );
                                           },
                                         )
                                       : Container(
-                                          width: ResponsiveUtils.responsiveIconSize(context, base: 48),
-                                          height: ResponsiveUtils.responsiveIconSize(context, base: 48),
-                                          color: Theme.of(context).colorScheme.surfaceVariant,
+                                          width: ResponsiveUtils
+                                              .responsiveIconSize(context,
+                                                  base: 48),
+                                          height: ResponsiveUtils
+                                              .responsiveIconSize(context,
+                                                  base: 48),
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .surfaceVariant,
                                           child: const Icon(Icons.music_note),
                                         ),
                                 ),
                                 const SizedBox(width: 12),
                                 Expanded(
                                   child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
                                     mainAxisSize: MainAxisSize.min,
                                     children: [
                                       Text(
                                         song.title,
                                         maxLines: 1,
                                         overflow: TextOverflow.ellipsis,
-                                        style: Theme.of(context).textTheme.bodyLarge,
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .bodyLarge,
                                       ),
                                       Text(
                                         song.uploader,
                                         maxLines: 1,
                                         overflow: TextOverflow.ellipsis,
                                         style: TextStyle(
-                                          color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .onSurface
+                                              .withOpacity(0.6),
                                           fontSize: 14,
                                         ),
                                       ),
@@ -433,13 +518,20 @@ class _MadeForYouScreenState extends State<MadeForYouScreen> {
                                         }
                                       },
                                       itemBuilder: (context) => [
-                                        const PopupMenuItem(
+                                        PopupMenuItem(
                                           value: 'download',
+                                          enabled: !_isDownloaded(song),
                                           child: Row(
                                             children: [
-                                              Icon(Icons.download, size: 20),
-                                              SizedBox(width: 12),
-                                              Text('Download'),
+                                              Icon(
+                                                  _isDownloaded(song)
+                                                      ? Icons.download_done
+                                                      : Icons.download,
+                                                  size: 20),
+                                              const SizedBox(width: 12),
+                                              Text(_isDownloaded(song)
+                                                  ? 'Downloaded'
+                                                  : 'Download'),
                                             ],
                                           ),
                                         ),
@@ -447,7 +539,8 @@ class _MadeForYouScreenState extends State<MadeForYouScreen> {
                                           value: 'playlist',
                                           child: Row(
                                             children: [
-                                              Icon(Icons.playlist_add, size: 20),
+                                              Icon(Icons.playlist_add,
+                                                  size: 20),
                                               SizedBox(width: 12),
                                               Text('Add to playlist'),
                                             ],

@@ -546,7 +546,7 @@ class _PlaylistCardState extends State<_PlaylistCard> {
                                       fit: StackFit.expand,
                                       children: [
                                         Image.network(
-                                          widget.coverImageUrl!,
+                                          AuthHttpClient.shared.cacheScopedUrl(widget.coverImageUrl!),
                                           headers: AuthHttpClient.shared
                                               .authHeadersForUrl(
                                                   widget.coverImageUrl!),

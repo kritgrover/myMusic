@@ -14,15 +14,29 @@ class PlaylistSelectionDialog extends StatefulWidget {
   });
 
   @override
-  State<PlaylistSelectionDialog> createState() => _PlaylistSelectionDialogState();
+  State<PlaylistSelectionDialog> createState() =>
+      _PlaylistSelectionDialogState();
 }
 
 class _PlaylistSelectionDialogState extends State<PlaylistSelectionDialog> {
   List<Playlist> _playlists = [];
   Set<String> _selectedPlaylistIds = {};
-  Set<String> _initialPlaylistIds = {}; // Playlists that had the track when dialog opened
+  Set<String> _initialPlaylistIds =
+      {}; // Playlists that had the track when dialog opened
+  Map<String, Set<String>> _existingTrackIds = {};
   bool _isLoading = true;
   bool _isAdding = false;
+
+  bool get _hasChanges =>
+      _selectedPlaylistIds.difference(_initialPlaylistIds).isNotEmpty ||
+      _initialPlaylistIds.difference(_selectedPlaylistIds).isNotEmpty;
+
+  bool _matchesTrack(PlaylistTrack track) =>
+      (track.id.isNotEmpty && track.id == widget.track.id) ||
+      (track.url?.isNotEmpty == true && track.url == widget.track.url) ||
+      (track.filename.isNotEmpty &&
+          track.filename.replaceAll('\\', '/') ==
+              widget.track.filename.replaceAll('\\', '/'));
 
   @override
   void initState() {
@@ -39,21 +53,20 @@ class _PlaylistSelectionDialogState extends State<PlaylistSelectionDialog> {
       final playlists = await widget.playlistService.getAllPlaylists();
       if (!mounted) return;
       // Check which playlists already contain this track
-      final Set<String> existingPlaylistIds = {};
+      final existingTrackIds = <String, Set<String>>{};
       for (var playlist in playlists) {
         for (var track in playlist.tracks) {
-          if (track.id == widget.track.id || 
-              (track.url != null && widget.track.url != null && track.url == widget.track.url)) {
-            existingPlaylistIds.add(playlist.id);
-            break;
+          if (_matchesTrack(track)) {
+            existingTrackIds.putIfAbsent(playlist.id, () => {}).add(track.id);
           }
         }
       }
 
       setState(() {
         _playlists = playlists;
-        _initialPlaylistIds = existingPlaylistIds;
-        _selectedPlaylistIds = Set.from(existingPlaylistIds);
+        _existingTrackIds = existingTrackIds;
+        _initialPlaylistIds = existingTrackIds.keys.toSet();
+        _selectedPlaylistIds = Set.from(_initialPlaylistIds);
         _isLoading = false;
       });
     } catch (e) {
@@ -85,6 +98,7 @@ class _PlaylistSelectionDialogState extends State<PlaylistSelectionDialog> {
   }
 
   Future<void> _confirmAdd() async {
+    if (_isAdding || !_hasChanges) return;
     setState(() => _isAdding = true);
 
     try {
@@ -92,10 +106,25 @@ class _PlaylistSelectionDialogState extends State<PlaylistSelectionDialog> {
       final toRemove = _initialPlaylistIds.difference(_selectedPlaylistIds);
 
       for (final playlistId in toAdd) {
-        await widget.playlistService.addTrackToPlaylist(playlistId, widget.track);
+        await widget.playlistService
+            .addTrackToPlaylist(playlistId, widget.track);
+        // Keep the baseline aligned with every successful request. If a later
+        // playlist fails, retries and further selection changes must account
+        // for the memberships already saved on the server.
+        _initialPlaylistIds.add(playlistId);
+        _existingTrackIds[playlistId] = {widget.track.id};
       }
       for (final playlistId in toRemove) {
-        await widget.playlistService.removeTrackFromPlaylist(playlistId, widget.track.id);
+        // A saved song can have a different stable ID than the copy originally
+        // added to a playlist. Remove the actual matched playlist row IDs.
+        for (final trackId in _existingTrackIds[playlistId]!.toList()) {
+          await widget.playlistService
+              .removeTrackFromPlaylist(playlistId, trackId);
+          _existingTrackIds[playlistId]!.remove(trackId);
+          if (_existingTrackIds[playlistId]!.isEmpty) {
+            _initialPlaylistIds.remove(playlistId);
+          }
+        }
       }
 
       if (mounted) {
@@ -175,16 +204,18 @@ class _PlaylistSelectionDialogState extends State<PlaylistSelectionDialog> {
                       children: [
                         Text(
                           'Add to Playlist',
-                          style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                            fontWeight: FontWeight.bold,
-                          ),
+                          style:
+                              Theme.of(context).textTheme.titleLarge?.copyWith(
+                                    fontWeight: FontWeight.bold,
+                                  ),
                         ),
                         const SizedBox(height: 4),
                         Text(
                           widget.track.title,
-                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                            color: onSurfaceMuted,
-                          ),
+                          style:
+                              Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                    color: onSurfaceMuted,
+                                  ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
@@ -218,14 +249,18 @@ class _PlaylistSelectionDialogState extends State<PlaylistSelectionDialog> {
                                 const SizedBox(height: 16),
                                 Text(
                                   'No playlists yet',
-                                  style: Theme.of(context).textTheme.titleMedium,
+                                  style:
+                                      Theme.of(context).textTheme.titleMedium,
                                 ),
                                 const SizedBox(height: 8),
                                 Text(
                                   'Create a playlist first',
-                                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                    color: onSurfaceMuted,
-                                  ),
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .bodyMedium
+                                      ?.copyWith(
+                                        color: onSurfaceMuted,
+                                      ),
                                 ),
                               ],
                             ),
@@ -236,12 +271,16 @@ class _PlaylistSelectionDialogState extends State<PlaylistSelectionDialog> {
                           itemCount: _playlists.length,
                           itemBuilder: (context, index) {
                             final playlist = _playlists[index];
-                            final isSelected = _selectedPlaylistIds.contains(playlist.id);
+                            final isSelected =
+                                _selectedPlaylistIds.contains(playlist.id);
 
                             return ListTile(
                               leading: Icon(
-                                isSelected ? Icons.check_circle : Icons.radio_button_unchecked,
-                                color: isSelected ? primaryColor : onSurfaceMuted,
+                                isSelected
+                                    ? Icons.check_circle
+                                    : Icons.radio_button_unchecked,
+                                color:
+                                    isSelected ? primaryColor : onSurfaceMuted,
                               ),
                               title: Text(playlist.name),
                               subtitle: Text(
@@ -269,7 +308,9 @@ class _PlaylistSelectionDialogState extends State<PlaylistSelectionDialog> {
                 child: SizedBox(
                   width: double.infinity,
                   child: ElevatedButton.icon(
-                    onPressed: (_isAdding || _selectedPlaylistIds.isEmpty) ? null : _confirmAdd,
+                    onPressed: (_isLoading || _isAdding || !_hasChanges)
+                        ? null
+                        : _confirmAdd,
                     icon: _isAdding
                         ? SizedBox(
                             width: 18,
@@ -280,7 +321,11 @@ class _PlaylistSelectionDialogState extends State<PlaylistSelectionDialog> {
                             ),
                           )
                         : const Icon(Icons.check, size: 20),
-                    label: Text(_isAdding ? 'Adding...' : 'Add to selected'),
+                    label: Text(_isAdding
+                        ? 'Saving...'
+                        : _initialPlaylistIds.isNotEmpty
+                            ? 'Save changes'
+                            : 'Add to selected'),
                   ),
                 ),
               ),
@@ -290,4 +335,3 @@ class _PlaylistSelectionDialogState extends State<PlaylistSelectionDialog> {
     );
   }
 }
-

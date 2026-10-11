@@ -1,3 +1,4 @@
+import '../services/auth_http_client.dart';
 import 'package:flutter/material.dart';
 import '../utils/responsive_utils.dart';
 import '../services/recommendation_service.dart';
@@ -12,6 +13,8 @@ import '../models/discovery.dart';
 import '../widgets/track_tile.dart';
 import '../widgets/artist_card.dart';
 import '../widgets/horizontal_card_row.dart';
+import '../widgets/save_music_button.dart';
+import '../services/saved_music_service.dart';
 import 'album_detail_screen.dart';
 
 /// Artist page: header, popular tracks, discography, and "Fans also like".
@@ -118,14 +121,24 @@ class _ArtistScreenState extends State<ArtistScreen> {
               children: [
                 const SizedBox(height: 16),
                 _buildHeader(context),
+                Center(
+                    child: Padding(
+                        padding: const EdgeInsets.only(top: 12),
+                        child: FollowArtistButton(
+                            artist: SavedArtist(
+                                id: widget.artistId,
+                                name: _name,
+                                thumbnail: _artist?.thumbnail)))),
                 const SizedBox(height: 8),
                 if (_topTracks.isNotEmpty) ...[
                   Padding(
-                    padding: ResponsiveUtils.responsiveHorizontalPadding(context),
+                    padding:
+                        ResponsiveUtils.responsiveHorizontalPadding(context),
                     child: Row(
                       children: [
                         ElevatedButton.icon(
-                          onPressed: () => _playback.playAll(context, _topTracks),
+                          onPressed: () =>
+                              _playback.playAll(context, _topTracks),
                           icon: const Icon(Icons.play_arrow),
                           label: const Text('Play'),
                         ),
@@ -135,22 +148,30 @@ class _ArtistScreenState extends State<ArtistScreen> {
                   const SizedBox(height: 8),
                   Padding(
                     padding: EdgeInsets.only(
-                      left: ResponsiveUtils.responsiveValue<double>(context, compact: 12, medium: 20, expanded: 24),
+                      left: ResponsiveUtils.responsiveValue<double>(context,
+                          compact: 12, medium: 20, expanded: 24),
                       bottom: 4,
                     ),
                     child: Text('Popular',
-                        style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600)),
+                        style: Theme.of(context)
+                            .textTheme
+                            .titleLarge
+                            ?.copyWith(fontWeight: FontWeight.w600)),
                   ),
                   Padding(
-                    padding: ResponsiveUtils.responsiveHorizontalPadding(context),
+                    padding:
+                        ResponsiveUtils.responsiveHorizontalPadding(context),
                     child: Column(
                       children: _topTracks
                           .map((t) => TrackTile(
                                 track: t,
                                 onPlay: () => _playback.playTrack(context, t),
-                                onAddToQueue: () => _playback.addToQueue(context, t),
-                                onDownload: () => _playback.download(context, t),
-                                onAddToPlaylist: () => _playback.addToPlaylist(context, t),
+                                onAddToQueue: () =>
+                                    _playback.addToQueue(context, t),
+                                onDownload: () =>
+                                    _playback.download(context, t),
+                                onAddToPlaylist: () =>
+                                    _playback.addToPlaylist(context, t),
                               ))
                           .toList(),
                     ),
@@ -161,9 +182,11 @@ class _ArtistScreenState extends State<ArtistScreen> {
                   HorizontalCardRow(
                     title: 'Albums & Singles',
                     itemCount: _albums.length,
-                    itemWidth: ResponsiveUtils.responsiveHorizontalCardWidth(context),
+                    itemWidth:
+                        ResponsiveUtils.responsiveHorizontalCardWidth(context),
                     labelHeight: 52,
-                    itemBuilder: (context, index) => _buildAlbumCard(context, _albums[index]),
+                    itemBuilder: (context, index) =>
+                        _buildAlbumCard(context, _albums[index]),
                   ),
                 ],
                 if (_related.isNotEmpty) ...[
@@ -171,7 +194,8 @@ class _ArtistScreenState extends State<ArtistScreen> {
                   HorizontalCardRow(
                     title: 'Fans also like',
                     itemCount: _related.length,
-                    itemWidth: ResponsiveUtils.responsiveHorizontalCardWidth(context),
+                    itemWidth:
+                        ResponsiveUtils.responsiveHorizontalCardWidth(context),
                     labelHeight: 32,
                     itemBuilder: (context, index) => ArtistCard(
                       artist: _related[index],
@@ -179,7 +203,9 @@ class _ArtistScreenState extends State<ArtistScreen> {
                     ),
                   ),
                 ],
-                SizedBox(height: ResponsiveUtils.responsivePlayerBottomPadding(context)),
+                SizedBox(
+                    height:
+                        ResponsiveUtils.responsivePlayerBottomPadding(context)),
               ],
             ),
     );
@@ -194,11 +220,13 @@ class _ArtistScreenState extends State<ArtistScreen> {
         ClipOval(
           child: (thumb != null && thumb.isNotEmpty)
               ? Image.network(
-                  thumb,
+                  AuthHttpClient.shared.cacheScopedUrl(thumb),
+                  headers: AuthHttpClient.shared.authHeadersForUrl(thumb),
                   width: size,
                   height: size,
                   fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => _avatarPlaceholder(context, size),
+                  errorBuilder: (_, __, ___) =>
+                      _avatarPlaceholder(context, size),
                 )
               : _avatarPlaceholder(context, size),
         ),
@@ -208,7 +236,10 @@ class _ArtistScreenState extends State<ArtistScreen> {
           child: Text(
             _name,
             textAlign: TextAlign.center,
-            style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700),
+            style: Theme.of(context)
+                .textTheme
+                .headlineSmall
+                ?.copyWith(fontWeight: FontWeight.w700),
           ),
         ),
         if (_artist?.followers != null) ...[
@@ -248,7 +279,9 @@ class _ArtistScreenState extends State<ArtistScreen> {
               borderRadius: BorderRadius.circular(8),
               child: (album.thumbnail != null && album.thumbnail!.isNotEmpty)
                   ? Image.network(
-                      album.thumbnail!,
+                      AuthHttpClient.shared.cacheScopedUrl(album.thumbnail!),
+                      headers: AuthHttpClient.shared
+                          .authHeadersForUrl(album.thumbnail!),
                       fit: BoxFit.cover,
                       errorBuilder: (_, __, ___) => _albumPlaceholder(context),
                     )
@@ -260,10 +293,15 @@ class _ArtistScreenState extends State<ArtistScreen> {
             album.name,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+            style: Theme.of(context)
+                .textTheme
+                .bodyMedium
+                ?.copyWith(fontWeight: FontWeight.w600),
           ),
           Text(
-            year.isNotEmpty ? '${album.type == 'single' ? 'Single' : 'Album'} • $year' : (album.type ?? ''),
+            year.isNotEmpty
+                ? '${album.type == 'single' ? 'Single' : 'Album'} • $year'
+                : (album.type ?? ''),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: Theme.of(context).textTheme.bodySmall,
@@ -278,14 +316,17 @@ class _ArtistScreenState extends State<ArtistScreen> {
       width: size,
       height: size,
       color: Theme.of(context).colorScheme.surfaceVariant,
-      child: Icon(Icons.person, size: size * 0.5, color: Theme.of(context).colorScheme.onSurfaceVariant),
+      child: Icon(Icons.person,
+          size: size * 0.5,
+          color: Theme.of(context).colorScheme.onSurfaceVariant),
     );
   }
 
   Widget _albumPlaceholder(BuildContext context) {
     return Container(
       color: Theme.of(context).colorScheme.surfaceVariant,
-      child: Icon(Icons.album, size: 40, color: Theme.of(context).colorScheme.onSurfaceVariant),
+      child: Icon(Icons.album,
+          size: 40, color: Theme.of(context).colorScheme.onSurfaceVariant),
     );
   }
 

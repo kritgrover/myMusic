@@ -10,6 +10,8 @@ dependencies:
   flutter:
     sdk: flutter
   http: ^1.1.0
+  crypto: ^3.0.6
+  web: ^1.1.1
   just_audio: ^0.9.36
   # Windows/Linux playback backend for just_audio (no native impl otherwise)
   just_audio_media_kit: ^2.0.6

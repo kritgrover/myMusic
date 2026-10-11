@@ -1,3 +1,4 @@
+import '../services/auth_http_client.dart';
 import 'package:flutter/material.dart';
 
 import '../models/playlist.dart';
@@ -211,7 +212,8 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
           borderRadius: BorderRadius.circular(4),
           child: (cover != null && cover.isNotEmpty)
               ? Image.network(
-                  cover,
+                  AuthHttpClient.shared.cacheScopedUrl(cover),
+                  headers: AuthHttpClient.shared.authHeadersForUrl(cover),
                   width: 48,
                   height: 48,
                   fit: BoxFit.cover,
