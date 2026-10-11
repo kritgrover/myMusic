@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from saved_library import clean_thumbnail
 from source_security import search_query, youtube_url
 from unified_search import (
-    LABELS, SearchProviders, candidate_from_url, is_catalog_url, normalized,
+    LABELS, CatalogPremiumRequired, SearchProviders, candidate_from_url, is_catalog_url, normalized,
     rank_candidates, recording_fields, recording_key,
 )
 
@@ -155,7 +155,9 @@ def build_search_router(database, spotify, downloads, current_user, saved_librar
             local = (await asyncio.gather(local_task, return_exceptions=True))[0]
         else:
             local, catalog = await asyncio.gather(local_task, providers.catalog(query, limit), return_exceptions=True)
-            if isinstance(catalog, Exception):
+            if isinstance(catalog, CatalogPremiumRequired):
+                result['warnings'].append(str(catalog))
+            elif isinstance(catalog, Exception):
                 result['warnings'].append('Music catalog is temporarily unavailable. Showing available sources and your library.')
             else:
                 result.update(catalog)

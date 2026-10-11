@@ -1,6 +1,7 @@
 """YouTube extraction remains bounded and returns playable audio containers."""
 
 import os
+import json
 import subprocess
 import unittest
 from pathlib import Path
@@ -53,6 +54,58 @@ class YouTubeExtractionTests(unittest.TestCase):
         with patch.object(self.module.shutil, "which", return_value=None):
             command = self.service._yt_cmd(["-g"], self.source)
         self.assertNotIn("--js-runtimes", command)
+
+    def test_search_supports_every_bounded_result_count(self):
+        entries = [dict(id=f"fixture{i:04}", title=f"Song {i}", uploader="Metallica", duration=240)
+                   for i in range(25)]
+        self.service._js_runtime = None
+        with patch.object(self.module.subprocess, "run", return_value=SimpleNamespace(
+                stdout=json.dumps({"entries": entries}), stderr="", returncode=0)) as run:
+            for count in range(1, 21):
+                with self.subTest(count=count):
+                    results = self.service.search_youtube("metallica", max_results=count)
+                    self.assertEqual(len(results), count)
+                    self.assertEqual(results[0]["uploader"], "Metallica")
+                    self.assertEqual(run.call_args.args[0][-2:], ["--", f"ytsearch{count}:metallica"])
+                    self.assertEqual(run.call_args.kwargs["timeout"], 30)
+
+    def test_search_clamps_result_count_before_building_command(self):
+        self.service._js_runtime = None
+        with patch.object(self.module.subprocess, "run", return_value=SimpleNamespace(
+                stdout='{"entries": []}', stderr="", returncode=0)) as run:
+            for requested, bounded in ((0, 1), (-5, 1), (21, 20), (1000, 20)):
+                with self.subTest(requested=requested):
+                    self.service.search_youtube("metallica", max_results=requested)
+                    self.assertEqual(run.call_args.args[0][-1], f"ytsearch{bounded}:metallica")
+
+    def test_search_specs_reject_invalid_counts_and_unsafe_queries(self):
+        self.service._js_runtime = None
+        for source in (
+            "ytsearch:metallica", "ytsearch0:metallica", "ytsearch21:metallica",
+            "ytsearch1000000:metallica", "ytsearch-1:metallica", "ytsearch01:metallica",
+            "ytsearch1.5:metallica", "ytsearchall:metallica", "ytsearch20:",
+            "ytsearch20:   ", "ytsearch20:metallica\n--exec=anything",
+            "ytsearch20:metallica\tanything", "ytsearch20:" + "x" * 501,
+            "ytsearch20:file:///private", "ytsearch20:http://127.0.0.1/private",
+            "ytsearch20:ytsearch100:metallica", "https://example.com/music",
+            "https://www.youtube.com/playlist?list=anything",
+        ):
+            with self.subTest(source=source):
+                with self.assertRaises(ValueError):
+                    self.service._yt_cmd([], source)
+
+    def test_search_keeps_video_url_validation_and_canonicalization(self):
+        self.service._js_runtime = None
+        with patch.object(self.module.subprocess, "run", return_value=SimpleNamespace(
+                stdout=json.dumps(dict(id="testFixture", title="Song", duration=240)),
+                stderr="", returncode=0)) as run:
+            results = self.service.search_youtube("https://youtu.be/testFixture?si=tracking", max_results=20)
+            self.assertEqual(len(results), 1)
+            self.assertEqual(results[0]["url"], self.source)
+            self.assertEqual(run.call_args.args[0][-2:], ["--", self.source])
+            with self.assertRaises(ValueError):
+                self.service.search_youtube("http://127.0.0.1/private", max_results=20)
+            run.assert_called_once()
 
     def resolve_result(self, stdout, stderr="", returncode=0):
         self.service._js_runtime = None
