@@ -11,7 +11,11 @@ import 'lyrics_screen.dart';
 import '../widgets/csv_progress_bar.dart';
 import '../widgets/download_progress_bar.dart';
 import '../widgets/not_found_songs_dialog.dart';
-import '../widgets/video_card.dart';
+import '../widgets/unified_search_results.dart';
+import '../widgets/track_tile.dart';
+import '../models/search_results.dart';
+import '../services/track_playback_helper.dart';
+import 'playlist_detail_screen.dart';
 import '../widgets/album_cover.dart';
 import '../widgets/playlist_selection_dialog.dart';
 import '../services/player_state_service.dart';
@@ -24,7 +28,7 @@ import '../models/queue_item.dart';
 import '../models/playlist.dart';
 import '../services/recommendation_service.dart';
 import '../services/auth_service.dart';
-import '../services/search_controller.dart';
+import '../services/unified_search_controller.dart';
 import '../services/auth_http_client.dart';
 import '../models/discovery.dart';
 import '../widgets/horizontal_song_list.dart';
@@ -162,16 +166,17 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   // Search state
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _searchFocusNode = FocusNode();
-  final MusicSearchController _musicSearch = MusicSearchController();
-  List<VideoInfo> get _searchResults => _musicSearch.results;
-  bool get _isSearching => _musicSearch.isSearching;
+  late final UnifiedSearchController _musicSearch;
+  late final TrackPlaybackHelper _searchPlayback;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     unawaited(SavedMusicService.shared.load().catchError((_) {}));
-    _musicSearch.addListener(_onSearchStateChanged);
+    _musicSearch = UnifiedSearchController(userId: widget.authService.userId!)
+      ..addListener(_onSearchStateChanged);
+    unawaited(_musicSearch.loadHistory());
     _recentlyPlayedService = RecentlyPlayedService(
         userNamespace: PlaybackSessionService.storageKeyFor(
             userId: widget.authService.userId!));
@@ -179,6 +184,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       recentlyPlayedService: _recentlyPlayedService,
       recommendationService: _recommendationService,
     );
+    _searchPlayback = TrackPlaybackHelper(
+        apiService: _apiService,
+        queueService: _queueService,
+        playerStateService: _playerStateService,
+        playlistService: _playlistService);
     _playbackSession = PlaybackSessionService(
         userId: widget.authService.userId!,
         queue: _queueService,
@@ -1050,84 +1060,84 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
-  /// The Search destination: live YouTube results when a query is present, else a
-  /// clean "Browse all" grid of genre + mood category tiles.
-  Widget _buildSearchPage() {
-    if (_isSearching) {
-      return const Center(child: CircularProgressIndicator());
-    }
-    if (_musicSearch.error != null) {
-      return Center(
-          child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          const Icon(Icons.wifi_off_rounded, size: 48),
-          const SizedBox(height: 16),
-          Text('Search is unavailable',
-              style: Theme.of(context).textTheme.titleLarge),
-          const SizedBox(height: 8),
-          const Text('Check your connection and try again.',
-              textAlign: TextAlign.center),
-          const SizedBox(height: 16),
-          FilledButton.icon(
-              onPressed: _musicSearch.retry,
-              icon: const Icon(Icons.refresh),
-              label: const Text('Try again')),
-        ]),
-      ));
-    }
-    if (_searchResults.isNotEmpty) {
-      return ListView.separated(
-        padding: ResponsiveUtils.responsiveHorizontalPadding(context)
-            .add(const EdgeInsets.symmetric(vertical: 8)),
-        itemCount: _searchResults.length,
-        separatorBuilder: (context, index) => const SizedBox(height: 12),
-        itemBuilder: (context, index) {
-          return VideoCard(
-            video: _searchResults[index],
-            onStream: () async {
-              await _streamVideo(_searchResults[index]);
-            },
-            onDownload: () async {
-              await _downloadVideo(_searchResults[index]);
-            },
-            onAddToPlaylist: () async {
-              await _showAddToPlaylistDialog(_searchResults[index]);
-            },
-            onAddToQueue: () async {
-              await _addToQueue(_searchResults[index]);
-            },
-          );
-        },
-      );
-    }
-    if (_musicSearch.hasSearched && _musicSearch.query.isNotEmpty) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.search_off,
-                size: 64,
-                color:
-                    Theme.of(context).colorScheme.onSurface.withOpacity(0.3)),
-            const SizedBox(height: 16),
-            Text(
-              'No results found',
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    color: Theme.of(context)
-                        .colorScheme
-                        .onSurface
-                        .withOpacity(0.6),
-                  ),
-            ),
-            const SizedBox(height: 8),
-            Text('Try a different search term',
-                style: Theme.of(context).textTheme.bodySmall),
-          ],
+  Widget _buildSearchPage() => UnifiedSearchResults(
+        controller: _musicSearch,
+        onSearch: _selectSearchSuggestion,
+        onOpen: _openSearchEntry,
+        browse: _buildBrowseAll(),
+        trackBuilder: (entry) => TrackTile(
+          track: entry.track,
+          recordingLabel:
+              entry.recordingLabel.isEmpty ? null : entry.recordingLabel,
+          onPlay: () {
+            _musicSearch.remember();
+            _searchPlayback.playTrack(context, entry.track);
+          },
+          onAddToQueue: () {
+            _musicSearch.remember();
+            _searchPlayback.addToQueue(context, entry.track);
+          },
+          onDownload: () => _searchPlayback.download(context, entry.track),
+          onAddToPlaylist: () =>
+              _searchPlayback.addToPlaylist(context, entry.track),
         ),
       );
+
+  void _selectSearchSuggestion(String query) {
+    _searchController.value = TextEditingValue(
+        text: query, selection: TextSelection.collapsed(offset: query.length));
+    _onSearchSubmitted(query);
+  }
+
+  Future<void> _openSearchEntry(SearchEntry entry) async {
+    unawaited(_musicSearch.remember());
+    switch (entry.kind) {
+      case 'artist':
+        if (entry.provider != 'spotify' &&
+            !RegExp(r'^[a-zA-Z0-9]{22}$').hasMatch(entry.id)) {
+          _selectSearchSuggestion(entry.title);
+          return;
+        }
+        _openArtist(ArtistInfo.fromJson({...entry.data, 'name': entry.title}));
+        break;
+      case 'album':
+        if (entry.provider != 'spotify' &&
+            !RegExp(r'^[a-zA-Z0-9]{22}$').hasMatch(entry.id)) {
+          _selectSearchSuggestion('${entry.title} ${entry.artist}');
+          return;
+        }
+        _openAlbumDetail({...entry.data, 'name': entry.title});
+        break;
+      case 'playlist':
+        if (entry.provider == 'spotify') {
+          _openSpotifyPlaylist(SpotifyPlaylistInfo.fromJson(
+              {...entry.data, 'name': entry.title}));
+          return;
+        }
+        try {
+          final playlist = await _playlistService.getPlaylist(entry.id);
+          if (!mounted) return;
+          if (playlist == null) throw StateError('Playlist unavailable');
+          _contentNavigatorKey.currentState?.push(MaterialPageRoute(
+            builder: (_) => PlaylistDetailScreen(
+              playlist: playlist,
+              playlistService: _playlistService,
+              playerStateService: _playerStateService,
+              queueService: _queueService,
+              recentlyPlayedService: _recentlyPlayedService,
+            ),
+          ));
+        } catch (_) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                content:
+                    Text('Could not open this playlist. Please try again.')));
+          }
+        }
+        break;
+      default:
+        _searchPlayback.playTrack(context, entry.track);
     }
-    return _buildBrowseAll();
   }
 
   Widget _buildBrowseAll() {
@@ -1471,6 +1481,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 originalUrl: track.url!,
                 album: track.album,
                 thumbnail: track.thumbnail,
+                duration: track.duration,
+                spotifyId: ApiService.spotifyTrackId(track.url),
               ))
           .toList();
 
@@ -1498,45 +1510,42 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
   }
 
-  Future<String?> _loadStreamingUrlForAlbumItem(QueueItem item) async {
-    final originalUrl = item.originalUrl;
-    if (originalUrl == null) return null;
-
-    try {
-      String youtubeUrl = originalUrl;
-
-      if (!youtubeUrl.contains('youtube.com') &&
-          !youtubeUrl.contains('youtu.be')) {
-        final query = '${item.title} ${item.artist}';
-        final results = await _apiService.searchYoutube(query);
-        if (results.isEmpty) return null;
-        final foundUrl = results.first.url;
-        if (foundUrl == null || foundUrl.isEmpty) return null;
-        youtubeUrl = foundUrl;
-      }
-
-      final result = await _apiService.getStreamingUrl(
-        url: youtubeUrl,
-        title: item.title ?? '',
-        artist: item.artist ?? '',
-      );
-      return result.streamingUrl;
-    } catch (e) {
-      return null;
-    }
-  }
-
-  Future<void> _playRecentStream(String streamingUrl,
-      {String? trackName, String? trackArtist, String? url}) async {
+  Future<String?> _loadStreamingUrlForAlbumItem(QueueItem item) =>
+      _searchPlayback.loadStreamingUrl(item);
+  Future<String> _playRecentStream(String streamingUrl,
+      {String? trackName,
+      String? trackArtist,
+      String? url,
+      required RecentlyPlayedItem item}) async {
+    final source = await _apiService.resolveToYouTubeUrl(
+      url,
+      trackName ?? item.title,
+      trackArtist ?? item.artist,
+      album: item.album,
+      duration: item.duration,
+      spotifyId: item.spotifyId,
+    );
+    if (source == null)
+      throw StateError(
+          'Could not confirm the recording. Search the song to choose a source.');
+    final result = await _apiService.getStreamingUrl(
+        url: source,
+        title: trackName ?? item.title,
+        artist: trackArtist ?? item.artist ?? '');
     _queueService.clearQueue();
     await _queueService.addAndPlay(
         QueueItem(
-            id: url ?? streamingUrl,
+            id: item.id,
             title: trackName,
             artist: trackArtist,
-            url: streamingUrl,
-            originalUrl: url),
+            album: item.album,
+            duration: item.duration,
+            spotifyId: item.spotifyId,
+            thumbnail: item.thumbnail,
+            url: result.streamingUrl,
+            originalUrl: source),
         _playerStateService);
+    return source;
   }
 
   Future<void> _playRecentFile(String filename,
@@ -1778,8 +1787,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             artist: item.artist ?? '',
           );
 
-          await _playRecentStream(
+          final playedSource = await _playRecentStream(
             result.streamingUrl,
+            item: item,
             trackName: result.title,
             trackArtist: result.artist,
             url: item.url,
@@ -1791,7 +1801,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             artist: item.artist,
             thumbnail: item.thumbnail,
             filename: item.filename,
-            url: item.url,
+            album: item.album,
+            duration: item.duration,
+            spotifyId: item.spotifyId,
+            url: playedSource,
           );
         } catch (e) {
           // Streaming failed, try playing from file if filename exists
@@ -1810,6 +1823,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 artist: item.artist,
                 thumbnail: item.thumbnail,
                 filename: item.filename,
+                album: item.album,
+                duration: item.duration,
+                spotifyId: item.spotifyId,
                 url: item.url,
               );
             } catch (fileError) {
@@ -1852,6 +1868,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             artist: item.artist,
             thumbnail: item.thumbnail,
             filename: item.filename,
+            album: item.album,
+            duration: item.duration,
+            spotifyId: item.spotifyId,
             url: item.url,
           );
         } catch (e) {
@@ -1865,8 +1884,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 artist: item.artist ?? '',
               );
 
-              await _playRecentStream(
+              final playedSource = await _playRecentStream(
                 result.streamingUrl,
+                item: item,
                 trackName: result.title,
                 trackArtist: result.artist,
                 url: foundUrl,
@@ -1878,7 +1898,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 artist: item.artist,
                 thumbnail: item.thumbnail,
                 filename: item.filename,
-                url: foundUrl,
+                album: item.album,
+                duration: item.duration,
+                spotifyId: item.spotifyId,
+                url: playedSource,
               );
             } catch (streamError) {
               if (mounted) {
@@ -1916,8 +1939,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               artist: item.artist ?? '',
             );
 
-            await _playRecentStream(
+            final playedSource = await _playRecentStream(
               result.streamingUrl,
+              item: item,
               trackName: result.title,
               trackArtist: result.artist,
               url: foundUrl,
@@ -1929,7 +1953,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               artist: item.artist,
               thumbnail: item.thumbnail,
               filename: item.filename,
-              url: foundUrl,
+              album: item.album,
+              duration: item.duration,
+              spotifyId: item.spotifyId,
+              url: playedSource,
             );
           } catch (streamError) {
             if (mounted) {
@@ -1962,97 +1989,21 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Future<String?> _findUrlInPlaylists(String title, String? artist) async {
     try {
       final playlists = await _playlistService.getAllPlaylists();
-      final titleLower = title.toLowerCase().trim();
-      final artistLower = artist?.toLowerCase().trim() ?? '';
-
+      String normalize(String? value) => (value ?? '').trim().toLowerCase();
+      final matches = <String>{};
       for (final playlist in playlists) {
         for (final track in playlist.tracks) {
-          final trackTitleLower = track.title.toLowerCase().trim();
-          final trackArtistLower = track.artist?.toLowerCase().trim() ?? '';
-
-          // Match by title (case insensitive, allow partial matches)
-          bool titleMatches = trackTitleLower == titleLower ||
-              trackTitleLower.contains(titleLower) ||
-              titleLower.contains(trackTitleLower);
-
-          if (titleMatches) {
-            // If artist is provided, try to match it too (but don't require exact match)
-            bool artistMatches = artistLower.isEmpty ||
-                trackArtistLower.isEmpty ||
-                trackArtistLower == artistLower ||
-                trackArtistLower.contains(artistLower) ||
-                artistLower.contains(trackArtistLower);
-
-            // If we have a URL, return it (prefer exact matches but accept partial)
-            if (track.url != null && track.url!.isNotEmpty) {
-              // Prefer exact matches
-              if (trackTitleLower == titleLower &&
-                  (artistLower.isEmpty || trackArtistLower == artistLower)) {
-                return track.url;
-              }
-            }
+          if (normalize(track.title) == normalize(title) &&
+              (normalize(artist).isEmpty ||
+                  normalize(track.artist) == normalize(artist)) &&
+              track.url?.isNotEmpty == true) {
+            matches.add(track.url!);
           }
         }
       }
-
-      // Second pass: if no exact match, return first partial match
-      for (final playlist in playlists) {
-        for (final track in playlist.tracks) {
-          final trackTitleLower = track.title.toLowerCase().trim();
-          final trackArtistLower = track.artist?.toLowerCase().trim() ?? '';
-
-          bool titleMatches = trackTitleLower == titleLower ||
-              trackTitleLower.contains(titleLower) ||
-              titleLower.contains(trackTitleLower);
-
-          if (titleMatches && track.url != null && track.url!.isNotEmpty) {
-            return track.url;
-          }
-        }
-      }
-    } catch (e) {
-      print('Error searching playlists for URL: $e');
-    }
-    return null;
-  }
-
-  Future<void> _streamVideo(VideoInfo video) async {
-    try {
-      final cleaned = await _apiService.cleanMetadata(
-        title: video.title,
-        uploader: video.uploader,
-        videoId: video.id,
-        videoUrl: video.url,
-      );
-
-      final result = await _apiService.getStreamingUrl(
-        url: video.url,
-        title: cleaned['title']!,
-        artist: cleaned['artist']!,
-      );
-
-      // Play through the queue (replacing it) so the now-playing bar reflects
-      // this song's metadata + artwork even if a playlist was already playing.
-      final queueItem = QueueItem(
-        id: 'video_${video.id}',
-        title: result.title,
-        artist: result.artist,
-        url: result.streamingUrl,
-        originalUrl: video.url,
-        thumbnail: video.thumbnail,
-      );
-      _queueService.clearQueue();
-      await _queueService.addAndPlay(queueItem, _playerStateService);
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Stream failed: $e'),
-            backgroundColor: Colors.red,
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-      }
+      return matches.length == 1 ? matches.single : null;
+    } catch (_) {
+      return null;
     }
   }
 
@@ -2125,29 +2076,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         ),
       );
 
-      String youtubeUrl = currentItem.originalUrl ?? currentItem.url ?? '';
-      if (youtubeUrl.isEmpty ||
-          (!youtubeUrl.contains('youtube.com') &&
-              !youtubeUrl.contains('youtu.be'))) {
-        final searchResults = await _apiService.searchYoutube(
-          '${currentItem.title} ${currentItem.artist}',
-        );
-        if (searchResults.isEmpty) {
-          if (mounted) {
-            Navigator.of(context).pop();
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content:
-                    Text('Could not find "${currentItem.title}" on YouTube'),
-                backgroundColor: Colors.red,
-                behavior: SnackBarBehavior.floating,
-              ),
-            );
-          }
-          return;
-        }
-        youtubeUrl = searchResults.first.url;
-      }
+      final youtubeUrl = await _apiService.resolveToYouTubeUrl(
+        currentItem.originalUrl,
+        currentItem.title ?? '',
+        currentItem.artist,
+        album: currentItem.album,
+        duration: currentItem.duration,
+        spotifyId: currentItem.spotifyId,
+      );
+      if (youtubeUrl == null) throw StateError('No matching recording found.');
 
       final cleaned = await _apiService.cleanMetadata(
         title: currentItem.title ?? '',
@@ -2265,15 +2202,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Future<VideoInfo?> _resolveToYouTubeVideo(VideoInfo video) async {
-    if (video.url.isNotEmpty &&
-        (video.url.contains('youtube.com') || video.url.contains('youtu.be'))) {
-      return video;
-    }
     try {
       final youtubeUrl = await _apiService.resolveToYouTubeUrl(
         video.url.isNotEmpty ? video.url : null,
         video.title,
         video.uploader,
+        album: video.album,
+        duration: video.duration,
+        spotifyId: ApiService.spotifyTrackId(video.url),
       );
       if (youtubeUrl == null || youtubeUrl.isEmpty) return null;
       return VideoInfo(
@@ -2283,6 +2219,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         duration: video.duration,
         url: youtubeUrl,
         thumbnail: video.thumbnail,
+        album: video.album,
       );
     } catch (_) {
       return null;
@@ -2437,43 +2374,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         track: track,
       ),
     );
-  }
-
-  Future<void> _addToQueue(VideoInfo video) async {
-    try {
-      final cleaned = await _apiService.cleanMetadata(
-        title: video.title,
-        uploader: video.uploader,
-        videoId: video.id,
-        videoUrl: video.url,
-      );
-
-      final result = await _apiService.getStreamingUrl(
-        url: video.url,
-        title: cleaned['title']!,
-        artist: cleaned['artist']!,
-      );
-
-      final queueItem = QueueItem.fromVideoInfo(
-        videoId: video.id,
-        title: result.title,
-        artist: result.artist,
-        streamingUrl: result.streamingUrl,
-        thumbnail: video.thumbnail,
-      );
-
-      _queueService.addToQueue(queueItem);
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to add to queue: $e'),
-            backgroundColor: Colors.red,
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-      }
-    }
   }
 
   void _startProgressPolling(String filename) {

@@ -121,6 +121,7 @@ class _Audio extends Fake implements AudioPlayerService {
 class _History extends Fake implements RecentlyPlayedService {
   final List<String> ids = [];
   final List<String?> urls = [];
+  final identities = <Map<String, dynamic>>[];
   bool fail = false;
   Completer<void>? persistence;
   @override
@@ -130,10 +131,15 @@ class _History extends Fake implements RecentlyPlayedService {
       String? artist,
       String? thumbnail,
       String? filename,
-      String? url}) async {
+      String? url,
+      String? album,
+      double? duration,
+      String? spotifyId}) async {
     if (fail) throw StateError('disk unavailable');
     ids.add(id);
     urls.add(url);
+    identities
+        .add({'album': album, 'duration': duration, 'spotifyId': spotifyId});
     await persistence?.future;
   }
 }
@@ -257,6 +263,34 @@ void main() {
           recommendationService: recommendations);
     });
     tearDown(() => player.dispose());
+
+    test(
+        'successful playback and scheduled handoff retain recent recording identity',
+        () async {
+      const spotifyId = '0123456789abcdefghijkl';
+      await player.streamTrack('audio/a',
+          trackName: 'Song',
+          trackArtist: 'Artist',
+          url: 'source/a',
+          album: 'Album',
+          duration: 181.5,
+          spotifyId: spotifyId);
+      player.adoptScheduledTrack(QueueItem(
+          id: 'track_$spotifyId',
+          title: 'Song',
+          artist: 'Artist',
+          album: 'Album',
+          duration: 181.5,
+          spotifyId: spotifyId,
+          originalUrl: 'source/a'));
+      expect(
+          history.identities,
+          List.filled(2, {
+            'album': 'Album',
+            'duration': 181.5,
+            'spotifyId': spotifyId,
+          }));
+    });
 
     test('failed track does not replace metadata or enter history', () async {
       await player.streamTrack('audio/a', trackName: 'A', url: 'source/a');

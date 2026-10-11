@@ -12,6 +12,9 @@ class RecentlyPlayedItem {
   final String id;
   final String title;
   final String? artist;
+  final String? album;
+  final double? duration;
+  final String? spotifyId;
   final String? thumbnail;
   final String? filename; // For songs
   final String? url; // Original YouTube URL for streaming
@@ -23,6 +26,9 @@ class RecentlyPlayedItem {
     required this.id,
     required this.title,
     this.artist,
+    this.album,
+    this.duration,
+    this.spotifyId,
     this.thumbnail,
     this.filename,
     this.url,
@@ -36,6 +42,10 @@ class RecentlyPlayedItem {
       'id': id,
       'title': title,
       'artist': artist,
+      if (album != null) 'album': album,
+      if (duration != null && duration!.isFinite && duration! > 0)
+        'duration': duration,
+      if (spotifyId != null) 'spotifyId': spotifyId,
       'thumbnail': thumbnail,
       'filename': filename,
       'url': url,
@@ -53,11 +63,19 @@ class RecentlyPlayedItem {
       id: json['id'] ?? '',
       title: json['title'] ?? '',
       artist: json['artist'],
+      album: json['album'] as String?,
+      duration: json['duration'] is num &&
+              (json['duration'] as num).isFinite &&
+              (json['duration'] as num) > 0
+          ? (json['duration'] as num).toDouble()
+          : null,
+      spotifyId: json['spotifyId'] as String?,
       thumbnail: json['thumbnail'],
       filename: json['filename'],
       url: json['url'],
       playlistId: json['playlistId'],
-      playedAt: DateTime.parse(json['playedAt'] ?? DateTime.now().toIso8601String()),
+      playedAt:
+          DateTime.parse(json['playedAt'] ?? DateTime.now().toIso8601String()),
     );
   }
 }
@@ -80,9 +98,8 @@ class RecentlyPlayedService extends ChangeNotifier {
       final jsonString = prefs.getString(_storageKey);
       if (jsonString != null) {
         final List<dynamic> jsonList = jsonDecode(jsonString);
-        _items = jsonList
-            .map((json) => RecentlyPlayedItem.fromJson(json))
-            .toList();
+        _items =
+            jsonList.map((json) => RecentlyPlayedItem.fromJson(json)).toList();
         // Sort by playedAt descending (most recent first)
         _items.sort((a, b) => b.playedAt.compareTo(a.playedAt));
         // Keep only the most recent items
@@ -100,7 +117,8 @@ class RecentlyPlayedService extends ChangeNotifier {
   Future<void> _saveItems() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final jsonString = jsonEncode(_items.map((item) => item.toJson()).toList());
+      final jsonString =
+          jsonEncode(_items.map((item) => item.toJson()).toList());
       await prefs.setString(_storageKey, jsonString);
     } catch (e) {
       print('Error saving recently played items: $e');
@@ -111,24 +129,33 @@ class RecentlyPlayedService extends ChangeNotifier {
     required String id,
     required String title,
     String? artist,
+    String? album,
+    double? duration,
+    String? spotifyId,
     String? thumbnail,
     String? filename,
     String? url,
   }) async {
     // Remove existing item with same id if it exists
-    _items.removeWhere((item) => item.id == id && item.type == RecentlyPlayedType.song);
-    
+    _items.removeWhere(
+        (item) => item.id == id && item.type == RecentlyPlayedType.song);
+
     // Add new item at the beginning
-    _items.insert(0, RecentlyPlayedItem(
-      type: RecentlyPlayedType.song,
-      id: id,
-      title: title,
-      artist: artist,
-      thumbnail: thumbnail,
-      filename: filename,
-      url: url,
-      playedAt: DateTime.now(),
-    ));
+    _items.insert(
+        0,
+        RecentlyPlayedItem(
+          type: RecentlyPlayedType.song,
+          id: id,
+          title: title,
+          artist: artist,
+          album: album,
+          duration: duration,
+          spotifyId: spotifyId,
+          thumbnail: thumbnail,
+          filename: filename,
+          url: url,
+          playedAt: DateTime.now(),
+        ));
 
     // Keep only the most recent items
     if (_items.length > _maxItems) {
@@ -145,17 +172,20 @@ class RecentlyPlayedService extends ChangeNotifier {
     String? thumbnail,
   }) async {
     // Remove existing item with same id if it exists
-    _items.removeWhere((item) => item.id == playlistId && item.type == RecentlyPlayedType.playlist);
-    
+    _items.removeWhere((item) =>
+        item.id == playlistId && item.type == RecentlyPlayedType.playlist);
+
     // Add new item at the beginning
-    _items.insert(0, RecentlyPlayedItem(
-      type: RecentlyPlayedType.playlist,
-      id: playlistId,
-      title: title,
-      thumbnail: thumbnail,
-      playlistId: playlistId,
-      playedAt: DateTime.now(),
-    ));
+    _items.insert(
+        0,
+        RecentlyPlayedItem(
+          type: RecentlyPlayedType.playlist,
+          id: playlistId,
+          title: title,
+          thumbnail: thumbnail,
+          playlistId: playlistId,
+          playedAt: DateTime.now(),
+        ));
 
     // Keep only the most recent items
     if (_items.length > _maxItems) {
@@ -172,4 +202,3 @@ class RecentlyPlayedService extends ChangeNotifier {
     notifyListeners();
   }
 }
-

@@ -135,26 +135,176 @@ class ApiService {
     return match == null ? null : 'https://www.youtube.com/watch?v=${match[1]}';
   }
 
-  /// Resolve a URL to a YouTube URL. If the given URL is already YouTube, returns it.
-  /// If it's a non-YouTube URL (e.g. Spotify) or null/empty, searches YouTube by title+artist and returns the first result.
-  /// Returns null if resolution fails.
-  Future<String?> resolveToYouTubeUrl(
-      String? url, String title, String? artist) async {
-    // Already have a valid YouTube URL
-    if (url != null &&
-        url.isNotEmpty &&
-        (url.contains('youtube.com') || url.contains('youtu.be'))) {
-      return url;
-    }
+  /// A non-secret account scope for ignoring responses from an earlier login.
+  String get sessionScope => _client.cacheScope;
 
-    // For Spotify URLs, null, or empty - search YouTube by title+artist
+  /// Resolve metadata through the account's saved source choice and the
+  /// backend's recording-aware matcher. Existing YouTube sources still consult
+  /// the saved choice, so correcting a recording also fixes older playlist rows.
+  Future<String?> resolveToYouTubeUrl(
+    String? url,
+    String title,
+    String? artist, {
+    String? album,
+    double? duration,
+    String? spotifyId,
+  }) async {
+    if (title.trim().isEmpty) return canonicalYouTubeSource(url);
     try {
-      final results = await searchYoutube('$title ${artist ?? ''}');
-      if (results.isEmpty) return null;
-      return results.first.url;
+      final session = sessionScope;
+      final response = await _client
+          .post(
+            Uri.parse('$baseUrl/search/resolve'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode(_sourceIdentity(
+              title: title,
+              artist: artist,
+              album: album,
+              duration: duration,
+              spotifyId: spotifyId,
+              url: url,
+            )),
+          )
+          .timeout(const Duration(seconds: 20));
+      _checkSourceResponse(response, session);
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      return canonicalYouTubeSource(data['url'] as String?);
     } catch (_) {
       return null;
     }
+  }
+
+  Future<SourceCandidates> sourceCandidates({
+    required String title,
+    String? artist,
+    String? album,
+    double? duration,
+    String? spotifyId,
+    String? url,
+  }) async {
+    final session = sessionScope;
+    final response = await _client
+        .post(
+          Uri.parse('$baseUrl/search/candidates'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode(_sourceIdentity(
+            title: title,
+            artist: artist,
+            album: album,
+            duration: duration,
+            spotifyId: spotifyId,
+            url: url,
+          )),
+        )
+        .timeout(const Duration(seconds: 20));
+    _checkSourceResponse(response, session);
+    return SourceCandidates.fromJson(
+        jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  Future<void> rememberSource({
+    required String title,
+    required String url,
+    String? artist,
+    String? album,
+    double? duration,
+    String? spotifyId,
+  }) async {
+    final canonical = canonicalYouTubeSource(url);
+    if (canonical == null) {
+      throw const SourceMatchException('Choose a valid YouTube recording.');
+    }
+    final session = sessionScope;
+    final response = await _client
+        .put(
+          Uri.parse('$baseUrl/search/source'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode(_sourceIdentity(
+            title: title,
+            artist: artist,
+            album: album,
+            duration: duration,
+            spotifyId: spotifyId,
+            url: canonical,
+          )),
+        )
+        .timeout(const Duration(seconds: 20));
+    _checkSourceResponse(response, session);
+  }
+
+  Future<void> resetSource({
+    required String title,
+    String? artist,
+    String? album,
+    double? duration,
+    String? spotifyId,
+  }) async {
+    final session = sessionScope;
+    final response = await _client
+        .delete(
+          Uri.parse('$baseUrl/search/source'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode(_sourceIdentity(
+            title: title,
+            artist: artist,
+            album: album,
+            duration: duration,
+            spotifyId: spotifyId,
+          )),
+        )
+        .timeout(const Duration(seconds: 20));
+    _checkSourceResponse(response, session);
+  }
+
+  static String? spotifyTrackId(String? url, {String? id}) {
+    if (id?.startsWith('track_') == true) id = id!.substring('track_'.length);
+    if (id != null && RegExp(r'^[A-Za-z0-9]{22}$').hasMatch(id)) return id;
+    final uri = Uri.tryParse(url ?? '');
+    if (uri?.scheme == 'spotify' &&
+        RegExp(r'^track:[A-Za-z0-9]{22}$').hasMatch(uri!.path)) {
+      return uri.path.substring('track:'.length);
+    }
+    if (uri?.host == 'open.spotify.com' &&
+        uri!.pathSegments.length == 2 &&
+        uri.pathSegments.first == 'track' &&
+        RegExp(r'^[A-Za-z0-9]{22}$').hasMatch(uri.pathSegments.last)) {
+      return uri.pathSegments.last;
+    }
+    return null;
+  }
+
+  Map<String, dynamic> _sourceIdentity({
+    required String title,
+    String? artist,
+    String? album,
+    double? duration,
+    String? spotifyId,
+    String? url,
+  }) =>
+      {
+        'title': title.trim(),
+        'artist': artist?.trim() ?? '',
+        if (album?.trim().isNotEmpty == true) 'album': album!.trim(),
+        if (duration != null && duration.isFinite && duration > 0)
+          'duration': duration,
+        if (spotifyId?.isNotEmpty == true || spotifyTrackId(url) != null)
+          'spotify_id':
+              spotifyId?.isNotEmpty == true ? spotifyId : spotifyTrackId(url),
+        if (url?.isNotEmpty == true) 'url': url,
+      };
+
+  void _checkSourceResponse(http.Response response, String session) {
+    if (session != sessionScope) {
+      throw const SourceMatchException(
+          'Your account changed. Open the recording picker again.');
+    }
+    if (response.statusCode >= 200 && response.statusCode < 300) return;
+    String message = 'Could not load recording choices. Please try again.';
+    try {
+      final detail = jsonDecode(response.body)['detail'];
+      if (detail is String && detail.isNotEmpty) message = detail;
+    } catch (_) {}
+    throw SourceMatchException(message);
   }
 
   Future<List<VideoInfo>> searchYoutube(String query) async {
@@ -239,6 +389,7 @@ class ApiService {
     String album = '',
     String outputFormat = 'm4a',
     bool embedThumbnail = false,
+    String? spotifyId,
   }) async {
     try {
       final response = await _client.post(
@@ -251,6 +402,7 @@ class ApiService {
           'album': album,
           'output_format': outputFormat,
           'embed_thumbnail': embedThumbnail,
+          if (spotifyId != null) 'spotify_id': spotifyId,
         }),
       );
 
@@ -507,6 +659,8 @@ class VideoInfo {
   final String thumbnail;
   final String? filename;
   final String? album;
+  final String? recordingType;
+  final String? recordingLabel;
 
   VideoInfo({
     required this.id,
@@ -517,6 +671,8 @@ class VideoInfo {
     required this.thumbnail,
     this.filename,
     this.album,
+    this.recordingType,
+    this.recordingLabel,
   });
 
   factory VideoInfo.fromJson(Map<String, dynamic> json) {
@@ -529,6 +685,8 @@ class VideoInfo {
       thumbnail: json['thumbnail'] ?? '',
       filename: json['filename'] as String?,
       album: json['album'] as String?,
+      recordingType: json['recording_type'] as String?,
+      recordingLabel: json['recording_label'] as String?,
     );
   }
 
@@ -548,6 +706,84 @@ class VideoInfo {
     final seconds = (duration % 60).floor();
     return '${minutes}:${seconds.toString().padLeft(2, '0')}';
   }
+
+  String get recordingDescription =>
+      recordingLabel ??
+      recordingTypeLabel(
+          recordingType ?? inferRecordingType('$title ${album ?? ''}'));
+
+  /// Labels describe explicit metadata only; an unmarked video is not proof of
+  /// a studio recording. Keep that distinction visible in the recording picker.
+  static String inferRecordingType(String value) {
+    const patterns = {
+      'live':
+          r'(?:\blive\s+(?:at|from|in|on|version|performance|session|recording)\b|[\[(\-–—]\s*live\b|\blive\s*[\])]|\bin concert\b)',
+      'remix':
+          r'\b(?:remix(?:ed)?|rework|sped up|slowed(?: down)?|nightcore)\b',
+      'acoustic': r'\b(?:acoustic|unplugged)\b',
+      'instrumental': r'\binstrumental\b',
+      'karaoke': r'\bkaraoke\b',
+      'cover': r'\bcover(?:ed by| version)?\b',
+      'studio': r'\bstudio (?:version|recording)\b',
+    };
+    for (final entry in patterns.entries) {
+      if (RegExp(entry.value, caseSensitive: false).hasMatch(value)) {
+        return entry.key;
+      }
+    }
+    return 'unspecified';
+  }
+
+  static String recordingTypeLabel(String type) =>
+      const {
+        'live': 'Live',
+        'remix': 'Remix',
+        'acoustic': 'Acoustic',
+        'instrumental': 'Instrumental',
+        'cover': 'Cover',
+        'karaoke': 'Karaoke',
+        'studio': 'Studio',
+        'original': 'Original release',
+        'unspecified': 'Version unverified',
+      }[type] ??
+      'Version unverified';
+}
+
+class SourceCandidates {
+  final List<VideoInfo> candidates;
+  final String? selectedUrl;
+  final bool remembered;
+  final List<String> warnings;
+
+  const SourceCandidates({
+    required this.candidates,
+    this.selectedUrl,
+    this.remembered = false,
+    this.warnings = const [],
+  });
+
+  factory SourceCandidates.fromJson(Map<String, dynamic> json) =>
+      SourceCandidates(
+        candidates: (json['candidates'] as List<dynamic>? ?? [])
+            .map((item) => VideoInfo.fromJson(item as Map<String, dynamic>))
+            .where(
+                (item) => ApiService.canonicalYouTubeSource(item.url) != null)
+            .toList(),
+        selectedUrl:
+            ApiService.canonicalYouTubeSource(json['selected_url'] as String?),
+        remembered: json['remembered'] == true,
+        warnings: (json['warnings'] as List<dynamic>? ?? [])
+            .whereType<String>()
+            .toList(),
+      );
+}
+
+class SourceMatchException implements Exception {
+  final String message;
+  const SourceMatchException(this.message);
+
+  @override
+  String toString() => message;
 }
 
 class StreamResult {

@@ -7,8 +7,7 @@ import '../services/recently_played_service.dart';
 import '../services/api_service.dart';
 import '../services/playlist_service.dart';
 import '../models/playlist.dart';
-import '../models/queue_item.dart';
-import '../widgets/playlist_selection_dialog.dart';
+import '../services/track_playback_helper.dart';
 
 class MadeForYouScreen extends StatefulWidget {
   final List<VideoInfo> songs;
@@ -42,254 +41,26 @@ class _MadeForYouScreenState extends State<MadeForYouScreen> {
       widget.playlistService ?? PlaylistService();
 
   bool _isDownloaded(VideoInfo song) => (song.filename ?? '').isNotEmpty;
-  QueueItem _localItem(VideoInfo song) => QueueItem(
-        id: song.id,
-        title: song.title,
-        artist: song.uploader,
-        album: song.album,
-        filename: song.filename,
-        thumbnail: song.thumbnail,
-        originalUrl: song.url.isEmpty ? null : song.url,
+  TrackPlaybackHelper get _playback => TrackPlaybackHelper(
+        apiService: _apiService,
+        queueService: widget.queueService,
+        playerStateService: widget.playerStateService,
+        playlistService: _playlistService,
       );
 
-  Future<void> _playTrack(VideoInfo song) async {
-    try {
-      if (_isDownloaded(song)) {
-        widget.queueService.clearQueue();
-        await widget.queueService
-            .addAndPlay(_localItem(song), widget.playerStateService);
-        return;
-      }
-      // Search YouTube for this track first (like GenreScreen does)
-      final searchResults = await _apiService.searchYoutube(
-        '${song.title} ${song.uploader}',
-      );
+  Future<void> _playTrack(VideoInfo song) =>
+      _playback.playTrack(context, PlaylistTrack.fromVideoInfo(song));
 
-      if (searchResults.isEmpty) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-                content: Text('Could not find "${song.title}" on YouTube')),
-          );
-        }
-        return;
-      }
+  Future<void> _addToQueue(VideoInfo song, {bool showSnackbar = true}) =>
+      _playback.addToQueue(context, PlaylistTrack.fromVideoInfo(song),
+          showSnackbar: showSnackbar);
 
-      // Get streaming URL for the first result
-      final ytVideo = searchResults.first;
-      final result = await _apiService.getStreamingUrl(
-        url: ytVideo.url,
-        title: song.title,
-        artist: song.uploader,
-      );
-
-      // Add to queue so bottom player add-to-playlist/download work
-      final queueItem = QueueItem(
-        id: 'video_${ytVideo.id}',
-        title: result.title,
-        artist: result.artist,
-        url: result.streamingUrl,
-        originalUrl: ytVideo.url,
-        thumbnail: song.thumbnail,
-      );
-      widget.queueService.clearQueue();
-      await widget.queueService
-          .addAndPlay(queueItem, widget.playerStateService);
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to play: $e')),
-        );
-      }
-    }
-  }
-
-  Future<void> _addToQueue(VideoInfo song, {bool showSnackbar = true}) async {
-    try {
-      if (_isDownloaded(song)) {
-        widget.queueService.addToQueue(_localItem(song));
-        if (mounted && showSnackbar) {
-          ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('Added "${song.title}" to queue')));
-        }
-        return;
-      }
-      // Search YouTube for this track first
-      final searchResults = await _apiService.searchYoutube(
-        '${song.title} ${song.uploader}',
-      );
-
-      if (searchResults.isEmpty) {
-        if (mounted && showSnackbar) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-                content: Text('Could not find "${song.title}" on YouTube')),
-          );
-        }
-        return;
-      }
-
-      final cleaned = await _apiService.cleanMetadata(
-        title: searchResults.first.title,
-        uploader: searchResults.first.uploader,
-        videoId: searchResults.first.id,
-        videoUrl: searchResults.first.url,
-      );
-
-      final result = await _apiService.getStreamingUrl(
-        url: searchResults.first.url,
-        title: cleaned['title']!,
-        artist: cleaned['artist']!,
-      );
-
-      final queueItem = QueueItem(
-        id: searchResults.first.id,
-        title: result.title,
-        artist: result.artist,
-        url: result.streamingUrl,
-        thumbnail: song.thumbnail,
-      );
-
-      widget.queueService.addToQueue(queueItem);
-
-      if (mounted && showSnackbar) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Added "${cleaned['title']}" to queue')),
-        );
-      }
-    } catch (e) {
-      if (mounted && showSnackbar) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to add to queue: $e')),
-        );
-      }
-    }
-  }
+  Future<void> _showAddToPlaylistDialog(VideoInfo song) =>
+      _playback.addToPlaylist(context, PlaylistTrack.fromVideoInfo(song));
 
   Future<void> _downloadTrack(VideoInfo song) async {
     if (_isDownloaded(song)) return;
-    try {
-      final youtubeUrl = await _apiService.resolveToYouTubeUrl(
-        song.url.isNotEmpty ? song.url : null,
-        song.title,
-        song.uploader,
-      );
-      if (youtubeUrl == null || youtubeUrl.isEmpty) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Could not find "${song.title}" on YouTube'),
-              backgroundColor: Colors.red,
-            ),
-          );
-        }
-        return;
-      }
-
-      if (mounted) {
-        showDialog(
-          context: context,
-          barrierDismissible: false,
-          builder: (context) => const Center(
-            child: CircularProgressIndicator(),
-          ),
-        );
-      }
-
-      final cleaned = await _apiService.cleanMetadata(
-        title: song.title,
-        uploader: song.uploader,
-        videoId: '',
-        videoUrl: youtubeUrl,
-      );
-
-      final result = await _apiService.downloadAudio(
-        url: youtubeUrl,
-        title: cleaned['title']!,
-        artist: cleaned['artist']!,
-        album: cleaned['album'] ?? '',
-        outputFormat: 'm4a',
-        embedThumbnail: true,
-      );
-
-      if (mounted) {
-        Navigator.of(context, rootNavigator: true).pop();
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Downloaded: ${result.filename}'),
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(8),
-            ),
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        Navigator.of(context, rootNavigator: true)
-            .pop(); // Close loading dialog
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Download failed: $e'),
-            backgroundColor: Colors.red,
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-      }
-    }
-  }
-
-  Future<void> _showAddToPlaylistDialog(VideoInfo song) async {
-    if (_isDownloaded(song)) {
-      await showDialog(
-          context: context,
-          builder: (_) => PlaylistSelectionDialog(
-                playlistService: _playlistService,
-                track: PlaylistTrack.fromVideoInfo(song),
-              ));
-      return;
-    }
-    // Resolve Spotify/non-YouTube URLs to YouTube so the playlist stores the correct URL
-    final youtubeUrl = await _apiService.resolveToYouTubeUrl(
-      song.url,
-      song.title,
-      song.uploader,
-    );
-
-    // Use resolved YouTube URL, or original if it was already YouTube
-    final isYoutube = song.url.isNotEmpty &&
-        (song.url.contains('youtube.com') || song.url.contains('youtu.be'));
-    final effectiveUrl = youtubeUrl ?? (isYoutube ? song.url : null);
-    if (effectiveUrl == null || effectiveUrl.isEmpty) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Could not find "${song.title}" on YouTube'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-      return;
-    }
-
-    final track = PlaylistTrack(
-      id: song.id,
-      title: song.title,
-      artist: song.uploader,
-      filename: '',
-      url: effectiveUrl,
-      thumbnail: song.thumbnail,
-      duration: song.duration,
-    );
-
-    if (!mounted) return;
-    await showDialog(
-      context: context,
-      builder: (context) => PlaylistSelectionDialog(
-        playlistService: _playlistService,
-        track: track,
-      ),
-    );
+    await _playback.download(context, PlaylistTrack.fromVideoInfo(song));
   }
 
   Future<void> _playAll() async {

@@ -1,7 +1,9 @@
 import '../services/auth_http_client.dart';
 import 'package:flutter/material.dart';
 import '../models/playlist.dart';
+import '../services/api_service.dart';
 import 'save_track_button.dart';
+import 'source_selection_dialog.dart';
 
 /// A reusable track row (thumbnail + title/artist + play + overflow menu) used by
 /// the album and artist detail screens. Track metadata is already clean (Spotify),
@@ -14,6 +16,9 @@ class TrackTile extends StatelessWidget {
   final VoidCallback onAddToQueue;
   final VoidCallback onDownload;
   final VoidCallback onAddToPlaylist;
+  final VoidCallback? onChangeRecording;
+  final ApiService? apiService;
+  final String? recordingLabel;
 
   const TrackTile({
     super.key,
@@ -22,6 +27,9 @@ class TrackTile extends StatelessWidget {
     required this.onAddToQueue,
     required this.onDownload,
     required this.onAddToPlaylist,
+    this.onChangeRecording,
+    this.apiService,
+    this.recordingLabel,
     this.trackNumber,
     this.fallbackThumbnail,
   });
@@ -31,6 +39,10 @@ class TrackTile extends StatelessWidget {
     final thumb = (track.thumbnail != null && track.thumbnail!.isNotEmpty)
         ? track.thumbnail
         : fallbackThumbnail;
+    final type =
+        VideoInfo.inferRecordingType('${track.title} ${track.album ?? ''}');
+    final version = recordingLabel ??
+        (type == 'unspecified' ? null : VideoInfo.recordingTypeLabel(type));
 
     return Card(
       margin: const EdgeInsets.symmetric(vertical: 4.0),
@@ -72,10 +84,21 @@ class TrackTile extends StatelessWidget {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                          color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+                          color: Theme.of(context)
+                              .colorScheme
+                              .onSurface
+                              .withOpacity(0.6),
                           fontSize: 14,
                         ),
                       ),
+                    if (version != null)
+                      Text(version,
+                          style: Theme.of(context)
+                              .textTheme
+                              .labelSmall
+                              ?.copyWith(
+                                color: Theme.of(context).colorScheme.primary,
+                              )),
                   ],
                 ),
               ),
@@ -102,21 +125,55 @@ class TrackTile extends StatelessWidget {
                         case 'queue':
                           onAddToQueue();
                           break;
+                        case 'recording':
+                          if (onChangeRecording != null) {
+                            onChangeRecording!();
+                          } else {
+                            showDialog<bool>(
+                              context: context,
+                              builder: (_) => SourceSelectionDialog(
+                                track: track,
+                                apiService: apiService ?? ApiService(),
+                              ),
+                            );
+                          }
+                          break;
                       }
                     },
-                    itemBuilder: (context) => const [
-                      PopupMenuItem(
+                    itemBuilder: (context) => [
+                      const PopupMenuItem(
                         value: 'download',
-                        child: Row(children: [Icon(Icons.download, size: 20), SizedBox(width: 12), Text('Download')]),
+                        child: Row(children: [
+                          Icon(Icons.download, size: 20),
+                          SizedBox(width: 12),
+                          Text('Download')
+                        ]),
                       ),
-                      PopupMenuItem(
+                      const PopupMenuItem(
                         value: 'playlist',
-                        child: Row(children: [Icon(Icons.playlist_add, size: 20), SizedBox(width: 12), Text('Add to playlist')]),
+                        child: Row(children: [
+                          Icon(Icons.playlist_add, size: 20),
+                          SizedBox(width: 12),
+                          Text('Add to playlist')
+                        ]),
                       ),
-                      PopupMenuItem(
+                      const PopupMenuItem(
                         value: 'queue',
-                        child: Row(children: [Icon(Icons.queue_music, size: 20), SizedBox(width: 12), Text('Add to queue')]),
+                        child: Row(children: [
+                          Icon(Icons.queue_music, size: 20),
+                          SizedBox(width: 12),
+                          Text('Add to queue')
+                        ]),
                       ),
+                      if (track.filename.isEmpty)
+                        const PopupMenuItem(
+                          value: 'recording',
+                          child: Row(children: [
+                            Icon(Icons.tune, size: 20),
+                            SizedBox(width: 12),
+                            Text('Change recording'),
+                          ]),
+                        ),
                     ],
                   ),
                 ],

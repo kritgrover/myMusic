@@ -268,6 +268,9 @@ class QueueService extends ChangeNotifier {
         'filename': item.filename,
         'thumbnail': _networkReference(item.thumbnail),
         'originalUrl': _networkReference(item.originalUrl),
+        if (item.duration != null && item.duration!.isFinite)
+          'duration': item.duration,
+        if (item.spotifyId != null) 'spotifyId': item.spotifyId,
       };
 
   static String? _networkReference(String? value) {
@@ -293,7 +296,8 @@ class QueueService extends ChangeNotifier {
       'url': 8192,
       'filename': 2048,
       'thumbnail': 8192,
-      'originalUrl': 8192
+      'originalUrl': 8192,
+      'spotifyId': 22,
     };
     for (final entry in limits.entries) {
       final field = value[entry.key];
@@ -324,6 +328,13 @@ class QueueService extends ChangeNotifier {
         title: title,
         artist: value['artist'] as String?,
         album: value['album'] as String?,
+        duration: value['duration'] is num &&
+                (value['duration'] as num).isFinite &&
+                (value['duration'] as num) > 0
+            ? (value['duration'] as num).toDouble()
+            : null,
+        spotifyId:
+            ApiService.spotifyTrackId(null, id: value['spotifyId'] as String?),
         url: url,
         filename: (filename ?? '').isEmpty ? null : filename,
         thumbnail: _networkReference(value['thumbnail'] as String?),
@@ -634,6 +645,9 @@ class QueueService extends ChangeNotifier {
           streamingUrl,
           trackName: entry.item.title,
           trackArtist: entry.item.artist,
+          album: entry.item.album,
+          duration: entry.item.duration,
+          spotifyId: entry.item.spotifyId,
           url: entry.item.originalUrl,
           skipRecentlyPlayed: entry.skipRecentlyPlayed,
         );
@@ -643,6 +657,9 @@ class QueueService extends ChangeNotifier {
           entry.item.filename!,
           trackName: entry.item.title,
           trackArtist: entry.item.artist,
+          album: entry.item.album,
+          duration: entry.item.duration,
+          spotifyId: entry.item.spotifyId,
           url: entry.item.originalUrl,
           skipRecentlyPlayed: entry.skipRecentlyPlayed,
         );

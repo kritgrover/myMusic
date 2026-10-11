@@ -9,8 +9,7 @@ import '../services/player_state_service.dart';
 import '../services/queue_service.dart';
 import '../services/api_service.dart';
 import '../services/playlist_service.dart';
-import '../models/queue_item.dart';
-import '../widgets/playlist_selection_dialog.dart';
+import '../services/track_playback_helper.dart';
 import '../widgets/album_cover.dart';
 import '../widgets/empty_state_widget.dart';
 import '../widgets/profile_header.dart';
@@ -68,7 +67,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
     try {
       final profileFuture = _profileService.getProfile();
       final historyFuture = _profileService.getRecentHistory(limit: 20);
-      final recapFuture = _profileService.getAnalyticsRecap(period: _selectedPeriod);
+      final recapFuture =
+          _profileService.getAnalyticsRecap(period: _selectedPeriod);
       final results = await Future.wait([
         profileFuture,
         historyFuture,
@@ -101,7 +101,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   Future<void> _reloadRecap() async {
     try {
-      final recap = await _profileService.getAnalyticsRecap(period: _selectedPeriod);
+      final recap =
+          await _profileService.getAnalyticsRecap(period: _selectedPeriod);
       if (!mounted) return;
       setState(() {
         _recap = recap;
@@ -151,132 +152,33 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
-  Future<void> _playTrack(ProfileHistoryItem item) async {
-    try {
-      // Search YouTube for this track
-      final searchResults = await _apiService.searchYoutube(
-        '${item.title} ${item.artist}',
+  TrackPlaybackHelper get _playback => TrackPlaybackHelper(
+        apiService: _apiService,
+        queueService: widget.queueService,
+        playerStateService: widget.playerStateService,
+        playlistService: _playlistService,
       );
 
-      if (searchResults.isEmpty) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Could not find "${item.title}" on YouTube')),
-          );
-        }
-        return;
-      }
-
-      // Get streaming URL for the first result
-      final result = await _apiService.getStreamingUrl(
-        url: searchResults.first.url,
+  PlaylistTrack _historyTrack(ProfileHistoryItem item) => PlaylistTrack(
+        id: item.spotifyId ?? 'history_${item.id}',
         title: item.title,
         artist: item.artist,
+        filename: '',
+        url: item.spotifyId == null
+            ? null
+            : 'https://open.spotify.com/track/${item.spotifyId}',
       );
 
-      await widget.playerStateService.streamTrack(
-        result.streamingUrl,
-        trackName: result.title,
-        trackArtist: result.artist,
-        url: searchResults.first.url,
-      );
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to play: $e')),
-        );
-      }
-    }
-  }
+  Future<void> _playTrack(ProfileHistoryItem item) =>
+      _playback.playTrack(context, _historyTrack(item));
 
-  Future<void> _addToQueue(ProfileHistoryItem item, {bool showSnackbar = true}) async {
-    try {
-      // Search YouTube for this track first
-      final searchResults = await _apiService.searchYoutube(
-        '${item.title} ${item.artist}',
-      );
+  Future<void> _addToQueue(ProfileHistoryItem item,
+          {bool showSnackbar = true}) =>
+      _playback.addToQueue(context, _historyTrack(item),
+          showSnackbar: showSnackbar);
 
-      if (searchResults.isEmpty) {
-        if (mounted && showSnackbar) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Could not find "${item.title}" on YouTube')),
-          );
-        }
-        return;
-      }
-
-      final cleaned = await _apiService.cleanMetadata(
-        title: searchResults.first.title,
-        uploader: searchResults.first.uploader,
-        videoId: searchResults.first.id,
-        videoUrl: searchResults.first.url,
-      );
-
-      final result = await _apiService.getStreamingUrl(
-        url: searchResults.first.url,
-        title: cleaned['title']!,
-        artist: cleaned['artist']!,
-      );
-
-      final queueItem = QueueItem(
-        id: searchResults.first.id,
-        title: result.title,
-        artist: result.artist,
-        url: result.streamingUrl,
-        thumbnail: searchResults.first.thumbnail,
-      );
-
-      widget.queueService.addToQueue(queueItem);
-
-      if (mounted && showSnackbar) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Added "${cleaned['title']}" to queue')),
-        );
-      }
-    } catch (e) {
-      if (mounted && showSnackbar) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to add to queue: $e')),
-        );
-      }
-    }
-  }
-
-  Future<void> _showAddToPlaylistDialog(ProfileHistoryItem item) async {
-    try {
-      // Search YouTube to get VideoInfo-like structure
-      final searchResults = await _apiService.searchYoutube(
-        '${item.title} ${item.artist}',
-      );
-
-      if (searchResults.isEmpty) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Could not find "${item.title}" on YouTube')),
-          );
-        }
-        return;
-      }
-
-      final videoInfo = searchResults.first;
-      final track = PlaylistTrack.fromVideoInfo(videoInfo);
-      
-      if (!mounted) return;
-      await showDialog(
-        context: context,
-        builder: (context) => PlaylistSelectionDialog(
-          playlistService: _playlistService,
-          track: track,
-        ),
-      );
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to add to playlist: $e')),
-        );
-      }
-    }
-  }
+  Future<void> _showAddToPlaylistDialog(ProfileHistoryItem item) =>
+      _playback.addToPlaylist(context, _historyTrack(item));
 
   Future<void> _editProfileDialog() async {
     _usernameController.text = _profile?.username ?? _usernameController.text;
@@ -290,18 +192,22 @@ class _ProfileScreenState extends State<ProfileScreen> {
           children: [
             TextField(
               controller: _usernameController,
-              decoration: const InputDecoration(labelText: 'Username', border: OutlineInputBorder()),
+              decoration: const InputDecoration(
+                  labelText: 'Username', border: OutlineInputBorder()),
             ),
             const SizedBox(height: 12),
             TextField(
               controller: _taglineController,
               maxLength: 120,
-              decoration: const InputDecoration(labelText: 'Tagline', border: OutlineInputBorder()),
+              decoration: const InputDecoration(
+                  labelText: 'Tagline', border: OutlineInputBorder()),
             ),
           ],
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.of(dialogContext).pop(), child: const Text('Cancel')),
+          TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Cancel')),
           FilledButton(
             onPressed: () async {
               await _saveProfile();
@@ -316,7 +222,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   String? _httpCover(Playlist playlist) {
     final cover = playlist.coverImage;
-    if (cover != null && (cover.startsWith('http://') || cover.startsWith('https://'))) return cover;
+    if (cover != null &&
+        (cover.startsWith('http://') || cover.startsWith('https://')))
+      return cover;
     if (playlist.tracks.isNotEmpty) return playlist.tracks.first.thumbnail;
     return null;
   }
@@ -334,7 +242,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
         trackLoader: id == null
             ? null
             : () async {
-                final full = await _friendsService.getUserPlaylist(id, playlist.id);
+                final full =
+                    await _friendsService.getUserPlaylist(id, playlist.id);
                 return full.tracks;
               },
       ),
@@ -358,8 +267,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
 
     final recap = _recap;
-    final topGenre = (recap?.topGenres.isNotEmpty ?? false) ? recap!.topGenres.first : '-';
-    final topArtist = (recap?.topArtists.isNotEmpty ?? false) ? recap!.topArtists.first.artist : '-';
+    final topGenre =
+        (recap?.topGenres.isNotEmpty ?? false) ? recap!.topGenres.first : '-';
+    final topArtist = (recap?.topArtists.isNotEmpty ?? false)
+        ? recap!.topArtists.first.artist
+        : '-';
     final profile = _profile;
 
     return RefreshIndicator(
@@ -384,7 +296,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
               children: [
                 if (_error != null) ...[
                   const SizedBox(height: 8),
-                  Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+                  Text(_error!,
+                      style: TextStyle(
+                          color: Theme.of(context).colorScheme.error)),
                 ],
                 // Public playlists
                 if (_publicPlaylists.isNotEmpty) ...[
@@ -433,11 +347,26 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   spacing: 12,
                   runSpacing: 12,
                   children: [
-                    _StatCard(label: 'Plays', value: '${recap?.totals.plays ?? 0}', icon: Icons.play_circle_outline),
-                    _StatCard(label: 'Minutes', value: (recap?.totals.minutes ?? 0).toStringAsFixed(1), icon: Icons.timer_outlined),
-                    _StatCard(label: 'Unique Artists', value: '${recap?.totals.uniqueArtists ?? 0}', icon: Icons.people_outline),
-                    _StatCard(label: 'Top Artist', value: topArtist, icon: Icons.person),
-                    _StatCard(label: 'Top Genre', value: topGenre, icon: Icons.music_note),
+                    _StatCard(
+                        label: 'Plays',
+                        value: '${recap?.totals.plays ?? 0}',
+                        icon: Icons.play_circle_outline),
+                    _StatCard(
+                        label: 'Minutes',
+                        value: (recap?.totals.minutes ?? 0).toStringAsFixed(1),
+                        icon: Icons.timer_outlined),
+                    _StatCard(
+                        label: 'Unique Artists',
+                        value: '${recap?.totals.uniqueArtists ?? 0}',
+                        icon: Icons.people_outline),
+                    _StatCard(
+                        label: 'Top Artist',
+                        value: topArtist,
+                        icon: Icons.person),
+                    _StatCard(
+                        label: 'Top Genre',
+                        value: topGenre,
+                        icon: Icons.music_note),
                   ],
                 ),
                 // History
@@ -454,7 +383,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   EmptyStateWidget(
                     icon: Icons.history,
                     title: 'No recent history yet',
-                    subtitle: 'Start listening and your tracks will appear here.',
+                    subtitle:
+                        'Start listening and your tracks will appear here.',
                   )
                 else
                   ..._history.map((item) {
@@ -521,7 +451,8 @@ class _PublicPlaylistTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final width = ResponsiveUtils.responsiveValue<double>(context, compact: 140, medium: 150, expanded: 160);
+    final width = ResponsiveUtils.responsiveValue<double>(context,
+        compact: 140, medium: 150, expanded: 160);
     return SizedBox(
       width: width,
       child: InkWell(
@@ -538,7 +469,8 @@ class _PublicPlaylistTile extends StatelessWidget {
                 child: (coverUrl != null && coverUrl!.isNotEmpty)
                     ? Image.network(
                         AuthHttpClient.shared.cacheScopedUrl(coverUrl!),
-                        headers: AuthHttpClient.shared.authHeadersForUrl(coverUrl!),
+                        headers:
+                            AuthHttpClient.shared.authHeadersForUrl(coverUrl!),
                         fit: BoxFit.cover,
                         errorBuilder: (_, __, ___) => _placeholder(context),
                       )
@@ -550,7 +482,10 @@ class _PublicPlaylistTile extends StatelessWidget {
               name,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+              style: Theme.of(context)
+                  .textTheme
+                  .bodyMedium
+                  ?.copyWith(fontWeight: FontWeight.w600),
             ),
             Text(
               '$trackCount ${trackCount == 1 ? 'track' : 'tracks'}',
@@ -565,7 +500,8 @@ class _PublicPlaylistTile extends StatelessWidget {
   Widget _placeholder(BuildContext context) {
     return Container(
       color: Theme.of(context).colorScheme.surfaceVariant,
-      child: Icon(Icons.queue_music, size: 40, color: Theme.of(context).colorScheme.onSurfaceVariant),
+      child: Icon(Icons.queue_music,
+          size: 40, color: Theme.of(context).colorScheme.onSurfaceVariant),
     );
   }
 }
@@ -598,7 +534,8 @@ class _StatCardState extends State<_StatCard> {
       onEnter: (_) => setState(() => _isHovered = true),
       onExit: (_) => setState(() => _isHovered = false),
       child: SizedBox(
-        width: ResponsiveUtils.responsiveValue<double>(context, compact: 140, medium: 155, expanded: 170),
+        width: ResponsiveUtils.responsiveValue<double>(context,
+            compact: 140, medium: 155, expanded: 170),
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 200),
           decoration: BoxDecoration(
@@ -639,8 +576,8 @@ class _StatCardState extends State<_StatCard> {
                 Text(
                   widget.value,
                   style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
+                        fontWeight: FontWeight.w700,
+                      ),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
@@ -684,7 +621,8 @@ class _HistoryListTile extends StatelessWidget {
             borderRadius: BorderRadius.circular(12),
             color: Theme.of(context).colorScheme.surface,
             border: Border.all(
-              color: Theme.of(context).colorScheme.surfaceVariant.withOpacity(0.5),
+              color:
+                  Theme.of(context).colorScheme.surfaceVariant.withOpacity(0.5),
               width: 1,
             ),
           ),
@@ -706,8 +644,8 @@ class _HistoryListTile extends StatelessWidget {
                     Text(
                       item.title,
                       style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                        fontWeight: FontWeight.w500,
-                      ),
+                            fontWeight: FontWeight.w500,
+                          ),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),

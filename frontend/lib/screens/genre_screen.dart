@@ -8,8 +8,7 @@ import '../services/recently_played_service.dart';
 import '../services/api_service.dart';
 import '../services/playlist_service.dart';
 import '../models/playlist.dart';
-import '../models/queue_item.dart';
-import '../widgets/playlist_selection_dialog.dart';
+import '../services/track_playback_helper.dart';
 
 class GenreScreen extends StatefulWidget {
   final String genre;
@@ -18,7 +17,8 @@ class GenreScreen extends StatefulWidget {
   final RecentlyPlayedService? recentlyPlayedService;
   final bool embedded; // If true, don't show Scaffold/AppBar
   final VoidCallback? onBack; // Callback for back button when embedded
-  final Function(String)? onDownloadStart; // Callback to start download progress tracking
+  final Function(String)?
+      onDownloadStart; // Callback to start download progress tracking
 
   const GenreScreen({
     super.key,
@@ -52,7 +52,7 @@ class _GenreScreenState extends State<GenreScreen> {
     setState(() {
       _isLoading = true;
     });
-    
+
     try {
       // Use the new genre recommendations (actual tracks, not playlists!)
       final tracks = await _recommendationService.getGenreTracks(widget.genre);
@@ -74,139 +74,21 @@ class _GenreScreenState extends State<GenreScreen> {
     }
   }
 
-  Future<void> _playTrack(PlaylistTrack track) async {
-    try {
-      // Search YouTube for this track
-      final searchResults = await _apiService.searchYoutube(
-        '${track.title} ${track.artist ?? ""}',
-      );
-
-      if (searchResults.isEmpty) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Could not find "${track.title}" on YouTube')),
-          );
-        }
-        return;
-      }
-
-      // Get streaming URL for the first result
-      final result = await _apiService.getStreamingUrl(
-        url: searchResults.first.url,
-        title: track.title,
-        artist: track.artist ?? '',
-      );
-
-      await widget.playerStateService.streamTrack(
-        result.streamingUrl,
-        trackName: result.title,
-        trackArtist: result.artist,
-        url: searchResults.first.url,
-      );
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to play: $e')),
-        );
-      }
-    }
-  }
-
-  Future<void> _addToQueue(PlaylistTrack track, {bool showSnackbar = true}) async {
-    try {
-      final searchResults = await _apiService.searchYoutube(
-        '${track.title} ${track.artist ?? ""}',
-      );
-
-      if (searchResults.isEmpty) {
-        if (mounted && showSnackbar) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Could not find "${track.title}" on YouTube')),
-          );
-        }
-        return;
-      }
-
-      final cleaned = await _apiService.cleanMetadata(
-        title: searchResults.first.title,
-        uploader: searchResults.first.uploader,
-        videoId: searchResults.first.id,
-        videoUrl: searchResults.first.url,
-      );
-
-      final result = await _apiService.getStreamingUrl(
-        url: searchResults.first.url,
-        title: cleaned['title']!,
-        artist: cleaned['artist']!,
-      );
-
-      final queueItem = QueueItem(
-        id: searchResults.first.id,
-        title: result.title,
-        artist: result.artist,
-        url: result.streamingUrl,
-        thumbnail: track.thumbnail,
-      );
-
-      widget.queueService.addToQueue(queueItem);
-
-      if (mounted && showSnackbar) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Added "${cleaned['title']}" to queue')),
-        );
-      }
-    } catch (e) {
-      if (mounted && showSnackbar) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to add to queue: $e')),
-        );
-      }
-    }
-  }
-
-  Future<void> _showAddToPlaylistDialog(PlaylistTrack track) async {
-    // Resolve Spotify/non-YouTube URLs to YouTube so the playlist stores the correct URL
-    final youtubeUrl = await _apiService.resolveToYouTubeUrl(
-      track.url,
-      track.title,
-      track.artist,
-    );
-
-    final needsYoutube = track.url == null ||
-        track.url!.isEmpty ||
-        (!track.url!.contains('youtube.com') && !track.url!.contains('youtu.be'));
-    if (needsYoutube && youtubeUrl == null) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Could not find "${track.title}" on YouTube'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-      return;
-    }
-
-    final resolvedTrack = PlaylistTrack(
-      id: track.id,
-      title: track.title,
-      artist: track.artist,
-      album: track.album,
-      filename: track.filename,
-      url: youtubeUrl ?? track.url,
-      thumbnail: track.thumbnail,
-      duration: track.duration,
-    );
-
-    if (!mounted) return;
-    await showDialog(
-      context: context,
-      builder: (context) => PlaylistSelectionDialog(
+  TrackPlaybackHelper get _playback => TrackPlaybackHelper(
+        apiService: _apiService,
+        queueService: widget.queueService,
+        playerStateService: widget.playerStateService,
         playlistService: _playlistService,
-        track: resolvedTrack,
-      ),
-    );
-  }
+      );
+
+  Future<void> _playTrack(PlaylistTrack track) =>
+      _playback.playTrack(context, track);
+
+  Future<void> _addToQueue(PlaylistTrack track, {bool showSnackbar = true}) =>
+      _playback.addToQueue(context, track, showSnackbar: showSnackbar);
+
+  Future<void> _showAddToPlaylistDialog(PlaylistTrack track) =>
+      _playback.addToPlaylist(context, track);
 
   Future<void> _playAll() async {
     if (_tracks.isEmpty) return;
@@ -239,8 +121,11 @@ class _GenreScreenState extends State<GenreScreen> {
             Text(
               'No tracks found for ${widget.genre}',
               style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
-              ),
+                    color: Theme.of(context)
+                        .colorScheme
+                        .onSurface
+                        .withOpacity(0.6),
+                  ),
             ),
             const SizedBox(height: 16),
             ElevatedButton.icon(
@@ -260,8 +145,10 @@ class _GenreScreenState extends State<GenreScreen> {
           // Play All button
           Padding(
             padding: EdgeInsets.only(
-              left: ResponsiveUtils.responsiveValue<double>(context, compact: 12, medium: 20, expanded: 24),
-              right: ResponsiveUtils.responsiveValue<double>(context, compact: 12, medium: 20, expanded: 24),
+              left: ResponsiveUtils.responsiveValue<double>(context,
+                  compact: 12, medium: 20, expanded: 24),
+              right: ResponsiveUtils.responsiveValue<double>(context,
+                  compact: 12, medium: 20, expanded: 24),
               top: 8,
               bottom: 8,
             ),
@@ -280,8 +167,11 @@ class _GenreScreenState extends State<GenreScreen> {
                 Text(
                   '${_tracks.length} tracks',
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
-                  ),
+                        color: Theme.of(context)
+                            .colorScheme
+                            .onSurface
+                            .withOpacity(0.6),
+                      ),
                 ),
               ],
             ),
@@ -300,28 +190,41 @@ class _GenreScreenState extends State<GenreScreen> {
                       borderRadius: BorderRadius.circular(4),
                       child: track.thumbnail != null
                           ? Image.network(
-                              AuthHttpClient.shared.cacheScopedUrl(track.thumbnail!),
-                              headers: AuthHttpClient.shared.authHeadersForUrl(track.thumbnail!),
-                              width: ResponsiveUtils.responsiveIconSize(context, base: 48),
-                              height: ResponsiveUtils.responsiveIconSize(context, base: 48),
+                              AuthHttpClient.shared
+                                  .cacheScopedUrl(track.thumbnail!),
+                              headers: AuthHttpClient.shared
+                                  .authHeadersForUrl(track.thumbnail!),
+                              width: ResponsiveUtils.responsiveIconSize(context,
+                                  base: 48),
+                              height: ResponsiveUtils.responsiveIconSize(
+                                  context,
+                                  base: 48),
                               fit: BoxFit.cover,
                               errorBuilder: (_, __, ___) {
-                                final size = ResponsiveUtils.responsiveIconSize(context, base: 48);
+                                final size = ResponsiveUtils.responsiveIconSize(
+                                    context,
+                                    base: 48);
                                 return Container(
                                   width: size,
                                   height: size,
-                                color: Theme.of(context).colorScheme.surfaceVariant,
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .surfaceVariant,
                                   child: const Icon(Icons.music_note),
                                 );
                               },
                             )
                           : Builder(
                               builder: (ctx) {
-                                final size = ResponsiveUtils.responsiveIconSize(ctx, base: 48);
+                                final size = ResponsiveUtils.responsiveIconSize(
+                                    ctx,
+                                    base: 48);
                                 return Container(
                                   width: size,
                                   height: size,
-                                  color: Theme.of(context).colorScheme.surfaceVariant,
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .surfaceVariant,
                                   child: const Icon(Icons.music_note),
                                 );
                               },
@@ -337,7 +240,10 @@ class _GenreScreenState extends State<GenreScreen> {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                        color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+                        color: Theme.of(context)
+                            .colorScheme
+                            .onSurface
+                            .withOpacity(0.6),
                       ),
                     ),
                     trailing: Row(
@@ -391,8 +297,8 @@ class _GenreScreenState extends State<GenreScreen> {
                 Text(
                   '${widget.genre} Music',
                   style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
+                        fontWeight: FontWeight.w700,
+                      ),
                 ),
                 const Spacer(),
                 IconButton(
@@ -407,7 +313,7 @@ class _GenreScreenState extends State<GenreScreen> {
         ],
       );
     }
-    
+
     return Scaffold(
       appBar: AppBar(
         title: Text('${widget.genre} Music'),
@@ -423,4 +329,3 @@ class _GenreScreenState extends State<GenreScreen> {
     );
   }
 }
-

@@ -79,6 +79,9 @@ class _SessionPlayer extends Fake implements PlayerStateService {
       {String? trackName,
       String? trackArtist,
       String? url,
+      String? album,
+      double? duration,
+      String? spotifyId,
       bool skipRecentlyPlayed = false}) async {
     await playGate?.future;
     played++;

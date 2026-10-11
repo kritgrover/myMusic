@@ -26,6 +26,7 @@ class AlbumDetailScreen extends StatefulWidget {
   final PlayerStateService playerStateService;
   final QueueService queueService;
   final RecentlyPlayedService? recentlyPlayedService;
+  final RecommendationService? recommendationService;
 
   const AlbumDetailScreen({
     super.key,
@@ -37,6 +38,7 @@ class AlbumDetailScreen extends StatefulWidget {
     required this.playerStateService,
     required this.queueService,
     this.recentlyPlayedService,
+    this.recommendationService,
   });
 
   @override
@@ -44,16 +46,19 @@ class AlbumDetailScreen extends StatefulWidget {
 }
 
 class _AlbumDetailScreenState extends State<AlbumDetailScreen> {
-  final RecommendationService _recommendationService = RecommendationService();
+  late final RecommendationService _recommendationService;
   late final TrackPlaybackHelper _playback;
 
   List<PlaylistTrack> _tracks = [];
   AlbumInfo? _album;
   bool _isLoading = true;
+  bool _loadFailed = false;
 
   @override
   void initState() {
     super.initState();
+    _recommendationService =
+        widget.recommendationService ?? RecommendationService();
     _playback = TrackPlaybackHelper(
       apiService: ApiService(),
       queueService: widget.queueService,
@@ -64,6 +69,10 @@ class _AlbumDetailScreenState extends State<AlbumDetailScreen> {
   }
 
   Future<void> _load() async {
+    setState(() {
+      _isLoading = true;
+      _loadFailed = false;
+    });
     try {
       final results = await Future.wait([
         _recommendationService.getAlbumTracks(widget.albumId),
@@ -93,8 +102,13 @@ class _AlbumDetailScreenState extends State<AlbumDetailScreen> {
           _isLoading = false;
         });
       }
-    } catch (e) {
-      if (mounted) setState(() => _isLoading = false);
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _loadFailed = true;
+        });
+      }
     }
   }
 
@@ -161,7 +175,20 @@ class _AlbumDetailScreenState extends State<AlbumDetailScreen> {
                     ],
                   ),
                 const SizedBox(height: 8),
-                if (_tracks.isEmpty)
+                if (_loadFailed)
+                  Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(children: [
+                      const Text('Could not load this album’s tracks.',
+                          textAlign: TextAlign.center),
+                      const SizedBox(height: 8),
+                      OutlinedButton.icon(
+                          onPressed: _load,
+                          icon: const Icon(Icons.refresh),
+                          label: const Text('Retry album')),
+                    ]),
+                  )
+                else if (_tracks.isEmpty)
                   Padding(
                     padding: const EdgeInsets.all(32),
                     child: Center(

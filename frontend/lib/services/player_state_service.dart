@@ -104,6 +104,9 @@ class PlayerStateService extends ChangeNotifier {
         title: item.displayTitle,
         artist: item.artist,
         filename: item.filename,
+        album: item.album,
+        duration: item.duration,
+        spotifyId: item.spotifyId,
         originalUrl: source,
         skipRecentlyPlayed: skipRecentlyPlayed));
   }
@@ -152,6 +155,9 @@ class PlayerStateService extends ChangeNotifier {
     String? trackName,
     String? trackArtist,
     String? url,
+    String? album,
+    double? duration,
+    String? spotifyId,
     bool skipRecentlyPlayed = false,
   }) =>
       _play(
@@ -161,6 +167,9 @@ class PlayerStateService extends ChangeNotifier {
         trackArtist: trackArtist,
         filename: filename,
         originalUrl: url,
+        album: album,
+        duration: duration,
+        spotifyId: spotifyId,
         skipRecentlyPlayed: skipRecentlyPlayed,
       );
 
@@ -169,6 +178,9 @@ class PlayerStateService extends ChangeNotifier {
     String? trackName,
     String? trackArtist,
     String? url,
+    String? album,
+    double? duration,
+    String? spotifyId,
     bool skipRecentlyPlayed = false,
   }) =>
       _play(
@@ -177,6 +189,9 @@ class PlayerStateService extends ChangeNotifier {
         trackName: trackName ?? 'Streaming',
         trackArtist: trackArtist,
         originalUrl: url,
+        album: album,
+        duration: duration,
+        spotifyId: spotifyId,
         skipRecentlyPlayed: skipRecentlyPlayed,
       );
 
@@ -187,6 +202,9 @@ class PlayerStateService extends ChangeNotifier {
     String? trackArtist,
     String? filename,
     String? originalUrl,
+    String? album,
+    double? duration,
+    String? spotifyId,
     required bool skipRecentlyPlayed,
   }) async {
     final request = ++_playRequest;
@@ -218,6 +236,8 @@ class PlayerStateService extends ChangeNotifier {
         id: ApiService.canonicalMediaUrl(id),
         title: trackName,
         artist: trackArtist,
+        album: album,
+        duration: duration,
         filename: recoveredDownload ? '' : filename ?? '',
         url: source == null ? null : ApiService.canonicalMediaUrl(source),
       );
@@ -231,6 +251,9 @@ class PlayerStateService extends ChangeNotifier {
         title: trackName,
         artist: trackArtist,
         filename: recoveredDownload ? null : filename,
+        album: album,
+        duration: duration,
+        spotifyId: spotifyId,
         originalUrl: source,
         skipRecentlyPlayed: skipRecentlyPlayed,
       ));
@@ -264,6 +287,9 @@ class PlayerStateService extends ChangeNotifier {
     String? artist,
     String? filename,
     String? originalUrl,
+    String? album,
+    double? duration,
+    String? spotifyId,
     required bool skipRecentlyPlayed,
   }) async {
     // History failures should never turn successful audio playback into an error.
@@ -273,6 +299,9 @@ class PlayerStateService extends ChangeNotifier {
           id: ApiService.canonicalMediaUrl(id),
           title: title,
           artist: artist,
+          album: album,
+          duration: duration,
+          spotifyId: spotifyId,
           filename: filename,
           url: originalUrl == null
               ? null
@@ -372,6 +401,9 @@ class PlayerStateService extends ChangeNotifier {
             id: restored.id,
             title: restored.displayTitle,
             artist: restored.artist,
+            album: restored.album,
+            duration: restored.duration,
+            spotifyId: restored.spotifyId,
             filename: restored.filename,
             originalUrl: restored.originalUrl,
             skipRecentlyPlayed: false));

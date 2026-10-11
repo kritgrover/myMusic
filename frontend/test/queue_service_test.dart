@@ -34,6 +34,9 @@ class _Player extends Fake implements PlayerStateService {
       {String? trackName,
       String? trackArtist,
       String? url,
+      String? album,
+      double? duration,
+      String? spotifyId,
       bool skipRecentlyPlayed = false}) async {
     if (failPlayback) throw StateError('unavailable');
     played.add(streamingUrl);
@@ -45,6 +48,9 @@ class _Player extends Fake implements PlayerStateService {
       {String? trackName,
       String? trackArtist,
       String? url,
+      String? album,
+      double? duration,
+      String? spotifyId,
       bool skipRecentlyPlayed = false}) async {
     if (failPlayback) throw StateError('unavailable');
     played.add(filename);
