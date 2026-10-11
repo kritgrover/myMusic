@@ -22,10 +22,17 @@ class Settings:
     SPOTIFY_REDIRECT_URI = "http://127.0.0.1:8000/callback"
     
     # Database Configuration
-    DATABASE_URL = "sqlite:///./music_app.db"
+    # Keep the same library when launched from the repo root or backend folder.
+    DATABASE_URL = os.getenv("DATABASE_URL") or f"sqlite:///{_BACKEND_DIR / 'music_app.db'}"
 
     # Auth Configuration
-    JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "change-me-in-production")
+    JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "")
+    if not JWT_SECRET_KEY.strip() or JWT_SECRET_KEY.strip() == "change-me-in-production":
+        raise RuntimeError(
+            "JWT_SECRET_KEY must be configured with a private random secret. "
+            "Set it in backend/.env or the process environment before starting the backend; "
+            "the default 'change-me-in-production' value is not allowed."
+        )
     JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
     JWT_EXPIRE_MINUTES = int(os.getenv("JWT_EXPIRE_MINUTES", "10080"))
 

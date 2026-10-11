@@ -18,41 +18,12 @@ from spotify_service import spotify_service
 from lyrics_service import lyrics_service
 from metadata_service import MetadataService, _regex_parse as _enhanced_regex_parse
 from auth_utils import create_access_token, decode_access_token
+from media_files import audio_file_response, validate_path_safety
 from mutagen.mp4 import MP4
 from mutagen.easyid3 import EasyID3
 from mutagen.id3 import ID3, APIC
 from mutagen.mp4 import MP4Cover
 
-
-def validate_path_safety(base_dir: str, requested_path: str) -> Path:
-    """
-    Safely validate that a requested path is within the base directory.
-    Prevents path traversal attacks.
-    
-    Args:
-        base_dir: The base directory that paths must be within
-        requested_path: The user-requested path/filename
-        
-    Returns:
-        The resolved safe path
-        
-    Raises:
-        HTTPException: If the path is unsafe or attempts traversal
-    """
-    try:
-        base = Path(base_dir).resolve()
-        # Normalize path separators and join
-        requested = (base / requested_path.replace('\\', '/').replace('//', '/')).resolve()
-        
-        # Verify the resolved path is within the base directory
-        if not str(requested).startswith(str(base)):
-            raise HTTPException(status_code=400, detail="Invalid file path: path traversal detected")
-        
-        return requested
-    except Exception as e:
-        if isinstance(e, HTTPException):
-            raise
-        raise HTTPException(status_code=400, detail=f"Invalid file path: {str(e)}")
 
 app = FastAPI(title="Music Download API")
 
@@ -70,8 +41,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # Allow all origins for Flutter desktop/mobile apps
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],  # Explicitly list allowed methods
-    allow_headers=["Content-Type", "Authorization", "Range", "Accept"],  # Only needed headers
+    allow_methods=["GET", "HEAD", "POST", "PUT", "DELETE", "OPTIONS"],  # Explicitly list allowed methods
+    allow_headers=["Content-Type", "Authorization", "Range", "If-Range", "Accept"],  # Only needed headers
     expose_headers=["Content-Length", "Content-Range", "Accept-Ranges"],  # For streaming support
 )
 
@@ -208,11 +179,10 @@ async def auth_middleware(request: Request, call_next):
     }
     path = request.url.path
     is_public_media_get = (
-        request.method == "GET"
+        request.method in ("GET", "HEAD")
         and (
             path.startswith("/stream/")
             or (path.startswith("/downloads/") and not path.startswith("/downloads/progress/"))
-            or (path.startswith("/playlists/") and path.endswith("/cover"))
         )
     )
 
@@ -355,6 +325,17 @@ async def stream_audio_options(encoded_url: str):
 @app.get("/stream/{encoded_url:path}")
 async def stream_audio(encoded_url: str, request: Request):
     """Stream audio directly from YouTube with range request support"""
+    client = None
+    response = None
+
+    async def close_resources():
+        try:
+            if response is not None:
+                await response.aclose()
+        finally:
+            if client is not None:
+                await client.aclose()
+
     def stream_from_cached_download(youtube_url: str):
         """Fallback: download browser-compatible audio file and serve it locally."""
         stream_cache_dir = os.path.join(DOWNLOADS_DIR, "_stream_cache")
@@ -365,12 +346,7 @@ async def stream_audio(encoded_url: str, request: Request):
         if not os.path.exists(cache_file):
             download_service.download_for_streaming(youtube_url, cache_file)
 
-        return FileResponse(
-            cache_file,
-            media_type="audio/mp4",
-            filename=os.path.basename(cache_file),
-            headers={"Accept-Ranges": "bytes"},
-        )
+        return audio_file_response(Path(cache_file), request)
 
     try:
         # Decode the URL
@@ -421,43 +397,28 @@ async def stream_audio(encoded_url: str, request: Request):
         }
 
         # If upstream denies/blocks, fall back to cached local stream file.
-        if response.status_code >= 400:
-            await response.aclose()
-            await client.aclose()
+        if response.status_code >= 400 and response.status_code != 416:
+            await close_resources()
             loop = asyncio.get_event_loop()
             return await loop.run_in_executor(None, stream_from_cached_download, youtube_url)
 
-        # Check if it is a range request
-        is_range_request = range_header is not None and response.status_code == 206
-        if is_range_request:
-            try:
-                content_bytes = await response.aread()
-                if "Content-Range" in response.headers:
-                    response_headers["Content-Range"] = response.headers["Content-Range"]
-                response_headers["Content-Length"] = str(len(content_bytes))
-                return Response(
-                    content=content_bytes,
-                    status_code=206,
-                    headers=response_headers,
-                    media_type=content_type,
-                )
-            finally:
-                await response.aclose()
-                await client.aclose()
-
-        async def close_resources():
-            await response.aclose()
-            await client.aclose()
+        # Forward byte metadata while streaming the original bytes. Buffering an
+        # open-ended range delays playback and can load the entire song into RAM.
+        for header in ("Content-Length", "Content-Range", "Content-Encoding"):
+            if header in response.headers:
+                response_headers[header] = response.headers[header]
 
         return StreamingResponse(
-            response.aiter_bytes(),
+            response.aiter_raw(),
             status_code=response.status_code,
             headers=response_headers,
             background=BackgroundTask(close_resources),
         )
     except HTTPException:
+        await close_resources()
         raise
     except Exception as e:
+        await close_resources()
         try:
             # Last-resort fallback for any transient upstream/proxy failures.
             loop = asyncio.get_event_loop()
@@ -576,6 +537,8 @@ def list_downloads():
         if os.path.exists(downloads_dir):
             # Recursively search for audio files
             for root, dirs, filenames in os.walk(downloads_dir):
+                # Streaming cache entries are implementation details, not saved music.
+                dirs[:] = [directory for directory in dirs if directory != "_stream_cache"]
                 for filename in filenames:
                     if filename.lower().endswith(('.mp3', '.m4a')):
                         file_path = os.path.join(root, filename)
@@ -619,29 +582,6 @@ def list_downloads():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/downloads/{filename:path}")
-def get_download_file(filename: str, request: Request):
-    """Serve download file for streaming with Range request support"""
-    # Safely validate the path using pathlib
-    file_path = validate_path_safety(download_service.output_dir, filename)
-    
-    if not file_path.is_file():
-        raise HTTPException(status_code=404, detail="File not found")
-    
-    # Get just the filename for the download (without subdirectory)
-    download_filename = os.path.basename(filename)
-    
-    # FileResponse automatically handles Range requests
-    return FileResponse(
-        file_path,
-        media_type='audio/mpeg' if filename.endswith('.mp3') else 'audio/mp4',
-        filename=download_filename,
-        headers={
-            "Accept-Ranges": "bytes",
-        }
-    )
-
-
 @app.delete("/downloads/{filename:path}")
 def delete_download_file(filename: str):
     """Delete a downloaded file (supports subdirectory paths) and update playlists"""
@@ -659,6 +599,8 @@ def delete_download_file(filename: str):
         db.clear_song_file_references(filename)
         
         return {"success": True, "message": f"File {filename} deleted successfully"}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -722,6 +664,15 @@ async def get_file_artwork(filename: str):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.api_route("/downloads/{filename:path}", methods=["GET", "HEAD"])
+def get_download_file(filename: str, request: Request):
+    """Serve audio after registering more specific download/artwork routes."""
+    file_path = validate_path_safety(download_service.output_dir, filename)
+    if not file_path.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
+    return audio_file_response(file_path, request)
 
 
 def _normalize_for_comparison(text: str) -> str:
@@ -1029,22 +980,24 @@ class CsvConversionRequest(BaseModel):
 async def upload_csv(file: UploadFile = File(...)):
     """Upload a CSV file for conversion"""
     try:
-        if not file.filename.endswith('.csv'):
+        if not file.filename or not file.filename.lower().endswith('.csv'):
             raise HTTPException(status_code=400, detail="File must be a CSV file")
         
         # Save uploaded file to temp directory
         temp_dir = os.path.join(BASE_DIR, "temp")
         os.makedirs(temp_dir, exist_ok=True)
         
-        file_path = os.path.join(temp_dir, file.filename)
+        file_path = validate_path_safety(temp_dir, file.filename)
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
         
         return {
             "success": True,
             "filename": file.filename,
-            "file_path": file_path
+            "file_path": str(file_path)
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1065,7 +1018,7 @@ def convert_csv_file(filename: str, request: CsvConversionRequest, http_request:
     import time
     try:
         temp_dir = os.path.join(BASE_DIR, "temp")
-        csv_path = os.path.join(temp_dir, filename)
+        csv_path = validate_path_safety(temp_dir, filename)
         
         if not os.path.isfile(csv_path):
             raise HTTPException(status_code=404, detail="CSV file not found")
@@ -1154,6 +1107,8 @@ def convert_csv_file(filename: str, request: CsvConversionRequest, http_request:
             "playlist_name": playlist_name,
             "playlist_created": playlist_created
         }
+    except HTTPException:
+        raise
     except Exception as e:
         import traceback
         error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
@@ -1173,21 +1128,16 @@ def get_csv_progress(filename: str):
 
 
 @app.get("/csv/download/{playlist_name}/{filename}")
-def download_csv_converted_file(playlist_name: str, filename: str):
+def download_csv_converted_file(playlist_name: str, filename: str, request: Request):
     """Download a converted M4A file from CSV conversion"""
     try:
-        file_path = os.path.join(download_service.output_dir, playlist_name, filename)
+        file_path = validate_path_safety(download_service.output_dir, f"{playlist_name}/{filename}")
         if not os.path.isfile(file_path):
             raise HTTPException(status_code=404, detail="File not found")
         
-        return FileResponse(
-            file_path,
-            media_type='audio/mp4',
-            filename=filename,
-            headers={
-                "Accept-Ranges": "bytes",
-            }
-        )
+        return audio_file_response(file_path, request)
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1196,7 +1146,7 @@ def download_csv_converted_file(playlist_name: str, filename: str):
 def list_csv_converted_files(playlist_name: str):
     """List all files from a CSV conversion"""
     try:
-        playlist_dir = os.path.join(download_service.output_dir, playlist_name)
+        playlist_dir = validate_path_safety(download_service.output_dir, playlist_name)
         if not os.path.exists(playlist_dir):
             raise HTTPException(status_code=404, detail="Playlist not found")
         
@@ -1212,6 +1162,8 @@ def list_csv_converted_files(playlist_name: str):
                 })
         
         return {"files": files}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

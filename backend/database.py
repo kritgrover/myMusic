@@ -12,8 +12,6 @@ class Database:
         self.init_db()
         # Clean up expired cache entries on startup
         self.cleanup_expired_cache()
-        # Clear album cover cache on startup (removes stale wrong results from prior versions)
-        self.clear_album_cover_cache()
 
     def get_connection(self):
         # check_same_thread=False allows the connection to be used across threads
@@ -119,6 +117,9 @@ class Database:
         )
         ''')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_playlist_songs_playlist_id ON playlist_songs(playlist_id)')
+        # Track IDs belong to a playlist; the row ID remains globally unique.
+        # Legacy rows keep their existing IDs without rebuilding the table.
+        self._ensure_column(cursor, "playlist_songs", "source_id", "TEXT")
 
         # Album cover cache (iTunes lookup results)
         cursor.execute('''
@@ -520,7 +521,7 @@ class Database:
         conn.close()
 
     def clear_album_cover_cache(self):
-        """Clear all album cover cache entries. Called on startup to clear stale wrong results."""
+        """Explicitly invalidate all artwork; normal startup preserves fresh entries."""
         conn = self.get_connection()
         cursor = conn.cursor()
         cursor.execute('DELETE FROM album_cover_cache')
@@ -631,7 +632,7 @@ class Database:
     # Playlists
     def _get_playlist_songs(self, cursor, playlist_id):
         cursor.execute('''
-        SELECT id, title, artist, album, filename, file_path, url, thumbnail, duration
+        SELECT COALESCE(source_id, id) AS id, title, artist, album, filename, file_path, url, thumbnail, duration
         FROM playlist_songs
         WHERE playlist_id = ?
         ORDER BY created_at ASC
@@ -747,7 +748,7 @@ class Database:
             return None
 
         song_id = song["id"]
-        cursor.execute('SELECT id FROM playlist_songs WHERE playlist_id = ? AND id = ?', (playlist_id, song_id))
+        cursor.execute('SELECT id FROM playlist_songs WHERE playlist_id = ? AND COALESCE(source_id, id) = ?', (playlist_id, song_id))
         if cursor.fetchone():
             conn.close()
             return self.get_playlist(user_id, playlist_id)
@@ -763,9 +764,10 @@ class Database:
 
         cursor.execute('''
         INSERT INTO playlist_songs (
-            id, playlist_id, title, artist, album, filename, file_path, url, thumbnail, duration, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            id, source_id, playlist_id, title, artist, album, filename, file_path, url, thumbnail, duration, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
+            uuid.uuid4().hex,
             song.get("id"),
             playlist_id,
             song.get("title"),
@@ -793,7 +795,7 @@ class Database:
         if not cursor.fetchone():
             conn.close()
             return None
-        cursor.execute('DELETE FROM playlist_songs WHERE playlist_id = ? AND id = ?', (playlist_id, song_id))
+        cursor.execute('DELETE FROM playlist_songs WHERE playlist_id = ? AND COALESCE(source_id, id) = ?', (playlist_id, song_id))
         if cursor.rowcount > 0:
             cursor.execute(
                 'UPDATE playlists SET updated_at = ? WHERE id = ? AND user_id = ?',
