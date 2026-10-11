@@ -13,6 +13,8 @@ from unittest.mock import patch
 def isolated_backend():
     backend_dir = Path(__file__).resolve().parents[1]
     sys.path.insert(0, str(backend_dir))
+    module_names = ("app", "database", "auth_utils", "spotify_service", "download_service", "metadata_service", "lyrics_service")
+    saved_modules = {name: sys.modules.pop(name) for name in module_names if name in sys.modules}
     with tempfile.TemporaryDirectory(prefix="mymusic-test-") as temp:
         root = Path(temp)
         downloads = root / "downloads"
@@ -28,7 +30,9 @@ def isolated_backend():
         )
         # All configuration is replaced before any app imports: no .env files,
         # real database, Spotify credentials, downloads, or subprocesses are used.
-        with patch.dict(sys.modules, {"config": config}):
+        previous_config = sys.modules.get("config")
+        sys.modules["config"] = config
+        try:
             from download_service import DownloadService
 
             def init_downloads(service, output_dir="downloads"):
@@ -39,5 +43,16 @@ def isolated_backend():
             with patch.object(DownloadService, "__init__", init_downloads):
                 api = importlib.import_module("app")
             with patch.object(api, "BASE_DIR", str(root)), patch.object(api, "DOWNLOADS_DIR", str(downloads)):
-                yield api, root
+                try:
+                    yield api, root
+                finally:
+                    for name in module_names:
+                        sys.modules.pop(name, None)
+                    sys.modules.update(saved_modules)
+                    sys.path.remove(str(backend_dir))
+        finally:
+            if previous_config is None:
+                sys.modules.pop("config", None)
+            else:
+                sys.modules["config"] = previous_config
 

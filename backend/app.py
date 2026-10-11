@@ -9,16 +9,23 @@ import uuid
 import hashlib
 import shutil
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import quote, unquote
+from config import settings
 import httpx
 from download_service import DownloadService
 from database import db
 from spotify_service import spotify_service
 from lyrics_service import lyrics_service
 from metadata_service import MetadataService, _regex_parse as _enhanced_regex_parse
-from auth_utils import create_access_token, decode_access_token
+from auth_utils import create_access_token, decode_access_token, create_media_token, decode_media_token
 from media_files import audio_file_response, validate_path_safety
+from source_security import youtube_url, search_query, streaming_target, VIDEO_ID
+from stream_cache import StreamCache
+from saved_library import normalize_item, validate_identity, clean_thumbnail
+from listening_history import validate_report
+from recommendation_ranking import ListeningPreferences, safe_track, available, normalized
 from mutagen.mp4 import MP4
 from mutagen.easyid3 import EasyID3
 from mutagen.id3 import ID3, APIC
@@ -53,6 +60,17 @@ os.makedirs(DOWNLOADS_DIR, exist_ok=True)
 
 download_service = DownloadService(output_dir=DOWNLOADS_DIR)
 metadata_service = MetadataService(download_service=download_service, spotify_service=spotify_service)
+stream_cache = StreamCache(
+    os.path.join(download_service.output_dir, "_stream_cache"),
+    ttl_seconds=getattr(settings, "STREAM_CACHE_TTL_SECONDS", 86400),
+    max_bytes=getattr(settings, "STREAM_CACHE_MAX_BYTES", 536870912),
+    max_file_bytes=getattr(settings, "STREAM_CACHE_MAX_FILE_BYTES", 67108864),
+)
+db.migrate_download_ownership(
+    str(path.relative_to(download_service.output_dir)).replace("\\", "/")
+    for path in Path(download_service.output_dir).rglob("*")
+    if path.is_file() and path.suffix.lower() in (".mp3", ".m4a") and "_stream_cache" not in path.parts
+)
 
 # Global progress tracking for CSV conversions
 csv_progress: Dict[str, Dict] = {}
@@ -167,6 +185,67 @@ def _require_current_user(request: Request) -> Dict:
     return current_user
 
 
+def _source_url(value):
+    try:
+        return youtube_url(value)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+
+
+def _download_filename(filename):
+    path = validate_path_safety(download_service.output_dir, filename)
+    relative = path.relative_to(Path(download_service.output_dir).resolve()).as_posix()
+    if relative.startswith("_stream_cache/") or path.suffix.lower() not in (".mp3", ".m4a"):
+        raise HTTPException(status_code=400, detail="Invalid audio file")
+    return relative
+
+
+def _owned_file(user_id, filename):
+    filename = _download_filename(filename)
+    if not db.owns_download(user_id, filename):
+        raise HTTPException(status_code=404, detail="File not found")
+    path = validate_path_safety(download_service.output_dir, filename)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
+    return path
+
+
+def _raw_download_filename(request, fallback, artwork=False):
+    """Decode the server's raw path once, preserving literal percent filenames."""
+    raw = request.scope.get("raw_path")
+    if raw is None:
+        return fallback
+    path = raw.decode("ascii").removeprefix("/downloads/")
+    if artwork:
+        path = path.removesuffix("/artwork")
+    return unquote(path)
+
+
+def _media_path(path):
+    """Return exact canonical token scope; reject queries except inside encoded video URLs."""
+    if path.startswith("/downloads/") and "?" not in path and "#" not in path:
+        filename = _download_filename(unquote(path[len("/downloads/"):]))
+        return "/downloads/" + quote(filename, safe="/")
+    if path.startswith("/stream/"):
+        source = _source_url(unquote(path[len("/stream/"):]))
+        return "/stream/" + quote(source, safe="")
+    raise HTTPException(status_code=400, detail="Only audio media paths can be authorized")
+
+
+class MediaAuthorizationRequest(BaseModel):
+    path: str
+
+
+@app.post("/media/authorize")
+def authorize_media(payload: MediaAuthorizationRequest, request: Request):
+    user = _require_current_user(request)
+    path = _media_path(payload.path)
+    if path.startswith("/downloads/"):
+        _owned_file(user["id"], unquote(path[len("/downloads/"):]))
+    token, expires = create_media_token(user["id"], path)
+    return {"url": path + "?media_token=" + token, "expires_at": expires}
+
+
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     public_paths = {
@@ -178,26 +257,21 @@ async def auth_middleware(request: Request, call_next):
         "/redoc",
     }
     path = request.url.path
-    is_public_media_get = (
-        request.method in ("GET", "HEAD")
-        and (
-            path.startswith("/stream/")
-            or (path.startswith("/downloads/") and not path.startswith("/downloads/progress/"))
-        )
-    )
 
     if request.method == "OPTIONS":
         return await call_next(request)
 
-    if path in public_paths or is_public_media_get:
+    if path in public_paths:
         return await call_next(request)
 
     auth_header = request.headers.get("Authorization", "")
-    if not auth_header.startswith("Bearer "):
-        return Response(status_code=401, content="Unauthorized")
-
-    token = auth_header.split(" ", 1)[1]
-    payload = decode_access_token(token)
+    payload = decode_access_token(auth_header.split(" ", 1)[1]) if auth_header.startswith("Bearer ") else None
+    if not payload and request.method in ("GET", "HEAD") and request.query_params.get("media_token"):
+        try:
+            encoded_path = request.scope.get("raw_path", path.encode()).decode("ascii")
+            payload = decode_media_token(request.query_params["media_token"], _media_path(encoded_path))
+        except HTTPException:
+            pass
     if not payload or "sub" not in payload:
         return Response(status_code=401, content="Unauthorized")
 
@@ -211,7 +285,11 @@ async def auth_middleware(request: Request, call_next):
         return Response(status_code=401, content="Unauthorized")
 
     request.state.current_user = user
-    return await call_next(request)
+    result = await call_next(request)
+    # Private responses must never leak through a shared browser/proxy cache.
+    result.headers["Cache-Control"] = "private, no-store"
+    result.headers["Referrer-Policy"] = "no-referrer"
+    return result
 
 
 @app.get("/")
@@ -245,6 +323,48 @@ def get_me(request: Request):
         "username": current_user["username"],
         "tagline": current_user.get("tagline") or "",
     }
+
+
+@app.get("/library")
+def get_saved_library(request: Request):
+    user_id = _require_current_user(request)["id"]
+    owned = set()
+    for filename in db.owned_downloads(user_id):
+        try:
+            _owned_file(user_id, filename)
+            owned.add(filename)
+        except HTTPException:
+            pass
+    library = db.get_saved_library(user_id)
+    for kind, items in library.items():
+        for item in items:
+            if kind == "tracks" and item.get("filename") not in owned:
+                item["filename"] = ""
+            item["thumbnail"] = clean_thumbnail(
+                item.get("thumbnail", ""), lambda filename: filename in owned,
+                lambda playlist_id: db.get_playlist(user_id, playlist_id) is not None)
+    return library
+
+
+@app.put("/library/{kind}/{item_id:path}")
+def save_library_item(kind: str, item_id: str, metadata: Dict, request: Request):
+    user_id = _require_current_user(request)["id"]
+    def owns_filename(filename):
+        try:
+            _owned_file(user_id, filename)
+            return True
+        except HTTPException:
+            return False
+    item = normalize_item(kind, item_id, metadata, _download_filename, owns_filename,
+                          lambda playlist_id: db.get_playlist(user_id, playlist_id) is not None)
+    return db.save_library_item(user_id, kind, item_id, item)
+
+
+@app.delete("/library/{kind}/{item_id:path}")
+def remove_library_item(kind: str, item_id: str, request: Request):
+    validate_identity(kind, item_id)
+    db.remove_library_item(_require_current_user(request)["id"], kind, item_id)
+    return {"success": True}
 
 
 @app.get("/profile/me")
@@ -299,8 +419,12 @@ def update_profile(payload: ProfileUpdateRequest, request: Request):
 def search_youtube(request: SearchRequest):
     """Search YouTube for videos"""
     try:
+        query = search_query(request.query)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    try:
         results = download_service.search_youtube(
-            query=request.query,
+            query=query,
             duration_min=request.duration_min,
             duration_max=request.duration_max
         )
@@ -322,9 +446,10 @@ async def stream_audio_options(encoded_url: str):
         "Access-Control-Expose-Headers": "Content-Length, Content-Range, Accept-Ranges",
     }
 
-@app.get("/stream/{encoded_url:path}")
+@app.api_route("/stream/{encoded_url:path}", methods=["GET", "HEAD"])
 async def stream_audio(encoded_url: str, request: Request):
     """Stream audio directly from YouTube with range request support"""
+    youtube_url = _source_url(unquote(encoded_url))
     client = None
     response = None
 
@@ -338,21 +463,16 @@ async def stream_audio(encoded_url: str, request: Request):
 
     def stream_from_cached_download(youtube_url: str):
         """Fallback: download browser-compatible audio file and serve it locally."""
-        stream_cache_dir = os.path.join(DOWNLOADS_DIR, "_stream_cache")
-        os.makedirs(stream_cache_dir, exist_ok=True)
-        cache_key = hashlib.sha256(youtube_url.encode("utf-8")).hexdigest()
-        cache_file = os.path.join(stream_cache_dir, f"{cache_key}.m4a")
-
-        if not os.path.exists(cache_file):
-            download_service.download_for_streaming(youtube_url, cache_file)
-
-        return audio_file_response(Path(cache_file), request)
+        path = stream_cache.acquire(youtube_url, download_service.download_for_streaming)
+        try:
+            result = audio_file_response(path, request)
+            result.background = BackgroundTask(stream_cache.release, path)
+            return result
+        except Exception:
+            stream_cache.release(path)
+            raise
 
     try:
-        # Decode the URL
-        import urllib.parse
-        youtube_url = urllib.parse.unquote(encoded_url)
-        
         # Get direct streaming URL from YouTube
         loop = asyncio.get_event_loop()
         stream_url = await loop.run_in_executor(
@@ -360,6 +480,7 @@ async def stream_audio(encoded_url: str, request: Request):
             download_service.get_streaming_url,
             youtube_url
         )
+        stream_url = streaming_target(stream_url)
         
         # Get range header from request if present
         range_header = request.headers.get("range")
@@ -380,8 +501,8 @@ async def stream_audio(encoded_url: str, request: Request):
             upstream_headers["Range"] = range_header
 
         client = httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=10.0))
-        request_obj = client.build_request("GET", stream_url, headers=upstream_headers)
-        response = await client.send(request_obj, stream=True, follow_redirects=True)
+        request_obj = client.build_request(request.method, stream_url, headers=upstream_headers)
+        response = await client.send(request_obj, stream=True, follow_redirects=False)
 
         # Determine content type
         content_type = response.headers.get("Content-Type", "audio/mp4")
@@ -397,7 +518,7 @@ async def stream_audio(encoded_url: str, request: Request):
         }
 
         # If upstream denies/blocks, fall back to cached local stream file.
-        if response.status_code >= 400 and response.status_code != 416:
+        if response.status_code >= 300 and response.status_code != 416:
             await close_resources()
             loop = asyncio.get_event_loop()
             return await loop.run_in_executor(None, stream_from_cached_download, youtube_url)
@@ -408,6 +529,9 @@ async def stream_audio(encoded_url: str, request: Request):
             if header in response.headers:
                 response_headers[header] = response.headers[header]
 
+        if request.method == "HEAD":
+            await close_resources()
+            return Response(status_code=response.status_code, headers=response_headers)
         return StreamingResponse(
             response.aiter_raw(),
             status_code=response.status_code,
@@ -430,17 +554,23 @@ async def stream_audio(encoded_url: str, request: Request):
 
 
 @app.post("/download")
-def download_audio(request: DownloadRequest):
+def download_audio(request: DownloadRequest, http_request: Request):
     """Download audio from YouTube URL"""
+    user = _require_current_user(http_request)
+    source = _source_url(request.url)
+    if request.output_format not in ("m4a", "mp3"):
+        raise HTTPException(status_code=400, detail="Unsupported audio format")
     try:
         result = download_service.download_audio(
-            url=request.url,
+            url=source,
             title=request.title,
             artist=request.artist,
             album=request.album,
             output_format=request.output_format,
-            embed_thumbnail=request.embed_thumbnail
+            embed_thumbnail=request.embed_thumbnail,
+            owner_id=user["id"],
         )
+        db.claim_download(user["id"], _download_filename(result['filename']))
         return {
             "success": True,
             "file_path": result['file_path'],
@@ -458,10 +588,15 @@ class BatchDownloadRequest(BaseModel):
 
 
 @app.post("/downloads/batch")
-def start_batch_download(request: BatchDownloadRequest):
+def start_batch_download(request: BatchDownloadRequest, http_request: Request):
     """Start a batch download with progress tracking"""
     import uuid
     import time
+    user = _require_current_user(http_request)
+    for entry in request.downloads:
+        entry.url = _source_url(entry.url)
+        if entry.output_format not in ("m4a", "mp3"):
+            raise HTTPException(status_code=400, detail="Unsupported audio format")
     download_id = str(uuid.uuid4())
     
     # Clean up old progress entries to prevent memory leaks
@@ -469,6 +604,7 @@ def start_batch_download(request: BatchDownloadRequest):
     
     # Initialize progress tracking with timestamp
     download_progress[download_id] = {
+        "user_id": user["id"],
         "current": 0,
         "total": len(request.downloads),
         "status": "downloading",
@@ -489,8 +625,10 @@ def start_batch_download(request: BatchDownloadRequest):
                         artist=download_req.artist,
                         album=download_req.album,
                         output_format=download_req.output_format,
-                        embed_thumbnail=download_req.embed_thumbnail
+                        embed_thumbnail=download_req.embed_thumbnail,
+                        owner_id=user["id"],
                     )
+                    db.claim_download(user["id"], _download_filename(result['filename']))
                     download_progress[download_id]["processed"] += 1
                     download_progress[download_id]["downloads"].append({
                         "success": True,
@@ -521,17 +659,18 @@ def start_batch_download(request: BatchDownloadRequest):
 
 
 @app.get("/downloads/progress/{download_id}")
-def get_download_progress(download_id: str):
+def get_download_progress(download_id: str, request: Request):
     """Get progress for a batch download"""
-    if download_id not in download_progress:
+    if download_id not in download_progress or download_progress[download_id].get("user_id") != _require_current_user(request)["id"]:
         raise HTTPException(status_code=404, detail="Download progress not found")
     return download_progress[download_id]
 
 
 @app.get("/downloads")
-def list_downloads():
+def list_downloads(request: Request):
     """List all downloaded files (including subdirectories from CSV conversions)"""
     try:
+        owned = db.owned_downloads(_require_current_user(request)["id"])
         downloads_dir = download_service.output_dir
         files = []
         if os.path.exists(downloads_dir):
@@ -544,6 +683,8 @@ def list_downloads():
                         file_path = os.path.join(root, filename)
                         # Use relative path from downloads_dir for filename to preserve subfolder structure
                         rel_path = os.path.relpath(file_path, downloads_dir)
+                        if rel_path.replace('\\', '/') not in owned:
+                            continue
                         
                         # Try to read metadata from the file
                         title = None
@@ -583,20 +724,25 @@ def list_downloads():
 
 
 @app.delete("/downloads/{filename:path}")
-def delete_download_file(filename: str):
+def delete_download_file(filename: str, request: Request):
     """Delete a downloaded file (supports subdirectory paths) and update playlists"""
     try:
         # Safely validate the path using pathlib
-        file_path = validate_path_safety(download_service.output_dir, filename)
+        filename = _raw_download_filename(request, filename)
+        user_id = _require_current_user(request)["id"]
+        filename = _download_filename(filename)
+        file_path = _owned_file(user_id, filename)
         
         if not file_path.is_file():
             raise HTTPException(status_code=404, detail="File not found")
         
         # Delete the file
-        os.remove(file_path)
+        remaining_owners = db.unclaim_download(user_id, filename)
+        if not remaining_owners:
+            os.remove(file_path)
         
         # Update all playlists to clear filename for tracks that reference this file
-        db.clear_song_file_references(filename)
+        db.clear_song_file_references(filename, user_id)
         
         return {"success": True, "message": f"File {filename} deleted successfully"}
     except HTTPException:
@@ -606,11 +752,12 @@ def delete_download_file(filename: str):
 
 
 @app.get("/downloads/{filename:path}/artwork")
-async def get_file_artwork(filename: str):
+async def get_file_artwork(filename: str, request: Request):
     """Extract album artwork from a downloaded audio file"""
     try:
         # Safely validate the path using pathlib
-        file_path = validate_path_safety(download_service.output_dir, filename)
+        filename = _raw_download_filename(request, filename, artwork=True)
+        file_path = _owned_file(_require_current_user(request)["id"], filename)
         
         if not file_path.is_file():
             raise HTTPException(status_code=404, detail="File not found")
@@ -669,7 +816,8 @@ async def get_file_artwork(filename: str):
 @app.api_route("/downloads/{filename:path}", methods=["GET", "HEAD"])
 def get_download_file(filename: str, request: Request):
     """Serve audio after registering more specific download/artwork routes."""
-    file_path = validate_path_safety(download_service.output_dir, filename)
+    filename = _raw_download_filename(request, filename)
+    file_path = _owned_file(_require_current_user(request)["id"], filename)
     if not file_path.is_file():
         raise HTTPException(status_code=404, detail="File not found")
     return audio_file_response(file_path, request)
@@ -813,6 +961,14 @@ async def clean_metadata(title: str, uploader: str = "",
     When video_id/video_url are provided, uses yt-dlp structured metadata and
     Spotify validation for higher accuracy. Falls back to regex parsing.
     """
+    if video_url:
+        video_url = _source_url(video_url)
+        actual_id = video_url.rsplit("=", 1)[-1]
+        if video_id and video_id != actual_id:
+            raise HTTPException(status_code=400, detail="Video ID does not match URL")
+        video_id = actual_id
+    elif video_id and not VIDEO_ID.fullmatch(video_id):
+        raise HTTPException(status_code=400, detail="Invalid YouTube video ID")
     return metadata_service.resolve(
         title=title,
         uploader=uploader,
@@ -977,14 +1133,16 @@ class CsvConversionRequest(BaseModel):
 
 
 @app.post("/csv/upload")
-async def upload_csv(file: UploadFile = File(...)):
+async def upload_csv(request: Request, file: UploadFile = File(...)):
     """Upload a CSV file for conversion"""
     try:
         if not file.filename or not file.filename.lower().endswith('.csv'):
             raise HTTPException(status_code=400, detail="File must be a CSV file")
         
         # Save uploaded file to temp directory
-        temp_dir = os.path.join(BASE_DIR, "temp")
+        if file.filename != Path(file.filename.replace("\\", "/")).name:
+            raise HTTPException(status_code=400, detail="Invalid CSV filename")
+        temp_dir = os.path.join(BASE_DIR, "temp", str(_require_current_user(request)["id"]))
         os.makedirs(temp_dir, exist_ok=True)
         
         file_path = validate_path_safety(temp_dir, file.filename)
@@ -1016,8 +1174,10 @@ def format_playlist_name(csv_filename: str) -> str:
 def convert_csv_file(filename: str, request: CsvConversionRequest, http_request: Request):
     """Convert a specific CSV file to playlist entries (search only, no download)"""
     import time
+    current_user = _require_current_user(http_request)
+    progress_key = (current_user["id"], filename)
     try:
-        temp_dir = os.path.join(BASE_DIR, "temp")
+        temp_dir = os.path.join(BASE_DIR, "temp", str(current_user["id"]))
         csv_path = validate_path_safety(temp_dir, filename)
         
         if not os.path.isfile(csv_path):
@@ -1027,7 +1187,7 @@ def convert_csv_file(filename: str, request: CsvConversionRequest, http_request:
         cleanup_old_progress()
         
         # Initialize progress tracking for this filename with timestamp
-        csv_progress[filename] = {
+        csv_progress[progress_key] = {
             "current": 0, 
             "total": 0, 
             "status": "", 
@@ -1037,10 +1197,10 @@ def convert_csv_file(filename: str, request: CsvConversionRequest, http_request:
         }
         
         def progress_callback(current, total, status):
-            csv_progress[filename]["current"] = current
-            csv_progress[filename]["total"] = total
-            csv_progress[filename]["status"] = status
-            csv_progress[filename]["processed"] = current
+            csv_progress[progress_key]["current"] = current
+            csv_progress[progress_key]["total"] = total
+            csv_progress[progress_key]["status"] = status
+            csv_progress[progress_key]["processed"] = current
         
         # Search for tracks without downloading
         result = download_service.convert_csv_to_playlist(
@@ -1051,6 +1211,8 @@ def convert_csv_file(filename: str, request: CsvConversionRequest, http_request:
             variants=request.variants if request.variants else [''],
             progress_callback=progress_callback
         )
+        for track in result.get('tracks', []):
+            track['url'] = _source_url(track.get('url', ''))
         
         # Create playlist from CSV filename
         playlist_name = format_playlist_name(filename)
@@ -1093,9 +1255,9 @@ def convert_csv_file(filename: str, request: CsvConversionRequest, http_request:
             traceback.print_exc()
         
         # Update final progress
-        csv_progress[filename]["processed"] = result['success_count']
-        csv_progress[filename]["not_found"] = len(result['not_found'])
-        csv_progress[filename]["status"] = "completed"
+        csv_progress[progress_key]["processed"] = result['success_count']
+        csv_progress[progress_key]["not_found"] = len(result['not_found'])
+        csv_progress[progress_key]["status"] = "completed"
         
         return {
             "success": True,
@@ -1114,24 +1276,25 @@ def convert_csv_file(filename: str, request: CsvConversionRequest, http_request:
         error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
         print(f"CSV conversion error: {error_detail}")
         # Mark as error in progress
-        if filename in csv_progress:
-            csv_progress[filename]["status"] = f"error: {str(e)}"
+        if progress_key in csv_progress:
+            csv_progress[progress_key]["status"] = f"error: {str(e)}"
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/csv/progress/{filename}")
-def get_csv_progress(filename: str):
+def get_csv_progress(filename: str, request: Request):
     """Get progress for a CSV conversion"""
-    if filename not in csv_progress:
+    progress_key = (_require_current_user(request)["id"], filename)
+    if progress_key not in csv_progress:
         raise HTTPException(status_code=404, detail="Progress not found")
-    return csv_progress[filename]
+    return csv_progress[progress_key]
 
 
 @app.get("/csv/download/{playlist_name}/{filename}")
 def download_csv_converted_file(playlist_name: str, filename: str, request: Request):
     """Download a converted M4A file from CSV conversion"""
     try:
-        file_path = validate_path_safety(download_service.output_dir, f"{playlist_name}/{filename}")
+        file_path = _owned_file(_require_current_user(request)["id"], f"{playlist_name}/{filename}")
         if not os.path.isfile(file_path):
             raise HTTPException(status_code=404, detail="File not found")
         
@@ -1143,16 +1306,17 @@ def download_csv_converted_file(playlist_name: str, filename: str, request: Requ
 
 
 @app.get("/csv/files/{playlist_name}")
-def list_csv_converted_files(playlist_name: str):
+def list_csv_converted_files(playlist_name: str, request: Request):
     """List all files from a CSV conversion"""
     try:
+        owned = db.owned_downloads(_require_current_user(request)["id"])
         playlist_dir = validate_path_safety(download_service.output_dir, playlist_name)
         if not os.path.exists(playlist_dir):
             raise HTTPException(status_code=404, detail="Playlist not found")
         
         files = []
         for filename in os.listdir(playlist_dir):
-            if filename.lower().endswith('.m4a'):
+            if filename.lower().endswith('.m4a') and f"{playlist_name}/{filename}" in owned:
                 file_path = os.path.join(playlist_dir, filename)
                 files.append({
                     "filename": filename,
@@ -1222,16 +1386,30 @@ def update_playlist(playlist_id: str, request: UpdatePlaylistRequest, http_reque
 def add_song_to_playlist(playlist_id: str, song: AddSongRequest, request: Request):
     """Add a song to a playlist"""
     current_user = _require_current_user(request)
+    if song.filename:
+        song.filename = _download_filename(song.filename)
+        _owned_file(current_user["id"], song.filename)
+    if song.url:
+        song.url = _source_url(song.url)
+    song.thumbnail = clean_thumbnail(song.thumbnail or '',
+        lambda filename: db.owns_download(current_user['id'], filename),
+        lambda playlist_id: bool(db.get_playlist(current_user['id'], playlist_id)))
+    song.file_path = ""
     playlist = db.add_song_to_playlist(current_user["id"], playlist_id, song.model_dump())
     if not playlist:
         raise HTTPException(status_code=404, detail="Playlist not found")
     return playlist
 
 
-@app.delete("/playlists/{playlist_id}/songs/{song_id}", response_model=Playlist)
+@app.delete("/playlists/{playlist_id}/songs/{song_id:path}", response_model=Playlist)
 def remove_song_from_playlist(playlist_id: str, song_id: str, request: Request):
     """Remove a song from a playlist"""
     current_user = _require_current_user(request)
+    # IDs may contain filename separators or an original source URL. Decode
+    # raw_path once so literal percent sequences survive framework routing.
+    raw_path = request.scope.get("raw_path")
+    if raw_path is not None:
+        song_id = unquote(raw_path.decode("ascii").split("/songs/", 1)[1])
     playlist = db.remove_song_from_playlist(current_user["id"], playlist_id, song_id)
     if not playlist:
         raise HTTPException(status_code=404, detail="Playlist not found")
@@ -1395,18 +1573,37 @@ def get_public_user(user_id: int, request: Request):
 @app.get("/users/{user_id}/playlists", response_model=Dict[str, Playlist])
 def get_public_user_playlists(user_id: int, request: Request):
     """A user's public playlists (same shape as GET /playlists)."""
-    _require_current_user(request)
-    return db.get_public_playlists(user_id)
+    viewer = _require_current_user(request)
+    playlists = db.get_public_playlists(user_id)
+    for playlist in playlists.values():
+        _filter_private_file_references(playlist, viewer["id"])
+    return playlists
+
+
+def _filter_private_file_references(playlist, viewer_id):
+    owned = db.owned_downloads(viewer_id)
+    for song in playlist.get("songs", []):
+        if song.get("filename") not in owned:
+            song["filename"] = ""
+        song["file_path"] = ""
+        try:
+            song['thumbnail'] = clean_thumbnail(song.get('thumbnail') or '',
+                lambda filename: filename in owned,
+                lambda playlist_id: bool(db.get_playlist(viewer_id, playlist_id)))
+        except HTTPException:
+            # Legacy metadata may contain stale capabilities or invalid URLs.
+            song['thumbnail'] = ''
+    return playlist
 
 
 @app.get("/users/{user_id}/playlists/{playlist_id}", response_model=Playlist)
 def get_public_user_playlist(user_id: int, playlist_id: str, request: Request):
     """A single public playlist owned by user_id."""
-    _require_current_user(request)
+    viewer = _require_current_user(request)
     playlist = db.get_public_playlist(user_id, playlist_id)
     if not playlist:
         raise HTTPException(status_code=404, detail="Playlist not found")
-    return playlist
+    return _filter_private_file_references(playlist, viewer["id"])
 
 
 @app.get("/users/{user_id}/playlists/{playlist_id}/cover")
@@ -1426,6 +1623,7 @@ def save_public_playlist(user_id: int, playlist_id: str, request: Request):
     source = db.get_public_playlist(user_id, playlist_id)
     if not source:
         raise HTTPException(status_code=404, detail="Playlist not found")
+    _filter_private_file_references(source, current_user['id'])
     new_playlist = db.create_playlist(
         user_id=current_user["id"],
         name=source["name"],
@@ -1436,6 +1634,10 @@ def save_public_playlist(user_id: int, playlist_id: str, request: Request):
         # fresh id to avoid colliding with the source playlist's rows.
         song_copy = dict(song)
         song_copy["id"] = uuid.uuid4().hex
+        # Public playlist visibility shares metadata; local files remain private.
+        if song_copy.get("filename") and not db.owns_download(current_user["id"], song_copy["filename"]):
+            song_copy["filename"] = ""
+            song_copy["file_path"] = ""
         db.add_song_to_playlist(current_user["id"], new_playlist["id"], song_copy)
     saved = db.get_playlist(current_user["id"], new_playlist["id"])
     return saved
@@ -1463,6 +1665,18 @@ def unfollow_user(user_id: int, request: Request):
 
 # History & Recommendations Endpoints
 
+@app.post("/history/listening")
+def report_listening(metadata: Dict, request: Request):
+    user = _require_current_user(request)
+    report = validate_report(metadata)
+    try:
+        row, accepted = db.upsert_listening(user['id'], report)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from None
+    return {'success': True, 'accepted': accepted, 'event_id': row['event_id'],
+            'sequence': row['sequence'], 'listened_seconds': row['duration_played'],
+            'qualified': bool(row['qualified']), 'closed': bool(row['closed'])}
+
 class HistoryEntry(BaseModel):
     song_title: str
     artist: str
@@ -1471,46 +1685,14 @@ class HistoryEntry(BaseModel):
 
 @app.post("/history")
 def add_history(entry: HistoryEntry, request: Request):
-    """Log a song play to history and track genre preferences"""
-    try:
-        current_user = _require_current_user(request)
-        artist_id = None
-        
-        # If no spotify_id provided, try to find it
-        track_info = None
-        if not entry.spotify_id:
-            track_info = spotify_service.search_track(entry.song_title, entry.artist)
-            if track_info:
-                entry.spotify_id = track_info['id']
-                artist_id = track_info.get('artist_id')
-        
-        db.add_history(
-            current_user["id"],
-            entry.song_title, 
-            entry.artist, 
-            entry.duration_played, 
-            entry.spotify_id
-        )
-        
-        # Track artist for new-releases recommendations
-        if track_info:
-            db.upsert_user_artist(
-                current_user["id"],
-                track_info.get("artist", entry.artist),
-                track_info.get("artist_id"),
-                track_info.get("thumbnail"),
-            )
-        
-        # Track genre preferences for better recommendations
-        if artist_id:
-            genres = spotify_service.get_artist_genres(artist_id)
-            if genres:
-                db.increment_genres(current_user["id"], genres)
-        
-        return {"success": True, "spotify_id": entry.spotify_id}
-    except Exception as e:
-        print(f"Error adding history: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    """Legacy clients remain compatible; new clients use cumulative events."""
+    current_user = _require_current_user(request)
+    report = validate_report({'event_id': uuid.uuid4().hex, 'sequence': 1,
+        'song_title': entry.song_title, 'artist': entry.artist,
+        'listened_seconds': entry.duration_played, 'spotify_id': entry.spotify_id})
+    db.add_history(current_user['id'], report['song_title'], report['artist'],
+                   report['listened_seconds'], report['spotify_id'] or None)
+    return {'success': True, 'spotify_id': report['spotify_id'] or None}
 
 
 @app.get("/history/recent")
@@ -1527,7 +1709,7 @@ def get_analytics_recap(request: Request, period: str = "weekly"):
     if normalized_period not in {"weekly", "monthly"}:
         raise HTTPException(status_code=400, detail="period must be weekly or monthly")
 
-    now = datetime.now()
+    now = datetime.now(timezone.utc)
     start_ts = now - (timedelta(days=7) if normalized_period == "weekly" else timedelta(days=30))
     start_iso = start_ts.isoformat()
     end_iso = now.isoformat()
@@ -1535,7 +1717,7 @@ def get_analytics_recap(request: Request, period: str = "weekly"):
     summary = db.get_history_summary(current_user["id"], start_iso, end_iso)
     top_artists = db.get_top_artists_in_range(current_user["id"], start_iso, end_iso, limit=5)
     top_tracks = db.get_top_tracks_in_range(current_user["id"], start_iso, end_iso, limit=5)
-    top_genres = db.get_top_genres(current_user["id"], limit=5)
+    top_genres = db.get_cache(f'listening_genres:{current_user["id"]}') or []
 
     return {
         "period": normalized_period,
@@ -1551,99 +1733,109 @@ def get_analytics_recap(request: Request, period: str = "weekly"):
         "top_genres": top_genres,
     }
 
+def _recommendation_context(request):
+    user_id = _require_current_user(request)['id']
+    library = get_saved_library(request)
+    preferences = ListeningPreferences(db.get_listening_signals(user_id), library)
+    filenames = db.owned_downloads(user_id)
+
+    def owns_filename(filename):
+        if filename not in filenames:
+            return False
+        try:
+            _owned_file(user_id, filename)
+            return True
+        except HTTPException:
+            return False
+
+    playlists = db.get_all_playlists(user_id)
+    def clean(candidate):
+        return safe_track(candidate, owns_filename, lambda playlist_id: playlist_id in playlists)
+
+    local = list(library['tracks'])
+    for playlist in playlists.values():
+        local.extend(playlist.get('songs', []))
+    local.extend(preferences.track_metadata.values())
+    # Downloads belong to the library even before a like or playlist is added.
+    # Prefer curated metadata when that physical file is already represented.
+    represented_files = {candidate.get('filename') for candidate in local if isinstance(candidate, dict)}
+    for download in list_downloads(request)['files']:
+        filename = download['filename']
+        if filename not in represented_files and owns_filename(filename):
+            local.append({'id': filename, 'filename': filename,
+                          'title': download.get('title') or Path(filename).stem,
+                          'artist': download.get('artist') or 'Unknown Artist',
+                          'thumbnail': '/downloads/' + quote(filename, safe='/') + '/artwork'})
+    local = [track for candidate in local[:5000] if (track := clean(candidate)) is not None]
+    return user_id, library, preferences, local, clean
+
+
+def _recommendation_seeds(user_id, preferences):
+    tracks, artists, genre_weights = [], [], {}
+    for track in preferences.top_tracks(limit=3):
+        spotify_id = track.get('spotify_id')
+        info = None
+        if not spotify_id:
+            info = available(spotify_service.search_track, track['title'], track.get('artist') or 'Unknown')
+            if isinstance(info, dict):
+                spotify_id = info.get('id')
+                artist_key = normalized(info.get('artist') or track.get('artist'))
+                if info.get('artist_id'):
+                    preferences.artist_metadata.setdefault(artist_key, {'name': info.get('artist') or track.get('artist')})
+                    preferences.artist_metadata[artist_key].update(id=info['artist_id'], thumbnail=info.get('thumbnail') or '')
+        if spotify_id and spotify_id not in tracks:
+            tracks.append(spotify_id)
+    for artist in preferences.top_artists(limit=3):
+        artist_id = artist.get('id')
+        if artist_id and artist_id not in artists:
+            artists.append(artist_id)
+            for genre in available(spotify_service.get_artist_genres, artist_id):
+                if isinstance(genre, str) and len(genre) <= 80:
+                    genre_weights[genre] = genre_weights.get(genre, 0) + preferences.artists[normalized(artist['name'])]
+    genres = sorted(genre_weights, key=lambda genre: (-genre_weights[genre], genre))[:5]
+    db.set_cache(f'listening_genres:{user_id}', genres, ttl_seconds=3600)
+    track_seeds, artist_seeds = tracks[:3], artists[:2]
+    remaining = max(0, 5 - len(track_seeds) - len(artist_seeds))
+    return {'seed_tracks': track_seeds or None, 'seed_artists': artist_seeds or None,
+            'seed_genres': genres[:remaining] or None}
+
+
+def _personalized_tracks(request, limit):
+    user_id, library, preferences, local, clean = _recommendation_context(request)
+    seeds = _recommendation_seeds(user_id, preferences)
+    candidates = available(spotify_service.get_recommendations, **seeds, limit=limit)
+    if not candidates and not any(seeds.values()):
+        # The track endpoints must never return album-shaped new-release rows.
+        candidates = available(spotify_service.get_genre_recommendations, 'pop', limit=limit)
+    candidates = [track for candidate in candidates if (track := clean(candidate)) is not None]
+    return preferences.rank(candidates + local, limit=limit)
+
+
 @app.get("/recommendations/daily")
 def get_daily_mix(request: Request):
-    """Get personalized song recommendations based on history and genre preferences"""
-    try:
-        # Get recent history for seeding
-        current_user = _require_current_user(request)
-        recent = db.get_recent_history(current_user["id"], limit=5)
-        
-        seed_tracks = []
-        
-        for item in recent:
-            if item['spotify_id']:
-                seed_tracks.append(item['spotify_id'])
-            else:
-                # If no spotify_id in history, try to find one
-                track_info = spotify_service.search_track(item['song_title'], item['artist'])
-                if track_info:
-                    seed_tracks.append(track_info['id'])
-        
-        # Get user's top genres for better personalization
-        top_genres = db.get_top_genres(current_user["id"], limit=2)
-        
-        # Get recommendations with tracks + genres (much better than random playlists!)
-        recommendations = spotify_service.get_recommendations(
-            seed_tracks=seed_tracks[:3] if seed_tracks else None,
-            seed_genres=top_genres if top_genres else None,
-            limit=20
-        )
-        
-        return recommendations
-    except Exception as e:
-        print(f"Error getting recommendations: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    return _personalized_tracks(request, 20)
+
 
 @app.get("/recommendations/for-you")
 def get_personalized_recommendations(request: Request):
-    """Smart recommendations based on user's genre preferences + listening history"""
-    try:
-        # Get user's top genres
-        current_user = _require_current_user(request)
-        top_genres = db.get_top_genres(current_user["id"], limit=3)
-        
-        # Get recent track seeds
-        recent = db.get_recent_history(current_user["id"], limit=5)
-        seed_tracks = [r['spotify_id'] for r in recent if r.get('spotify_id')][:2]
-        
-        # If user has no history, return trending/popular
-        if not top_genres and not seed_tracks:
-            return spotify_service.get_new_releases(limit=20)
-        
-        # Combine genre + track seeds (max 5 total for Spotify API)
-        recommendations = spotify_service.get_recommendations(
-            seed_tracks=seed_tracks if seed_tracks else None,
-            seed_genres=top_genres[:3] if top_genres else None,
-            limit=30
-        )
-        
-        return recommendations
-    except Exception as e:
-        print(f"Error getting personalized recommendations: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    return _personalized_tracks(request, 30)
 
 @app.get("/recommendations/new-releases")
 def get_new_releases(request: Request):
-    """Get new releases from top artists the user listens to (uses user_artists table)"""
-    try:
-        current_user = _require_current_user(request)
-        top_artists = db.get_top_user_artists(current_user["id"], limit=10)
-        all_releases = []
-        seen_ids = set()
-
-        for artist in top_artists:
-            if not artist.get("spotify_artist_id"):
-                continue
-            releases = spotify_service.get_artist_new_releases(
-                artist["spotify_artist_id"], limit=5
-            )
-            for release in releases:
-                if release["id"] not in seen_ids:
-                    seen_ids.add(release["id"])
-                    all_releases.append(release)
-
-        all_releases.sort(key=lambda x: x["release_date"], reverse=True)
-        result = all_releases[:20]
-
-        # Fallback to browse new releases if user has no tracked artists yet
-        if not result:
-            result = spotify_service.get_new_releases(country="US", limit=20)
-
-        return result
-    except Exception as e:
-        print(f"Error getting new releases: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    user_id, library, preferences, local, clean = _recommendation_context(request)
+    _recommendation_seeds(user_id, preferences)
+    releases = {}
+    for artist in preferences.top_artists(limit=5):
+        if artist.get('id'):
+            for release in available(spotify_service.get_artist_new_releases, artist['id'], limit=5):
+                releases.setdefault(release['id'], release)
+    if not releases:
+        for release in available(spotify_service.get_new_releases, country='US', limit=20):
+            releases.setdefault(release['id'], release)
+    if not releases:
+        for album in library['albums']:
+            releases[album['id']] = {**album, 'name': album['title'], 'release_date': ''}
+    return sorted(releases.values(), key=lambda item: item.get('release_date') or '', reverse=True)[:20]
 
 @app.get("/recommendations/genre/{genre}")
 def get_genre_content(genre: str):
@@ -1712,28 +1904,20 @@ def get_album_tracks(album_id: str):
 
 @app.get("/recommendations/mixes")
 def get_made_for_you_mixes(request: Request):
-    """Personalized 'Made for You' mixes - one track row per top genre."""
-    try:
-        current_user = _require_current_user(request)
-        top_genres = db.get_top_genres(current_user["id"], limit=4)
-        # Cold-start fallback to popular genres
-        if not top_genres:
-            top_genres = ["pop", "hip-hop", "rock", "electronic"]
-
-        mixes = []
-        for genre in top_genres:
-            tracks = spotify_service.get_genre_recommendations(genre, limit=15)
-            if tracks:
-                mixes.append({
-                    "id": f"mix_{genre.lower().replace(' ', '-')}",
-                    "title": f"{genre.title()} Mix",
-                    "genre": genre,
-                    "tracks": tracks,
-                })
-        return mixes
-    except Exception as e:
-        print(f"Error getting mixes: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    user_id, library, preferences, local, clean = _recommendation_context(request)
+    _recommendation_seeds(user_id, preferences)
+    genres = db.get_cache(f'listening_genres:{user_id}') or ['pop', 'hip-hop', 'rock', 'electronic']
+    mixes = []
+    for genre in genres[:4]:
+        tracks = [track for raw in available(spotify_service.get_genre_recommendations, genre, limit=15)
+                  if (track := clean(raw)) is not None]
+        if tracks:
+            mixes.append({'id': f'mix_{genre.lower().replace(" ", "-")}', 'title': f'{genre.title()} Mix',
+                          'genre': genre, 'tracks': preferences.rank(tracks, limit=15)})
+    if not mixes and local:
+        mixes.append({'id': 'mix_library', 'title': 'Your Rotation', 'genre': 'library',
+                      'tracks': preferences.rank(local, limit=15)})
+    return mixes
 
 
 @app.get("/recommendations/curated")
@@ -1775,62 +1959,43 @@ def get_mood_playlists_endpoint(mood: str):
 
 @app.get("/recommendations/because-you-listened")
 def get_because_you_listened(request: Request):
-    """Related-artist track rows seeded by the user's top recent artists."""
-    try:
-        current_user = _require_current_user(request)
-        top_artists = db.get_top_user_artists(current_user["id"], limit=3)
-
-        rows = []
-        seen_track_ids = set()
-        for artist in top_artists:
-            artist_id = artist.get("spotify_artist_id")
-            artist_name = artist.get("artist_name")
-            if not artist_id or not artist_name:
-                continue
-            tracks = spotify_service.get_recommendations(seed_artists=[artist_id], limit=15)
-            # De-dup across rows so they don't show the same songs
-            unique = []
-            for t in tracks:
-                if t["id"] in seen_track_ids:
-                    continue
-                seen_track_ids.add(t["id"])
-                unique.append(t)
-            if unique:
-                rows.append({
-                    "seed_artist_id": artist_id,
-                    "seed_artist_name": artist_name,
-                    "title": f"Because you listened to {artist_name}",
-                    "tracks": unique,
-                })
-            if len(rows) >= 2:
-                break
-        return rows
-    except Exception as e:
-        print(f"Error getting because-you-listened: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    user_id, library, preferences, local, clean = _recommendation_context(request)
+    _recommendation_seeds(user_id, preferences)
+    rows, seen = [], set()
+    for artist in preferences.top_artists(limit=3):
+        artist_id, name = artist.get('id') or '', artist['name']
+        raw = available(spotify_service.get_recommendations, seed_artists=[artist_id], limit=15) if artist_id else []
+        candidates = [track for candidate in raw if (track := clean(candidate)) is not None]
+        candidates.extend(track for track in local if normalized(track.get('artist')) == normalized(name))
+        tracks = []
+        for track in preferences.rank(candidates, limit=15):
+            key = (normalized(track['title']), normalized(track['artist']))
+            if key not in seen:
+                seen.add(key)
+                tracks.append(track)
+        if tracks:
+            rows.append({'seed_artist_id': artist_id, 'seed_artist_name': name,
+                         'title': f'Because you enjoy {name}', 'tracks': tracks})
+        if len(rows) >= 2:
+            break
+    return rows
 
 
 @app.get("/recommendations/artists")
 def get_recommended_artists_endpoint(request: Request):
-    """Recommended artists to explore, seeded by the user's top artists."""
-    try:
-        current_user = _require_current_user(request)
-        top_artists = db.get_top_user_artists(current_user["id"], limit=3)
-        seed_ids = [a.get("spotify_artist_id") for a in top_artists if a.get("spotify_artist_id")]
-
-        fallback_query = None
-        if not seed_ids:
-            top_genres = db.get_top_genres(current_user["id"], limit=1)
-            fallback_query = top_genres[0] if top_genres else "pop"
-
-        return spotify_service.get_recommended_artists(
-            seed_artist_ids=seed_ids or None,
-            fallback_query=fallback_query,
-            limit=15,
-        )
-    except Exception as e:
-        print(f"Error getting recommended artists: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    user_id, library, preferences, local, clean = _recommendation_context(request)
+    seeds = _recommendation_seeds(user_id, preferences)
+    candidates = available(spotify_service.get_recommended_artists, seed_artist_ids=seeds['seed_artists'],
+                           fallback_query=None if seeds['seed_artists'] else 'pop', limit=15)
+    candidates += library['artists']
+    artists = {}
+    for artist in candidates:
+        if not isinstance(artist, dict) or not artist.get('name'):
+            continue
+        safe = clean({**artist, 'title': artist['name']})
+        if safe:
+            artists.setdefault(normalized(safe['title']), {'id': safe['id'], 'name': safe['title'], 'thumbnail': safe['thumbnail']})
+    return sorted(artists.values(), key=lambda artist: (-preferences.artists[normalized(artist['name'])], normalized(artist['name'])))[:15]
 
 
 # Album & Artist detail endpoints

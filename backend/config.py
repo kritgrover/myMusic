@@ -35,5 +35,9 @@ class Settings:
         )
     JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
     JWT_EXPIRE_MINUTES = int(os.getenv("JWT_EXPIRE_MINUTES", "10080"))
+    MEDIA_TOKEN_SECONDS = max(60, min(21600, int(os.getenv("MEDIA_TOKEN_SECONDS", "7200"))))
+    STREAM_CACHE_TTL_SECONDS = max(60, int(os.getenv("STREAM_CACHE_TTL_SECONDS", "86400")))
+    STREAM_CACHE_MAX_BYTES = max(1, int(os.getenv("STREAM_CACHE_MAX_BYTES", "536870912")))
+    STREAM_CACHE_MAX_FILE_BYTES = max(1, int(os.getenv("STREAM_CACHE_MAX_FILE_BYTES", "67108864")))
 
 settings = Settings()

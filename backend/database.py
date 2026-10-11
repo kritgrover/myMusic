@@ -2,7 +2,8 @@ import sqlite3
 import json
 import time
 import uuid
-from datetime import datetime
+from contextlib import closing
+from datetime import datetime, timezone
 from config import settings
 from auth_utils import verify_password
 
@@ -50,6 +51,12 @@ class Database:
         )
         ''')
         self._ensure_column(cursor, "history", "user_id", "INTEGER")
+        for name, kind in (("event_id", "TEXT"), ("sequence", "INTEGER DEFAULT 0"),
+                           ("duration_seconds", "REAL DEFAULT 0"), ("source_url", "TEXT"),
+                           ("end_reason", "TEXT"), ("qualified", "INTEGER DEFAULT 0"),
+                           ("closed", "INTEGER DEFAULT 0"), ("updated_at", "TEXT")):
+            self._ensure_column(cursor, "history", name, kind)
+        cursor.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_history_user_event ON history(user_id, event_id) WHERE event_id IS NOT NULL')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_history_user_id_timestamp ON history(user_id, timestamp DESC)')
 
         # Spotify Cache table
@@ -175,6 +182,20 @@ class Database:
         ''')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_follows_followee_id ON follows(followee_id)')
 
+        cursor.execute('''CREATE TABLE IF NOT EXISTS download_owners (
+            user_id INTEGER NOT NULL, filename TEXT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY(user_id, filename), FOREIGN KEY(user_id) REFERENCES users(id))''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS app_migrations (
+            name TEXT PRIMARY KEY, completed_at DATETIME DEFAULT CURRENT_TIMESTAMP)''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS saved_library (
+            user_id INTEGER NOT NULL,
+            kind TEXT NOT NULL CHECK (kind IN ('tracks', 'albums', 'artists')),
+            item_id TEXT NOT NULL, metadata TEXT NOT NULL, saved_at INTEGER NOT NULL,
+            PRIMARY KEY(user_id, kind, item_id),
+            FOREIGN KEY(user_id) REFERENCES users(id))''')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_saved_library_user_kind_time ON saved_library(user_id, kind, saved_at DESC)')
+
         conn.commit()
         conn.close()
 
@@ -183,6 +204,27 @@ class Database:
         columns = {row["name"] for row in cursor.fetchall()}
         if column_name not in columns:
             cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}")
+
+    def get_saved_library(self, user_id):
+        library = {"tracks": [], "albums": [], "artists": []}
+        with closing(self.get_connection()) as conn:
+            rows = conn.execute('SELECT kind, metadata FROM saved_library WHERE user_id = ? ORDER BY saved_at DESC, item_id ASC', (user_id,))
+            for row in rows:
+                library[row['kind']].append(json.loads(row['metadata']))
+        return library
+
+    def save_library_item(self, user_id, kind, item_id, metadata):
+        with closing(self.get_connection()) as conn, conn:
+            conn.execute('''INSERT INTO saved_library(user_id, kind, item_id, metadata, saved_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(user_id, kind, item_id) DO UPDATE SET
+                    metadata = excluded.metadata, saved_at = excluded.saved_at''',
+                         (user_id, kind, item_id, json.dumps(metadata, ensure_ascii=False, allow_nan=False), time.time_ns()))
+        return metadata
+
+    def remove_library_item(self, user_id, kind, item_id):
+        with closing(self.get_connection()) as conn, conn:
+            conn.execute('DELETE FROM saved_library WHERE user_id = ? AND kind = ? AND item_id = ?', (user_id, kind, item_id))
 
     # Users
     def create_user(self, username, password_hash):
@@ -262,13 +304,53 @@ class Database:
         return user
 
     # History
+    def upsert_listening(self, user_id, report):
+        from listening_history import qualified, track_key, TERMINAL_REASONS
+        now = datetime.now(timezone.utc).isoformat()
+        with closing(self.get_connection()) as conn, conn:
+            # Serialize the read/merge/write across independently served retries.
+            conn.execute('BEGIN IMMEDIATE')
+            row = conn.execute('SELECT * FROM history WHERE user_id = ? AND event_id = ?',
+                               (user_id, report['event_id'])).fetchone()
+            if row:
+                row = dict(row)
+                if (track_key(row['song_title'], row['artist']) != track_key(report['song_title'], report['artist']) or
+                    (row.get('source_url') and report['source_url'] and row['source_url'] != report['source_url'])):
+                    raise ValueError('Listening event already belongs to another track')
+                if row['closed'] or report['sequence'] <= row['sequence']:
+                    return row, False
+                listened = max(float(row['duration_played'] or 0), report['listened_seconds'])
+                duration = report['duration_seconds'] or float(row['duration_seconds'] or 0)
+                is_qualified = bool(row['qualified']) or qualified(listened, duration)
+                conn.execute('''UPDATE history SET sequence = ?, duration_played = ?, duration_seconds = ?,
+                    source_url = ?, spotify_id = ?, end_reason = ?, qualified = ?, closed = ?, updated_at = ?
+                    WHERE id = ?''', (report['sequence'], listened, duration,
+                    row.get('source_url') or report['source_url'], row.get('spotify_id') or report['spotify_id'],
+                    report['end_reason'], int(is_qualified), int(report['end_reason'] in TERMINAL_REASONS), now, row['id']))
+            else:
+                conn.execute('''INSERT INTO history(user_id, event_id, sequence, song_title, artist,
+                    timestamp, updated_at, duration_played, duration_seconds, source_url, spotify_id,
+                    end_reason, qualified, closed) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                    (user_id, report['event_id'], report['sequence'], report['song_title'], report['artist'],
+                     now, now, report['listened_seconds'], report['duration_seconds'], report['source_url'],
+                     report['spotify_id'], report['end_reason'], int(qualified(report['listened_seconds'], report['duration_seconds'])),
+                     int(report['end_reason'] in TERMINAL_REASONS)))
+            return dict(conn.execute('SELECT * FROM history WHERE user_id = ? AND event_id = ?',
+                                     (user_id, report['event_id'])).fetchone()), True
+
+    def get_listening_signals(self, user_id, limit=3000):
+        with closing(self.get_connection()) as conn:
+            return [dict(row) for row in conn.execute('''SELECT * FROM history
+                WHERE user_id = ? AND julianday(timestamp) >= julianday('now', '-90 days')
+                ORDER BY julianday(timestamp) DESC, id DESC LIMIT ?''', (user_id, limit))]
+
     def add_history(self, user_id, song_title, artist, duration_played, spotify_id=None):
         conn = self.get_connection()
         cursor = conn.cursor()
         cursor.execute('''
         INSERT INTO history (user_id, song_title, artist, duration_played, spotify_id, timestamp)
         VALUES (?, ?, ?, ?, ?, ?)
-        ''', (user_id, song_title, artist, duration_played, spotify_id, datetime.now()))
+        ''', (user_id, song_title, artist, duration_played, spotify_id, datetime.now(timezone.utc).isoformat()))
         conn.commit()
         conn.close()
 
@@ -278,7 +360,7 @@ class Database:
         cursor.execute('''
         SELECT * FROM history 
         WHERE user_id = ?
-        ORDER BY timestamp DESC 
+        ORDER BY julianday(timestamp) DESC, id DESC
         LIMIT ?
         ''', (user_id, limit))
         rows = cursor.fetchall()
@@ -306,13 +388,13 @@ class Database:
         cursor.execute(
             '''
             SELECT
-                COUNT(*) AS plays,
+                SUM(CASE WHEN qualified = 1 OR (event_id IS NULL AND duration_played > 0) THEN 1 ELSE 0 END) AS plays,
                 COALESCE(SUM(duration_played), 0.0) AS total_duration_played,
-                COUNT(DISTINCT artist) AS unique_artists
+                COUNT(DISTINCT CASE WHEN qualified = 1 OR (event_id IS NULL AND duration_played > 0) THEN artist END) AS unique_artists
             FROM history
             WHERE user_id = ?
-              AND timestamp >= ?
-              AND timestamp < ?
+              AND julianday(timestamp) >= julianday(?)
+              AND julianday(timestamp) < julianday(?)
             ''',
             (user_id, start_ts, end_ts),
         )
@@ -334,8 +416,9 @@ class Database:
             SELECT artist, COUNT(*) AS count
             FROM history
             WHERE user_id = ?
-              AND timestamp >= ?
-              AND timestamp < ?
+              AND julianday(timestamp) >= julianday(?)
+              AND julianday(timestamp) < julianday(?)
+              AND (qualified = 1 OR (event_id IS NULL AND duration_played > 0))
             GROUP BY artist
             ORDER BY count DESC
             LIMIT ?
@@ -354,8 +437,9 @@ class Database:
             SELECT song_title, artist, COUNT(*) AS count
             FROM history
             WHERE user_id = ?
-              AND timestamp >= ?
-              AND timestamp < ?
+              AND julianday(timestamp) >= julianday(?)
+              AND julianday(timestamp) < julianday(?)
+              AND (qualified = 1 OR (event_id IS NULL AND duration_played > 0))
             GROUP BY song_title, artist
             ORDER BY count DESC, song_title ASC
             LIMIT ?
@@ -956,21 +1040,52 @@ class Database:
         conn.close()
         return [{"id": r["id"], "username": r["username"], "tagline": r["tagline"] or ""} for r in rows]
 
-    def clear_song_file_references(self, deleted_filename):
+    def claim_download(self, user_id, filename):
+        with closing(self.get_connection()) as conn, conn:
+            conn.execute('INSERT OR IGNORE INTO download_owners(user_id, filename) VALUES (?, ?)',
+                         (user_id, filename.replace('\\', '/')))
+
+    def owns_download(self, user_id, filename):
+        with closing(self.get_connection()) as conn, conn:
+            return conn.execute('SELECT 1 FROM download_owners WHERE user_id = ? AND filename = ?',
+                                (user_id, filename.replace('\\', '/'))).fetchone() is not None
+
+    def owned_downloads(self, user_id):
+        with closing(self.get_connection()) as conn, conn:
+            return {row['filename'] for row in conn.execute('SELECT filename FROM download_owners WHERE user_id = ?', (user_id,))}
+
+    def unclaim_download(self, user_id, filename):
+        with closing(self.get_connection()) as conn, conn:
+            conn.execute('DELETE FROM download_owners WHERE user_id = ? AND filename = ?', (user_id, filename))
+            return conn.execute('SELECT COUNT(*) FROM download_owners WHERE filename = ?', (filename,)).fetchone()[0]
+
+    def migrate_download_ownership(self, filenames):
+        """One-time migration. Multi-user libraries grant only existing playlist references."""
+        with closing(self.get_connection()) as conn, conn:
+            if conn.execute("SELECT 1 FROM app_migrations WHERE name = 'private-downloads-v1'").fetchone():
+                return
+            filenames = set(filenames)
+            rows = conn.execute('SELECT p.user_id, s.filename FROM playlist_songs s JOIN playlists p ON p.id = s.playlist_id').fetchall()
+            for row in rows:
+                filename = (row['filename'] or '').replace('\\', '/')
+                if filename in filenames:
+                    conn.execute('INSERT OR IGNORE INTO download_owners(user_id, filename) VALUES (?, ?)', (row['user_id'], filename))
+            users = conn.execute('SELECT id FROM users').fetchall()
+            if len(users) == 1:
+                conn.executemany('INSERT OR IGNORE INTO download_owners(user_id, filename) VALUES (?, ?)',
+                                 [(users[0]['id'], filename) for filename in filenames])
+            conn.execute("INSERT INTO app_migrations(name) VALUES ('private-downloads-v1')")
+
+    def clear_song_file_references(self, deleted_filename, user_id):
         conn = self.get_connection()
         cursor = conn.cursor()
         normalized = deleted_filename.replace("\\", "/")
-        basename = normalized.split("/")[-1]
-        cursor.execute('SELECT id, filename FROM playlist_songs WHERE filename IS NOT NULL AND filename != ""')
+        cursor.execute('SELECT s.id, s.filename FROM playlist_songs s JOIN playlists p ON p.id = s.playlist_id WHERE p.user_id = ? AND s.filename IS NOT NULL AND s.filename != ""', (user_id,))
         rows = cursor.fetchall()
         updated_playlist_ids = set()
         for row in rows:
             song_filename = (row["filename"] or "").replace("\\", "/")
-            if (
-                song_filename == normalized
-                or song_filename.endswith("/" + normalized)
-                or song_filename == basename
-            ):
+            if song_filename == normalized:
                 cursor.execute(
                     'UPDATE playlist_songs SET filename = "", file_path = "" WHERE id = ?',
                     (row["id"],),

@@ -11,6 +11,11 @@ from datetime import timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from mutagen.easyid3 import EasyID3
 from mutagen.mp4 import MP4, MP4Tags
+from source_security import youtube_url, search_query
+import uuid
+import tempfile
+import signal
+from pathlib import Path
 
 
 class DownloadService:
@@ -85,6 +90,10 @@ class DownloadService:
         Returns:
             List of command arguments ready for subprocess
         """
+        if search_spec.startswith(("ytsearch1:", "ytsearch3:")):
+            search_query(search_spec.split(":", 1)[1])
+        else:
+            search_spec = youtube_url(search_spec)
         if isinstance(self.yt_dlp_exe, list):
             cmd = self.yt_dlp_exe.copy()
         else:
@@ -95,7 +104,7 @@ class DownloadService:
         ffmpeg_dir = os.path.dirname(self.ffmpeg_exe) if isinstance(self.ffmpeg_exe, str) and os.path.dirname(self.ffmpeg_exe) else ""
         if ffmpeg_dir and os.path.isdir(ffmpeg_dir):
             cmd.append(f"--ffmpeg-location={ffmpeg_dir}")
-        cmd += extra_args + [search_spec]
+        cmd += ["--no-playlist", "--use-extractors", "youtube,youtube:tab,youtube:search"] + extra_args + ["--", search_spec]
         return cmd
 
     def _run_yt_with_strategies(self, base_args, search_spec, creationflags):
@@ -190,6 +199,7 @@ class DownloadService:
     
     def search_youtube(self, query: str, duration_min: int = 0, duration_max: float = float("inf")):
         """Search YouTube and return video information"""
+        query = search_query(query)
         creationflags = self._get_creationflags()
         
         # Check if yt-dlp is available
@@ -198,7 +208,7 @@ class DownloadService:
         
         # Always use deep search
         proc_q = subprocess.run(
-            self._yt_cmd(["--flat-playlist", "--dump-single-json", "--no-playlist"], f"ytsearch3:{query}"),
+            self._yt_cmd(["--flat-playlist", "--dump-single-json", "--no-playlist"], query if query.startswith("https://") else f"ytsearch3:{query}"),
             capture_output=True, text=True, creationflags=creationflags, timeout=30
         )
         if proc_q.returncode != 0:
@@ -211,7 +221,7 @@ class DownloadService:
         if not isinstance(data_q, dict):
             data_q = {}
         
-        entries = data_q.get('entries') if isinstance(data_q.get('entries'), list) else []
+        entries = data_q.get('entries') if isinstance(data_q.get('entries'), list) else ([data_q] if data_q.get('id') else [])
         results = []
         
         # Get top 10 results
@@ -240,8 +250,9 @@ class DownloadService:
         return results
     
     def download_audio(self, url: str, title: str, artist: str = "", album: str = "", 
-                      output_format: str = "m4a", embed_thumbnail: bool = False):
+                      output_format: str = "m4a", embed_thumbnail: bool = False, owner_id: int = None):
         """Download audio from YouTube URL"""
+        url = youtube_url(url)
         creationflags = self._get_creationflags()
         
         # Sanitize filename
@@ -255,22 +266,29 @@ class DownloadService:
             if safe_artist:
                 filename += f" - {safe_artist}"
         
-        output_path = os.path.join(self.output_dir, filename)
+        output_folder = self.output_dir
+        if owner_id is not None:
+            output_folder = os.path.join(output_folder, "users", str(int(owner_id)))
+            os.makedirs(output_folder, exist_ok=True)
+            filename = uuid.uuid4().hex + "-" + filename[:160]
+        output_path = os.path.join(output_folder, filename)
         
         # Build download command
-        cmd_dl = self._yt_cmd([
+        args = [
             '-f', 'bestaudio[ext=m4a]/bestaudio',
             '--output', output_path + '.%(ext)s',
             '--no-playlist'
-        ], url)
+        ]
         
         if embed_thumbnail:
-            cmd_dl += ['--embed-thumbnail', '--add-metadata']
+            args += ['--embed-thumbnail', '--add-metadata']
         
         if output_format == 'mp3':
-            cmd_dl += ['--extract-audio', '--audio-format', 'mp3', '--audio-quality', '0']
+            args += ['--extract-audio', '--audio-format', 'mp3', '--audio-quality', '0']
         else:
-            cmd_dl += ['--remux-video', 'm4a']
+            args += ['--remux-video', 'm4a']
+
+        cmd_dl = self._yt_cmd(args, url)
         
         ret = subprocess.run(cmd_dl, capture_output=True, text=True, creationflags=creationflags)
         if ret.returncode != 0:
@@ -316,7 +334,7 @@ class DownloadService:
         except Exception as e:
             print(f"Warning: Could not write metadata: {e}")
         
-        filename = os.path.basename(candidate_path)
+        filename = os.path.relpath(candidate_path, self.output_dir).replace('\\', '/')
         return {
             'file_path': candidate_path,
             'filename': filename,
@@ -327,6 +345,7 @@ class DownloadService:
     
     def get_streaming_url(self, url: str):
         """Get direct streaming URL from YouTube URL without downloading"""
+        url = youtube_url(url)
         creationflags = self._get_creationflags()
         
         # Check if yt-dlp is available
@@ -350,31 +369,32 @@ class DownloadService:
         
         return streaming_url
     
-    def download_for_streaming(self, url: str, output_path: str):
+    def download_for_streaming(self, url: str, output_path: str, max_bytes: int = 67108864):
         """Download audio in browser-compatible format for streaming"""
+        url = youtube_url(url)
         creationflags = self._get_creationflags()
         
         # Check if yt-dlp is available
         if not self.yt_dlp_exe:
             raise Exception(f"yt-dlp not found. Please install it: pip install yt-dlp")
         
-        # Use a temporary file first, then apply faststart
-        temp_output = output_path + ".tmp"
+        # Keep a real extension template: remuxing can change the source
+        # container extension, so a literal '.tmp' filename is unreliable.
+        temp_prefix = output_path + ".work"
+        temp_output = temp_prefix + ".m4a"
         
         # Download as M4A (AAC) which is browser-compatible
         base_args = [
             '-f', 'bestaudio[ext=m4a]/bestaudio',
             '--remux-video', 'm4a',
             '--postprocessor-args', 'ffmpeg:-movflags +faststart',
-            '--output', temp_output,
+            '--output', temp_prefix + '.%(ext)s',
             '--no-playlist',
             '--no-warnings',
+            '--max-filesize', str(max_bytes),
         ]
 
-        try:
-            self._run_yt_with_strategies(base_args, url, creationflags)
-        except Exception as e:
-            raise Exception(f"Failed to download for streaming: {e}")
+        self._bounded_stream_process(base_args, url, temp_prefix, max_bytes)
         
         # Move temp file to final location
         if os.path.exists(temp_output):
@@ -389,6 +409,47 @@ class DownloadService:
             raise Exception(f"Downloaded file not found: {output_path}")
         
         return output_path
+
+    def _bounded_stream_process(self, args, source, output_prefix, max_bytes, timeout=180):
+        """Bound all temporary container/remux bytes and the whole process tree."""
+        command = self._yt_cmd(args, source)
+        flags = self._get_creationflags()
+        if platform.system() == 'Windows':
+            flags |= subprocess.CREATE_NEW_PROCESS_GROUP
+        prefix = Path(output_prefix)
+        started = time.monotonic()
+        process = None
+        with tempfile.TemporaryFile() as log:
+            try:
+                process = subprocess.Popen(command, stdout=log, stderr=log, creationflags=flags,
+                                           start_new_session=platform.system() != 'Windows')
+                while True:
+                    size = 0
+                    for path in prefix.parent.glob(prefix.name + '*'):
+                        try:
+                            if path.is_file():
+                                size += path.stat().st_size
+                        except FileNotFoundError:
+                            pass  # ffmpeg atomically moved a file between checks.
+                    if size > max_bytes:
+                        raise RuntimeError("Streaming download exceeds the cache file limit")
+                    if time.monotonic() - started > timeout:
+                        raise RuntimeError("Streaming download timed out")
+                    if process.poll() is not None:
+                        break
+                    time.sleep(0.1)
+                if process.returncode:
+                    log.seek(0)
+                    detail = log.read(4096).decode('utf-8', errors='replace')
+                    raise RuntimeError("Failed to download audio: " + detail)
+            finally:
+                if process is not None and process.poll() is None:
+                    if platform.system() == 'Windows':
+                        subprocess.run(['taskkill', '/PID', str(process.pid), '/T', '/F'],
+                                       capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW, timeout=10)
+                    else:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    process.wait(timeout=10)
     
     def get_download_progress(self, url: str):
         """Get download progress for a URL"""
@@ -570,16 +631,17 @@ class DownloadService:
                 file_title = re.sub(r"[^\w\s]", "", title).strip()
                 base = f"{i:03d} - {file_title}" + (f" - {variant}" if variant else "")
                 tmpl = base + ".%(ext)s"
-                cmd_dl = self._yt_cmd([
+                download_args = [
                     '--download-archive', archive_file,
                     '-f', 'bestaudio[ext=m4a]/bestaudio',
                     '--output', os.path.join(output_dir, tmpl),
                     '--no-playlist',
                     '--remux-video', 'm4a'
-                ], download_spec)
+                ]
                 
                 if exclude_instrumentals:
-                    cmd_dl += ['--reject-title', 'instrumental']
+                    download_args += ['--reject-title', 'instrumental']
+                cmd_dl = self._yt_cmd(download_args, download_spec)
                 
                 ret = subprocess.run(cmd_dl, capture_output=True, text=True, creationflags=creationflags, timeout=300)
                 if ret.returncode != 0:

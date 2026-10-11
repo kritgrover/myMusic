@@ -23,6 +23,8 @@ class BackendRegressionTests(unittest.TestCase):
         cls.headers = {"Authorization": "Bearer " + cls.api.create_access_token(cls.user["id"], cls.user["username"])}
         cls.audio = cls.root / "downloads" / "fixture.MP3"
         cls.audio.write_bytes(b"0123456789")
+        cls.api.db.claim_download(cls.user["id"], "fixture.MP3")
+        cls.client.headers.update(cls.headers)
 
     @classmethod
     def tearDownClass(cls):
@@ -80,6 +82,7 @@ class BackendRegressionTests(unittest.TestCase):
 
     def test_range_on_empty_file(self):
         (self.root / "downloads" / "empty.mp3").write_bytes(b"")
+        self.api.db.claim_download(self.user["id"], "empty.mp3")
         response = self.client.get("/downloads/empty.mp3", headers={"Range": "bytes=0-"})
         self.assertEqual(response.status_code, 416)
         self.assertEqual(response.headers["content-range"], "bytes */0")
@@ -106,6 +109,7 @@ class BackendRegressionTests(unittest.TestCase):
         tags = ID3()
         tags.add(APIC(mime="image/png", type=3, data=b"test-cover-image"))
         tags.save(path)
+        self.api.db.claim_download(self.user["id"], "cover.mp3")
         response = self.client.get("/downloads/cover.mp3/artwork")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.content, b"test-cover-image")
@@ -121,7 +125,7 @@ class BackendRegressionTests(unittest.TestCase):
         self.assertFalse((self.root / "escaped.csv").exists())
 
     def test_stream_cache_supports_seeking_and_stays_out_of_library(self):
-        youtube_url = "https://www.youtube.com/watch?v=test-fixture"
+        youtube_url = "https://www.youtube.com/watch?v=testFixture"
         cache = self.root / "downloads" / "_stream_cache"
         cache.mkdir(exist_ok=True)
         (cache / (hashlib.sha256(youtube_url.encode()).hexdigest() + ".m4a")).write_bytes(b"abcdefghij")
@@ -144,9 +148,9 @@ class BackendRegressionTests(unittest.TestCase):
         upstream_client = Mock()
         upstream_client.send = AsyncMock(return_value=upstream)
         upstream_client.aclose = AsyncMock()
-        with patch.object(self.api.download_service, "get_streaming_url", return_value="https://example.test/audio"), \
+        with patch.object(self.api.download_service, "get_streaming_url", return_value="https://test.googlevideo.com/audio"), \
                 patch.object(self.api.httpx, "AsyncClient", return_value=upstream_client):
-            response = self.client.get("/stream/fixture", headers={"Range": "bytes=2-5"})
+            response = self.client.get("/stream/" + quote("https://www.youtube.com/watch?v=testFixture", safe=""), headers={"Range": "bytes=2-5"})
         self.assertEqual(response.status_code, 206)
         self.assertEqual(response.content, b"2345")
         self.assertEqual(response.headers["content-range"], "bytes 2-5/10")
@@ -158,11 +162,11 @@ class BackendRegressionTests(unittest.TestCase):
         upstream_client = Mock()
         upstream_client.send = AsyncMock(side_effect=RuntimeError("connection failed"))
         upstream_client.aclose = AsyncMock()
-        youtube_url = "https://www.youtube.com/watch?v=cached-fixture"
+        youtube_url = "https://www.youtube.com/watch?v=cacheFixtur"
         cache = self.root / "downloads" / "_stream_cache"
         cache.mkdir(exist_ok=True)
         (cache / (hashlib.sha256(youtube_url.encode()).hexdigest() + ".m4a")).write_bytes(b"cached")
-        with patch.object(self.api.download_service, "get_streaming_url", return_value="https://example.test/audio"), \
+        with patch.object(self.api.download_service, "get_streaming_url", return_value="https://test.googlevideo.com/audio"), \
                 patch.object(self.api.httpx, "AsyncClient", return_value=upstream_client):
             response = self.client.get("/stream/" + quote(youtube_url, safe=""))
         self.assertEqual(response.content, b"cached")
@@ -175,7 +179,7 @@ class BackendRegressionTests(unittest.TestCase):
         (covers / (playlist["id"] + ".png")).write_bytes(b"cover-fixture")
         url = "/playlists/" + playlist["id"] + "/cover"
         self.api.db.update_playlist_cover(self.user["id"], playlist["id"], url)
-        self.assertEqual(self.client.get(url).status_code, 401)
+        self.assertEqual(self.client.get(url, headers={"Authorization": ""}).status_code, 401)
         self.assertEqual(self.client.get(url, headers=self.headers).content, b"cover-fixture")
         other_headers = {"Authorization": "Bearer " + self.api.create_access_token(self.other["id"], self.other["username"])}
         self.assertEqual(self.client.get(url, headers=other_headers).status_code, 404)
@@ -206,6 +210,30 @@ class BackendRegressionTests(unittest.TestCase):
         self.assertEqual(len(duplicate["songs"]), 1)
         removed = self.api.db.remove_song_from_playlist(self.user["id"], playlist["id"], "legacy-track")
         self.assertEqual(removed["songs"], [])
+
+    def test_encoded_source_and_filename_track_ids_can_be_removed(self):
+        playlist = self.api.db.create_playlist(self.user["id"], "Encoded IDs")
+        route = "/playlists/" + playlist["id"] + "/songs"
+        ids = ("fixture/source-track.mp3", "https://www.youtube.com/watch?v=testFixture#chapter",
+               "percent%2F song?one#two.mp3", "café/曲.mp3")
+        for song_id in ids:
+            added = self.client.post(route, json={"id": song_id, "title": song_id, "filename": ""})
+            self.assertEqual(added.status_code, 200, added.text)
+        for song_id in ids:
+            with self.subTest(song_id=song_id):
+                response = self.client.delete(route + "/" + quote(song_id, safe=""))
+                self.assertEqual(response.status_code, 200, response.text)
+                self.assertNotIn(song_id, [song["id"] for song in response.json()["songs"]])
+        self.assertEqual(self.api.db.get_playlist(self.user["id"], playlist["id"])["songs"], [])
+
+    def test_encoded_track_id_removal_remains_owner_scoped(self):
+        playlist = self.api.db.create_playlist(self.other["id"], "Other encoded ID")
+        song_id = "private/folder/song.mp3?version=1#part"
+        self.api.db.add_song_to_playlist(self.other["id"], playlist["id"],
+                                         {"id": song_id, "title": "Other", "filename": ""})
+        response = self.client.delete("/playlists/" + playlist["id"] + "/songs/" + quote(song_id, safe=""))
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(len(self.api.db.get_playlist(self.other["id"], playlist["id"])["songs"]), 1)
 
     def test_existing_playlist_table_upgrades_without_rewriting_rows(self):
         from database import Database
