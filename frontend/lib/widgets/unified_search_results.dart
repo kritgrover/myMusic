@@ -239,6 +239,7 @@ class _UnifiedSearchResultsState extends State<UnifiedSearchResults> {
   }
 
   String _origin(String origin) => switch (origin) {
+        'device' => 'On this device',
         'saved' => 'Saved in your library',
         'download' => 'Downloaded',
         'playlist' => 'In your playlists',

@@ -28,6 +28,7 @@ class QueueService extends ChangeNotifier {
   final List<_QueueEntry> _queue = [];
   final List<_QueueEntry> _originalOrder = [];
   final Random _random;
+  final Future<QueueItem?> Function(QueueItem)? _localTrackResolver;
   _QueueEntry? _currentEntry;
   _QueueEntry? _lastPlayedEntry;
   PlayerStateService? _pendingPlayer;
@@ -42,7 +43,11 @@ class QueueService extends ChangeNotifier {
   _ScheduledEntry? _scheduled;
   Duration _crossfadeDuration = Duration.zero;
 
-  QueueService({Random? random}) : _random = random ?? Random();
+  QueueService({
+    Random? random,
+    Future<QueueItem?> Function(QueueItem)? localTrackResolver,
+  })  : _random = random ?? Random(),
+        _localTrackResolver = localTrackResolver;
 
   List<QueueItem> get queue =>
       List.unmodifiable(_queue.map((entry) => entry.item));
@@ -169,6 +174,11 @@ class QueueService extends ChangeNotifier {
       _ScheduledEntry pending, PlayerStateService player) async {
     try {
       final entry = pending.entry;
+      if (_localTrackResolver != null) {
+        final local = await _localTrackResolver!(entry.item);
+        if (_disposed || !identical(_scheduled, pending)) return;
+        if (local != null) entry.item = local;
+      }
       var url = entry.item.url;
       if ((url == null || url.isEmpty) && entry.item.filename != null) {
         url =
@@ -628,6 +638,13 @@ class QueueService extends ChangeNotifier {
     _currentEntry = entry;
     notifyListeners();
     try {
+      if (_localTrackResolver != null) {
+        final local = await _localTrackResolver!(entry.item);
+        if (_disposed || request != _playRequest || !_queue.contains(entry)) {
+          return;
+        }
+        if (local != null) entry.item = local;
+      }
       final loader = loadStreamingUrl ?? entry.loader ?? _connectedLoader;
       String? streamingUrl = entry.item.url;
       if ((streamingUrl == null || streamingUrl.isEmpty) &&
@@ -696,6 +713,11 @@ class QueueService extends ChangeNotifier {
     final next = _nextEntry(isAutomatic: true);
     if (next == null || identical(next, _currentEntry)) return;
     try {
+      if (_localTrackResolver != null) {
+        final local = await _localTrackResolver!(next.item);
+        if (_disposed || !_queue.contains(next)) return;
+        if (local != null) next.item = local;
+      }
       final loader = loadStreamingUrl ?? next.loader;
       var streamingUrl = next.item.url;
       if (streamingUrl == null &&

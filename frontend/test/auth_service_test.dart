@@ -15,6 +15,13 @@ http.Response signedIn({String username = 'krizzy', int id = 2}) =>
         }),
         200);
 
+Map<String, Object> cachedSession() => {
+      'auth_token': 'old-token',
+      'auth_user_id': 2,
+      'auth_username': 'krizzy',
+      'auth_tagline': 'Music time',
+    };
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -38,6 +45,7 @@ void main() {
 
     expect(await service.login('krizzy', 'krizzy'), isTrue);
     expect(service.isAuthenticated, isTrue);
+    expect(service.isOfflineSession, isFalse);
     expect(service.userId, 2);
     expect(service.username, 'krizzy');
     expect(service.tagline, 'Music time');
@@ -47,6 +55,7 @@ void main() {
     expect(prefs.getString('auth_token'), 'test-token');
     expect(prefs.getInt('auth_user_id'), 2);
     expect(prefs.getString('auth_username'), 'krizzy');
+    expect(prefs.getString('auth_api_base_url'), 'http://localhost:8123');
   });
 
   test('401 reports bad credentials without exposing backend details',
@@ -163,13 +172,38 @@ void main() {
     expect(service.lastLoginError, isNull);
   });
 
-  test('stored-session validation times out instead of blocking startup',
+  test('offline cold start retains a previously signed-in account', () async {
+    const baseUrl = 'http://localhost:8123';
+    final online = AuthService(
+      apiBaseUrl: baseUrl,
+      client: MockClient((_) async => signedIn()),
+    );
+    expect(await online.login('krizzy', 'krizzy'), isTrue);
+    online.dispose();
+
+    final offline = AuthService(
+      apiBaseUrl: baseUrl,
+      client: MockClient((_) async => throw http.ClientException('No network')),
+    );
+    addTearDown(offline.dispose);
+    await offline.initialize();
+
+    expect(offline.isInitialized, isTrue);
+    expect(offline.isLoading, isFalse);
+    expect(offline.isAuthenticated, isTrue);
+    expect(offline.isOfflineSession, isTrue);
+    expect(offline.token, 'test-token');
+    expect(offline.userId, 2);
+    expect(offline.username, 'krizzy');
+    expect(offline.tagline, 'Music time');
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getString('auth_token'), 'test-token');
+    expect(prefs.getString('auth_api_base_url'), baseUrl);
+  });
+
+  test('stored-session timeout allows offline startup and ignores late success',
       () async {
-    SharedPreferences.setMockInitialValues({
-      'auth_token': 'old-token',
-      'auth_user_id': 2,
-      'auth_username': 'krizzy',
-    });
+    SharedPreferences.setMockInitialValues(cachedSession());
     final pending = Completer<http.Response>();
     final service = AuthService(
       apiBaseUrl: 'http://localhost:8123',
@@ -184,9 +218,227 @@ void main() {
     await service.initialize();
     expect(service.isInitialized, isTrue);
     expect(service.isLoading, isFalse);
-    expect(service.isAuthenticated, isFalse);
-    pending.complete(http.Response('{"id":2,"username":"krizzy"}', 200));
+    expect(service.isAuthenticated, isTrue);
+    expect(service.isOfflineSession, isTrue);
+    pending.complete(http.Response('{"id":3,"username":"other"}', 200));
     await Future<void>.delayed(Duration.zero);
+    expect(service.isAuthenticated, isTrue);
+    expect(service.isOfflineSession, isTrue);
+    expect(service.userId, 2);
+    expect(service.username, 'krizzy');
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getString('auth_token'), 'old-token');
+    expect(prefs.getInt('auth_user_id'), 2);
+  });
+
+  for (final status in [500, 503]) {
+    test('server $status preserves the cached account for offline use',
+        () async {
+      SharedPreferences.setMockInitialValues(cachedSession());
+      final service = AuthService(
+        client: MockClient((_) async => http.Response('Unavailable', status)),
+      );
+      addTearDown(service.dispose);
+      await service.initialize();
+
+      expect(service.isAuthenticated, isTrue);
+      expect(service.isOfflineSession, isTrue);
+      expect(service.userId, 2);
+      expect(service.tagline, 'Music time');
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString('auth_token'), 'old-token');
+    });
+  }
+
+  for (final status in [401, 403]) {
+    test(
+        'server $status revokes the cached session instead of allowing offline',
+        () async {
+      SharedPreferences.setMockInitialValues({
+        ...cachedSession(),
+        'auth_api_base_url': 'http://localhost:8123',
+      });
+      final service = AuthService(
+        apiBaseUrl: 'http://localhost:8123',
+        client: MockClient((_) async => http.Response('Unauthorized', status)),
+      );
+      addTearDown(service.dispose);
+      await service.initialize();
+
+      expect(service.isInitialized, isTrue);
+      expect(service.isAuthenticated, isFalse);
+      expect(service.isOfflineSession, isFalse);
+      expect(service.token, isNull);
+      expect(service.userId, isNull);
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString('auth_token'), isNull);
+      expect(prefs.getInt('auth_user_id'), isNull);
+      expect(prefs.getString('auth_username'), isNull);
+      expect(prefs.getString('auth_tagline'), isNull);
+      expect(prefs.getString('auth_api_base_url'), isNull);
+    });
+  }
+
+  for (final malformed in [
+    'not json',
+    '[]',
+    '{"username":"krizzy"}',
+    '{"id":0,"username":"krizzy"}',
+    '{"id":"2","username":"krizzy"}',
+    '{"id":2,"username":" "}',
+    '{"id":2,"username":"krizzy","tagline":42}',
+  ]) {
+    test('invalid session validation cannot authenticate: $malformed',
+        () async {
+      SharedPreferences.setMockInitialValues(cachedSession());
+      final service = AuthService(
+        client: MockClient((_) async => http.Response(malformed, 200)),
+      );
+      addTearDown(service.dispose);
+      await service.initialize();
+
+      expect(service.isInitialized, isTrue);
+      expect(service.isLoading, isFalse);
+      expect(service.isAuthenticated, isFalse);
+      expect(service.isOfflineSession, isFalse);
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString('auth_token'), isNull);
+    });
+  }
+
+  for (final invalidField in <String, Object?>{
+    'auth_token': ' ',
+    'auth_user_id': 0,
+    'auth_username': '',
+    'auth_tagline': 42,
+  }.entries) {
+    test('invalid cached ${invalidField.key} cannot open offline', () async {
+      SharedPreferences.setMockInitialValues({
+        ...cachedSession(),
+        invalidField.key: invalidField.value!,
+      });
+      var requests = 0;
+      final service = AuthService(client: MockClient((_) async {
+        requests++;
+        throw http.ClientException('No network');
+      }));
+      addTearDown(service.dispose);
+      await service.initialize();
+
+      expect(requests, 0);
+      expect(service.isInitialized, isTrue);
+      expect(service.isAuthenticated, isFalse);
+      expect(service.isOfflineSession, isFalse);
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString('auth_token'), isNull);
+    });
+  }
+
+  for (final missingField in ['auth_token', 'auth_user_id', 'auth_username']) {
+    test('cached session missing $missingField cannot open offline', () async {
+      SharedPreferences.setMockInitialValues(
+          cachedSession()..remove(missingField));
+      final service = AuthService(
+        client:
+            MockClient((_) async => throw http.ClientException('No network')),
+      );
+      addTearDown(service.dispose);
+      await service.initialize();
+
+      expect(service.isInitialized, isTrue);
+      expect(service.isAuthenticated, isFalse);
+      expect(service.isOfflineSession, isFalse);
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString('auth_token'), isNull);
+    });
+  }
+
+  test('a valid online session refreshes profile and binds a legacy server',
+      () async {
+    SharedPreferences.setMockInitialValues(cachedSession());
+    final service = AuthService(
+      apiBaseUrl: 'http://localhost:8123/',
+      client: MockClient((_) async => http.Response(
+          '{"id":2,"username":"updated","tagline":"New tagline"}', 200)),
+    );
+    addTearDown(service.dispose);
+    await service.initialize();
+
+    expect(service.isAuthenticated, isTrue);
+    expect(service.isOfflineSession, isFalse);
+    expect(service.username, 'updated');
+    expect(service.tagline, 'New tagline');
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getString('auth_username'), 'updated');
+    expect(prefs.getString('auth_api_base_url'), 'http://localhost:8123');
+  });
+
+  test('a cached session is never sent to or opened for a different server',
+      () async {
+    SharedPreferences.setMockInitialValues({
+      ...cachedSession(),
+      'auth_api_base_url': 'https://original.example',
+    });
+    var requests = 0;
+    final service = AuthService(
+      apiBaseUrl: 'https://different.example',
+      client: MockClient((_) async {
+        requests++;
+        return http.Response('{"id":2,"username":"krizzy"}', 200);
+      }),
+    );
+    addTearDown(service.dispose);
+    await service.initialize();
+
+    expect(requests, 0);
     expect(service.isAuthenticated, isFalse);
+    expect(service.isOfflineSession, isFalse);
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getString('auth_token'), isNull);
+  });
+
+  for (final action in ['logout', 'unauthorized']) {
+    test('$action clears an offline session and prevents another offline start',
+        () async {
+      SharedPreferences.setMockInitialValues(cachedSession());
+      final client =
+          MockClient((_) async => throw http.ClientException('No network'));
+      final service = AuthService(client: client);
+      addTearDown(service.dispose);
+      await service.initialize();
+      expect(service.isOfflineSession, isTrue);
+
+      if (action == 'logout') {
+        await service.logout();
+      } else {
+        await service.handleUnauthorized();
+      }
+      expect(service.isAuthenticated, isFalse);
+      expect(service.isOfflineSession, isFalse);
+
+      final restarted = AuthService(client: client);
+      addTearDown(restarted.dispose);
+      await restarted.initialize();
+      expect(restarted.isInitialized, isTrue);
+      expect(restarted.isAuthenticated, isFalse);
+      expect(restarted.isOfflineSession, isFalse);
+    });
+  }
+
+  test('signing in online replaces an offline session', () async {
+    SharedPreferences.setMockInitialValues(cachedSession());
+    final service = AuthService(client: MockClient((request) async {
+      if (request.url.path == '/auth/me') {
+        throw http.ClientException('No network');
+      }
+      return signedIn(id: 3, username: 'other');
+    }));
+    addTearDown(service.dispose);
+    await service.initialize();
+    expect(service.isOfflineSession, isTrue);
+    expect(await service.login('other', 'password'), isTrue);
+    expect(service.isOfflineSession, isFalse);
+    expect(service.userId, 3);
+    expect(service.username, 'other');
   });
 }

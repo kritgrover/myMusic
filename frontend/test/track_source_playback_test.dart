@@ -7,6 +7,7 @@ import 'package:music_downloader/services/player_state_service.dart';
 import 'package:music_downloader/services/playlist_service.dart';
 import 'package:music_downloader/services/queue_service.dart';
 import 'package:music_downloader/services/track_playback_helper.dart';
+import 'package:music_downloader/services/offline_download_service.dart';
 
 const chosenUrl = 'https://www.youtube.com/watch?v=bbbbbbbbbbb';
 const spotifyId = '0123456789abcdefghijkl';
@@ -76,7 +77,67 @@ class _Player extends Fake implements PlayerStateService {}
 
 class _Playlists extends Fake implements PlaylistService {}
 
+class _BrowserDownloads extends Fake implements OfflineDownloadService {
+  @override
+  bool get isSupported => false;
+  @override
+  Future<QueueItem?> localQueueItemFor(QueueItem item) async => null;
+}
+
+class _DeviceDownloads extends _BrowserDownloads {
+  bool ready = true;
+  final requested = <QueueItem>[];
+  @override
+  bool get isSupported => true;
+  @override
+  bool get isInitialized => ready;
+  @override
+  Future<void> downloadTrack(QueueItem track,
+      {String? playlistId, String? playlistName}) async {
+    requested.add(track);
+  }
+}
+
 void main() {
+  testWidgets(
+      'native download preserves identity for the device manager and never falls back during startup',
+      (tester) async {
+    late BuildContext context;
+    await tester
+        .pumpWidget(MaterialApp(home: Scaffold(body: Builder(builder: (value) {
+      context = value;
+      return const SizedBox();
+    }))));
+    final api = _Api();
+    final device = _DeviceDownloads()..ready = false;
+    final helper = TrackPlaybackHelper(
+      apiService: api,
+      queueService: _Queue(),
+      playerStateService: _Player(),
+      playlistService: _Playlists(),
+      offlineService: device,
+    );
+    final track = PlaylistTrack(
+      id: spotifyId,
+      title: 'Song',
+      artist: 'Artist',
+      album: 'Album',
+      filename: '',
+      url: chosenUrl,
+      duration: 181,
+    );
+    await helper.download(context, track);
+    expect(device.requested, isEmpty);
+    expect(api.downloadedUrl, isNull);
+    device.ready = true;
+    await helper.download(context, track);
+    expect(device.requested.single.spotifyId, spotifyId);
+    expect(device.requested.single.originalUrl, chosenUrl);
+    expect(device.requested.single.duration, 181);
+    expect(api.identities, isEmpty);
+    await tester.pumpAndSettle();
+  });
+
   testWidgets(
       'play, queue, lazy resume and download use the same selected recording',
       (tester) async {
@@ -92,7 +153,8 @@ void main() {
         apiService: api,
         queueService: queue,
         playerStateService: _Player(),
-        playlistService: _Playlists());
+        playlistService: _Playlists(),
+        offlineService: _BrowserDownloads());
     final track = PlaylistTrack(
         id: spotifyId,
         title: 'Song',

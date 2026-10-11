@@ -6,6 +6,7 @@ import 'api_service.dart';
 import 'media_exceptions.dart';
 import 'scheduled_audio_engine.dart';
 import 'scheduled_audio_factory.dart';
+import 'offline_media_resolver.dart';
 
 typedef MediaUrlResolver = Future<String> Function(String canonicalUrl);
 
@@ -73,7 +74,7 @@ class AudioPlayerService {
       bool useScheduledEngine = true})
       : _first = player ?? AudioPlayer(),
         _second = preloadPlayer ?? AudioPlayer(),
-        _resolveMediaUrl = mediaUrlResolver ?? ApiService().authorizeMediaUrl,
+        _resolveMediaUrl = mediaUrlResolver ?? OfflineMediaResolver().resolve,
         _scheduled = scheduledEngine ??
             (useScheduledEngine ? createScheduledAudioEngine() : null) {
     _active = _first;

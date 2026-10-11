@@ -51,6 +51,9 @@ import 'friends_screen.dart';
 import 'saved_music_screen.dart';
 import '../services/saved_music_service.dart';
 import '../services/playback_session_service.dart';
+import '../services/offline_download_service.dart';
+import '../services/offline_search.dart';
+import 'offline_library_screen.dart';
 
 /// Fires a callback whenever a route is pushed onto the content navigator, used
 /// to dismiss the lyrics overlay so it doesn't hide freshly-opened screens.
@@ -93,7 +96,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   late final RecentlyPlayedService _recentlyPlayedService;
   late final PlayerStateService _playerStateService;
   late final PlaybackSessionService _playbackSession;
-  final QueueService _queueService = QueueService();
+  late final Future<void> _offlineReady;
+  final QueueService _queueService = QueueService(
+      localTrackResolver: OfflineDownloadService.shared.localQueueItemFor);
   final LyricsService _lyricsService = LyricsService();
   bool _showQueuePanel = false;
   bool _showLyrics = false;
@@ -173,8 +178,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    final offlineUserId = widget.authService.userId!;
+    _offlineReady = Future<void>.microtask(() async {
+      if (!mounted || widget.authService.userId != offlineUserId) return;
+      await OfflineDownloadService.shared.initialize(userId: offlineUserId);
+    });
+    if (widget.authService.isOfflineSession) {
+      _currentIndex = 2;
+      _libraryTab = 5;
+    }
     unawaited(SavedMusicService.shared.load().catchError((_) {}));
-    _musicSearch = UnifiedSearchController(userId: widget.authService.userId!)
+    _musicSearch = UnifiedSearchController(
+        userId: widget.authService.userId!, deviceSearch: searchOfflineLibrary)
       ..addListener(_onSearchStateChanged);
     unawaited(_musicSearch.loadHistory());
     _recentlyPlayedService = RecentlyPlayedService(
@@ -263,6 +278,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
     _queueService.addListener(onInteraction);
     _playerStateService.addListener(onPlayerInteraction);
+    await _offlineReady;
+    if (!mounted) return;
     final snapshot = await _playbackSession.load();
     _queueService.removeListener(onInteraction);
     _playerStateService.removeListener(onPlayerInteraction);
@@ -735,6 +752,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         queueService: _queueService,
         recentlyPlayedService: _recentlyPlayedService,
       );
+    } else if (_libraryTab == 5) {
+      body = OfflineLibraryScreen(
+        playerStateService: _playerStateService,
+        queueService: _queueService,
+        onRetryInitialization: () => OfflineDownloadService.shared
+            .initialize(userId: widget.authService.userId!),
+      );
     } else {
       body = SavedMusicScreen(
         key: ValueKey('saved_music_$_libraryTab'),
@@ -785,10 +809,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               children: [
                 for (final entry in const [
                   'Playlists',
-                  'Downloads',
+                  'Server files',
                   'Liked Songs',
                   'Albums',
-                  'Artists'
+                  'Artists',
+                  'On this device'
                 ].asMap().entries)
                   Padding(
                     padding: const EdgeInsets.only(right: 8),
@@ -1517,6 +1542,24 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       String? trackArtist,
       String? url,
       required RecentlyPlayedItem item}) async {
+    final local = await OfflineDownloadService.shared.localQueueItemFor(
+      QueueItem(
+        id: item.id,
+        title: trackName ?? item.title,
+        artist: trackArtist ?? item.artist,
+        album: item.album,
+        duration: item.duration,
+        spotifyId: item.spotifyId,
+        originalUrl: url ?? item.url,
+        filename: item.filename,
+        url: streamingUrl,
+      ),
+    );
+    if (local != null) {
+      _queueService.clearQueue();
+      await _queueService.addAndPlay(local, _playerStateService);
+      return local.originalUrl ?? url ?? item.url ?? streamingUrl;
+    }
     final source = await _apiService.resolveToYouTubeUrl(
       url,
       trackName ?? item.title,
@@ -2067,6 +2110,22 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       return;
     }
 
+    if (OfflineDownloadService.shared.isSupported) {
+      await _searchPlayback.download(
+          context,
+          PlaylistTrack(
+            id: currentItem.spotifyId ?? currentItem.id,
+            title: currentItem.displayTitle,
+            artist: currentItem.artist,
+            album: currentItem.album,
+            filename: currentItem.filename ?? '',
+            url: currentItem.originalUrl,
+            thumbnail: currentItem.thumbnail,
+            duration: currentItem.duration,
+          ));
+      return;
+    }
+
     try {
       showDialog(
         context: context,
@@ -2227,6 +2286,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _downloadRecommendedVideo(VideoInfo video) async {
+    if (OfflineDownloadService.shared.isSupported) {
+      await _searchPlayback.download(
+          context, PlaylistTrack.fromVideoInfo(video));
+      return;
+    }
     if ((video.filename ?? '').isNotEmpty) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
@@ -2289,6 +2353,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _downloadVideo(VideoInfo video) async {
+    if (OfflineDownloadService.shared.isSupported) {
+      await _searchPlayback.download(
+          context, PlaylistTrack.fromVideoInfo(video));
+      return;
+    }
     try {
       showDialog(
         context: context,

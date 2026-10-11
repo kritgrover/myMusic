@@ -7,6 +7,7 @@ import '../services/playlist_service.dart';
 import '../services/api_service.dart';
 import '../services/auth_http_client.dart';
 import '../services/queue_service.dart';
+import '../services/offline_download_service.dart';
 import '../services/recently_played_service.dart';
 import '../models/playlist.dart';
 import '../models/queue_item.dart';
@@ -27,6 +28,7 @@ class PlaylistDetailScreen extends StatefulWidget {
   final PlaylistService playlistService;
   final dynamic playerStateService; // Optional, for playing tracks
   final QueueService? queueService;
+  final OfflineDownloadService? offlineService;
   final RecentlyPlayedService?
       recentlyPlayedService; // Optional, for tracking play history
   final VoidCallback? onBack; // Callback to return to playlists list
@@ -39,6 +41,7 @@ class PlaylistDetailScreen extends StatefulWidget {
     required this.playlistService,
     this.playerStateService,
     this.queueService,
+    this.offlineService,
     this.recentlyPlayedService,
     this.onBack,
     this.onDownloadStart,
@@ -56,6 +59,25 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
   final ApiService _apiService = ApiService();
   final Map<String, String> _confirmedDownloads = {};
   int _loadRequestId = 0;
+  OfflineDownloadService get _offline =>
+      widget.offlineService ?? OfflineDownloadService.shared;
+
+  Future<void> _downloadOffline() async {
+    if (_playlist.tracks.isEmpty) return;
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+      content: Text(
+          'Saving this playlist on your device. See Offline library for progress.'),
+    ));
+    try {
+      await _offline.downloadPlaylist(_playlist);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+            content: Text('Could not download playlist for offline: $error')),
+      );
+    }
+  }
 
   @override
   void initState() {
@@ -670,7 +692,8 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: const Text('All tracks are already downloaded'),
+            content:
+                const Text('All tracks are already available on the server'),
             behavior: SnackBarBehavior.floating,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(8),
@@ -685,9 +708,10 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Download Tracks'),
+        title: const Text('Prepare tracks on server'),
         content: Text(
-          'Download ${tracksToDownload.length} ${tracksToDownload.length == 1 ? 'track' : 'tracks'}?',
+          'Download ${tracksToDownload.length} ${tracksToDownload.length == 1 ? 'track' : 'tracks'} to your server? '
+          'Use Download for offline to save a copy on this device.',
         ),
         actions: [
           TextButton(
@@ -1130,14 +1154,19 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                         onPressed: widget.onBack,
                         tooltip: 'Back to playlists',
                       ),
-                    _PlaylistCoverWidget(
-                      coverImageUrl: _getCoverImageUrl(),
-                      primaryColor: primaryColor,
-                      onTap: _editPlaylistCover,
-                    ),
-                    SizedBox(
-                        width: ResponsiveUtils.responsiveValue<double>(context,
-                            compact: 12, medium: 16, expanded: 20)),
+                    if (!ResponsiveUtils.isCompact(context)) ...[
+                      _PlaylistCoverWidget(
+                        coverImageUrl: _getCoverImageUrl(),
+                        primaryColor: primaryColor,
+                        onTap: _editPlaylistCover,
+                      ),
+                      SizedBox(
+                          width: ResponsiveUtils.responsiveValue<double>(
+                              context,
+                              compact: 12,
+                              medium: 16,
+                              expanded: 20)),
+                    ],
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1146,6 +1175,14 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                           // Title row
                           Row(
                             children: [
+                              if (ResponsiveUtils.isCompact(context)) ...[
+                                _PlaylistCoverWidget(
+                                  coverImageUrl: _getCoverImageUrl(),
+                                  primaryColor: primaryColor,
+                                  onTap: _editPlaylistCover,
+                                ),
+                                const SizedBox(width: 12),
+                              ],
                               Expanded(
                                 child: Text(
                                   _playlist.name,
@@ -1228,7 +1265,8 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                                         icon: const Icon(Icons.download,
                                             size: 20),
                                         onPressed: _downloadUndownloadedTracks,
-                                        tooltip: 'Download undownloaded tracks',
+                                        tooltip:
+                                            'Prepare missing tracks on server',
                                       ),
                                     ],
                                   ),
@@ -1236,14 +1274,34 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                               ),
                             ],
                           ),
+                          if (_offline.isSupported) ...[
+                            const SizedBox(height: 8),
+                            AnimatedBuilder(
+                              animation: _offline,
+                              builder: (context, _) => OutlinedButton.icon(
+                                onPressed: _offline.isInitialized &&
+                                        _playlist.tracks.isNotEmpty
+                                    ? _downloadOffline
+                                    : null,
+                                icon: const Icon(
+                                    Icons.download_for_offline_outlined,
+                                    size: 20),
+                                label: const Text('Download for offline'),
+                              ),
+                            ),
+                          ],
                           const SizedBox(height: 10),
                           // Play / Shuffle (left) + Sort by (right)
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          Wrap(
+                            spacing: 16,
+                            runSpacing: 8,
+                            crossAxisAlignment: WrapCrossAlignment.center,
                             children: [
                               if (widget.queueService != null &&
                                   widget.playerStateService != null)
-                                Row(
+                                Wrap(
+                                  spacing: 8,
+                                  runSpacing: 8,
                                   children: [
                                     FilledButton.icon(
                                       onPressed: _playPlaylist,
@@ -1263,7 +1321,6 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                                             fontWeight: FontWeight.w600),
                                       ),
                                     ),
-                                    const SizedBox(width: 8),
                                     OutlinedButton.icon(
                                       onPressed: _shufflePlaylistToQueue,
                                       style: OutlinedButton.styleFrom(
@@ -1488,8 +1545,8 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                                                       track))
                                                     const PopupMenuItem(
                                                         value: 'download',
-                                                        child:
-                                                            Text('Download')),
+                                                        child: Text(
+                                                            'Download to server')),
                                                   const PopupMenuItem(
                                                       value: 'remove',
                                                       child: Text(
@@ -1520,7 +1577,8 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                                                         size: 20,
                                                       ),
                                                       onPressed: null,
-                                                      tooltip: 'Downloaded',
+                                                      tooltip:
+                                                          'Available on server',
                                                     )
                                                   : IconButton(
                                                       icon: const Icon(
@@ -1529,7 +1587,8 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                                                           size: 20),
                                                       onPressed: () =>
                                                           _downloadTrack(track),
-                                                      tooltip: 'Download',
+                                                      tooltip:
+                                                          'Download to server',
                                                     ),
                                             // Delete button
                                             if (MediaQuery.sizeOf(context)

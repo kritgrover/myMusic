@@ -17,12 +17,14 @@ class UnifiedSearchController extends ChangeNotifier {
     String? baseUrl,
     Future<SearchResults> Function(String)? search,
     Future<SearchResults> Function(String)? librarySearch,
+    SearchResults Function(String)? deviceSearch,
     this.debounce = const Duration(milliseconds: 350),
   })  : _search = search ?? UnifiedSearchService(baseUrl: baseUrl).search,
         _librarySearch = librarySearch ??
             (search == null
                 ? UnifiedSearchService(baseUrl: baseUrl).searchLibrary
                 : null),
+        _deviceSearch = deviceSearch,
         _historyKey = historyKey(userId, baseUrl ?? AppConfig.apiBaseUrl);
 
   static String historyKey(int userId, String baseUrl) =>
@@ -30,6 +32,7 @@ class UnifiedSearchController extends ChangeNotifier {
 
   final Future<SearchResults> Function(String) _search;
   final Future<SearchResults> Function(String)? _librarySearch;
+  final SearchResults Function(String)? _deviceSearch;
   final String _historyKey;
   final Duration debounce;
   Timer? _timer;
@@ -130,7 +133,7 @@ class UnifiedSearchController extends ChangeNotifier {
     _timer?.cancel();
     _generation++;
     query = value.trim();
-    results = const SearchResults();
+    results = _withDeviceResults(const SearchResults(), query);
     isSearching = query.isNotEmpty;
     hasSearched = false;
     error = null;
@@ -142,7 +145,7 @@ class UnifiedSearchController extends ChangeNotifier {
     try {
       final response = await _search(text);
       if (_disposed || request != _generation) return;
-      results = response;
+      results = _withDeviceResults(response, text);
     } catch (_) {
       await local;
       if (_disposed || request != _generation) return;
@@ -168,11 +171,34 @@ class UnifiedSearchController extends ChangeNotifier {
     try {
       final local = await _librarySearch!(text);
       if (_disposed || request != _generation || !isSearching) return;
-      results = local;
+      results = _withDeviceResults(local, text);
       notifyListeners();
     } catch (_) {
       // The combined response supplies a library warning or a second attempt.
     }
+  }
+
+  SearchResults _withDeviceResults(SearchResults remote, String text) {
+    final device = _deviceSearch?.call(text);
+    if (device == null || device.isEmpty) return remote;
+    final filenames = device.library
+        .map((entry) => entry.data['filename'])
+        .whereType<String>()
+        .where((value) => value.isNotEmpty)
+        .toSet();
+    return SearchResults(
+      songs: remote.songs,
+      artists: remote.artists,
+      albums: remote.albums,
+      playlists: remote.playlists,
+      library: [
+        ...device.library,
+        ...remote.library
+            .where((entry) => !filenames.contains(entry.data['filename'])),
+      ],
+      suggestions: remote.suggestions,
+      warnings: remote.warnings,
+    );
   }
 
   @override

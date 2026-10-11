@@ -23,6 +23,60 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
+  test('device library appears immediately and survives both remote failures',
+      () async {
+    final remote = Completer<SearchResults>();
+    final state = UnifiedSearchController(
+      userId: 1,
+      search: (_) => remote.future,
+      librarySearch: (_) async => throw StateError('offline'),
+      deviceSearch: (_) => const SearchResults(library: [
+        SearchEntry({
+          'id': 'local',
+          'title': 'Saved offline',
+          'filename': 'song.m4a',
+          'library_origin': 'device',
+        })
+      ]),
+    );
+    addTearDown(state.dispose);
+    final pending = state.searchNow('Saved');
+    expect(state.results.library.single.origin, 'device');
+    remote.completeError(StateError('offline'));
+    await pending;
+    expect(state.results.library.single.title, 'Saved offline');
+    expect(state.error, isNull);
+    expect(state.isSearching, isFalse);
+  });
+
+  test(
+      'online results retain device availability without duplicate server files',
+      () async {
+    final state = UnifiedSearchController(
+      userId: 1,
+      search: (_) async => const SearchResults(
+        songs: [
+          SearchEntry({'title': 'Catalog song'})
+        ],
+        library: [
+          SearchEntry({'id': 'server', 'filename': 'song.m4a'})
+        ],
+      ),
+      deviceSearch: (_) => const SearchResults(library: [
+        SearchEntry({
+          'id': 'local',
+          'title': 'Saved offline',
+          'filename': 'song.m4a',
+          'library_origin': 'device',
+        })
+      ]),
+    );
+    addTearDown(state.dispose);
+    await state.searchNow('Saved');
+    expect(state.results.library.single.origin, 'device');
+    expect(state.results.songs.single.title, 'Catalog song');
+  });
+
   test('saved library search preserves original catalog recording identity',
       () {
     const saved = SearchEntry({
