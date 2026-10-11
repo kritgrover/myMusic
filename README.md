@@ -65,7 +65,19 @@ A full-stack application for searching YouTube, downloading music, playing audio
   - Add individual tracks or entire playlists to queue
   - Shuffle playlists before adding to queue
   - Auto-play next track in queue
+  - Shuffle upcoming tracks without interrupting playback, restore their order, and drag to reorder
+  - Repeat all or repeat one; manual Next still advances when repeat one is enabled
+  - Clear upcoming tracks while keeping the current song
+  - Previous restarts the current song after three seconds
 - 📄 **CSV Import**: Import playlists from CSV files with automatic YouTube search
+
+### Library and Player Experience
+- Responsive now-playing controls, seek bar, mute with volume restoration, and a compact queue overlay
+- Search as you type, with retry and protection against stale search results
+- Search your playlists by playlist name, song title, or artist; sort by recent update, name, or track count
+- Saved playlist shortcuts on Home, including when recommendations are unavailable
+- `Ctrl+K` / `Cmd+K` focuses music search
+- Safe download matching preserves stored playlist tracks and order
 
 ### Spotify Integration & Recommendations
 - 🎯 **Songs for You**: Personalized recommendations based on your listening history
@@ -103,7 +115,16 @@ pip install -r requirements.txt
 - **macOS**: `brew install ffmpeg`
 - **Linux**: `sudo apt-get install ffmpeg`
 
-4. Configure Spotify API (optional, for recommendations):
+4. Configure authentication (required):
+   - Generate a random signing secret:
+   ```bash
+   python -c "import secrets; print(secrets.token_urlsafe(48))"
+   ```
+   - Save it in `backend/.env` or the process environment as `JWT_SECRET_KEY`.
+   - Keep the same secret between restarts. Changing it invalidates existing sessions.
+   - Startup rejects missing, blank, or known-default secrets.
+
+5. Configure Spotify API (optional, for recommendations):
    - Go to [Spotify Developer Dashboard](https://developer.spotify.com/dashboard)
    - Create a new application
    - Copy your Client ID and Client Secret
@@ -113,12 +134,17 @@ pip install -r requirements.txt
    CLIENT_SECRET=your_spotify_client_secret_here
    ```
 
-5. Run the server:
+6. Run the server:
 ```bash
 python app.py
 ```
 
 The API will be available at `http://localhost:8000`
+
+The default SQLite database is always `backend/music_app.db`, even when the
+server is launched from another directory. Set `DATABASE_URL` to use another
+SQLite database, preferably an absolute URL such as
+`sqlite:///E:/myMusic/backend/music_app.db` on Windows.
 
 ### Frontend Setup
 
@@ -135,6 +161,12 @@ flutter pub get
 3. Run the app:
 ```bash
 flutter run
+```
+
+For a local browser session:
+
+```bash
+flutter run -d web-server --web-hostname 127.0.0.1 --web-port 8080
 ```
 
 ## Configuration
@@ -213,7 +245,7 @@ CLIENT_SECRET=your_client_secret
 ## Requirements
 
 ### Backend
-- Python 3.8+
+- Python 3.10+ (required by yt-dlp)
 - yt-dlp
 - ffmpeg
 - FastAPI
@@ -241,6 +273,34 @@ CLIENT_SECRET=your_client_secret
 - Synced lyrics (LRC format) enable real-time highlighting and click-to-seek functionality
 
 ## Troubleshooting
+
+### Verification
+
+Run the backend regression suite from the repository root:
+
+```bash
+python -m unittest discover -s backend/tests -v
+```
+
+The backend tests use temporary databases and media files and replace external
+service configuration; they do not read or modify your personal library or `.env`.
+For a temporary UI test library, run `python backend/tests/demo_server.py` and
+sign in with `demo` / `demo-only`. This local test server disables external music
+services and deletes its temporary database on shutdown. It is intended for
+navigation and layout checks, not Spotify or YouTube playback validation.
+
+Run frontend checks from `frontend/`:
+
+```bash
+flutter test
+flutter analyze
+flutter build web
+```
+
+Download matching in playlist details is deliberately non-destructive: it links
+available files in the current view using exact, unambiguous metadata. It does
+not delete/re-add stored tracks. Persisting verified links through an atomic
+track-update endpoint remains future work.
 
 ### Backend Issues
 
