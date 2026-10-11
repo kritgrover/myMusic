@@ -373,6 +373,33 @@ void main() {
         isNull);
   });
 
+  test('job lookup isolates a corrected recording from an earlier failure',
+      () async {
+    final offline = service();
+    await offline.initialize(userId: 1, baseUrl: backend);
+    final original =
+        QueueItem(id: 'same-track', originalUrl: youtube, spotifyId: spotify);
+    final corrected = QueueItem(
+        id: 'same-track', originalUrl: otherYoutube, spotifyId: spotify);
+    api.preparation = Future.value(DownloadResult(
+        success: false,
+        filePath: '',
+        filename: '',
+        title: '',
+        artist: '',
+        album: ''));
+    await offline.downloadTrack(original);
+    expect(offline.jobFor(original)?.status, OfflineDownloadStatus.failed);
+    expect(offline.jobFor(corrected), isNull);
+
+    api.preparation = null;
+    api.source = otherYoutube;
+    await offline.downloadTrack(corrected);
+    expect(offline.jobFor(corrected)?.status, OfflineDownloadStatus.complete);
+    expect(offline.jobFor(original)?.status, OfflineDownloadStatus.failed);
+    expect(offline.tracks.single.originalUrl, otherYoutube);
+  });
+
   test('rejects truncated transfer and retries without listing the partial',
       () async {
     var broken = true;

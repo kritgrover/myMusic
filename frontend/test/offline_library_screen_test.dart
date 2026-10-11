@@ -34,6 +34,9 @@ class _Offline extends ChangeNotifier implements OfflineDownloadService {
       missingFile ? null : item;
 
   @override
+  OfflineDownloadJob? jobFor(QueueItem item) => null;
+
+  @override
   dynamic noSuchMethod(Invocation invocation) {
     if (invocation.memberName == #remove) {
       final id = invocation.positionalArguments.single as String;
@@ -238,13 +241,36 @@ void main() {
     ))));
     await tester.pump();
     expect(find.text('Saving on this device · 50%'), findsOneWidget);
-    expect(find.text('Connection interrupted'), findsOneWidget);
+    expect(
+        find.text(
+            'The connection was interrupted. Check your connection and retry.'),
+        findsOneWidget);
     await tester.tap(find.byTooltip('Cancel download'));
     await tester.tap(find.widgetWithText(TextButton, 'Retry'));
     await tester.pump();
     expect(offline.cancelled, ['active']);
     expect(offline.retried, ['failed']);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('failed downloads show a readable reason without provider logs',
+      (tester) async {
+    const rawError =
+        r'ERROR: ffmpeg failed at C:\private\audio.part?token=private-token';
+    offline.lastError = rawError;
+    offline.jobs = [
+      OfflineDownloadJob(
+        id: 'failed',
+        track: QueueItem(id: 'a', title: 'Failed song'),
+        status: OfflineDownloadStatus.failed,
+        error: rawError,
+      ),
+    ];
+    await show(tester);
+    expect(find.text('The server could not convert the audio. Please retry.'),
+        findsWidgets);
+    expect(find.textContaining('private'), findsNothing);
+    expect(find.widgetWithText(TextButton, 'Retry'), findsOneWidget);
   });
 
   testWidgets('missing local file never starts playback', (tester) async {
@@ -323,7 +349,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(offline.downloadedPlaylists.single.id, 'evening');
     expect(offline.downloadedPlaylists.single.tracks.single.filename, 'a.m4a');
-    expect(find.byTooltip('Prepare missing tracks on server'), findsOneWidget);
+    expect(find.byTooltip('Download playlist for offline'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
