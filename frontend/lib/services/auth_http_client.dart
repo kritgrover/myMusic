@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import '../config.dart';
 
 typedef AuthTokenProvider = String? Function();
 typedef UnauthorizedCallback = Future<void> Function();
@@ -18,6 +19,24 @@ class AuthHttpClient {
   }) {
     _tokenProvider = tokenProvider;
     _unauthorizedCallback = onUnauthorized;
+  }
+
+  /// Artwork on other hosts must never receive the user's backend token.
+  Map<String, String> authHeadersForUrl(String url) {
+    final target = Uri.tryParse(url);
+    final backend = Uri.tryParse(AppConfig.apiBaseUrl);
+    if (target == null ||
+        backend == null ||
+        !target.hasAuthority ||
+        !backend.hasAuthority ||
+        target.userInfo.isNotEmpty ||
+        (target.scheme != 'http' && target.scheme != 'https') ||
+        target.scheme != backend.scheme ||
+        target.host != backend.host ||
+        target.port != backend.port) {
+      return const {};
+    }
+    return _headers(null);
   }
 
   Map<String, String> _headers(Map<String, String>? headers) {
@@ -41,25 +60,32 @@ class AuthHttpClient {
     return response;
   }
 
-  Future<http.Response> post(Uri url, {Map<String, String>? headers, Object? body, Encoding? encoding}) async {
-    final response = await http.post(url, headers: _headers(headers), body: body, encoding: encoding);
+  Future<http.Response> post(Uri url,
+      {Map<String, String>? headers, Object? body, Encoding? encoding}) async {
+    final response = await http.post(url,
+        headers: _headers(headers), body: body, encoding: encoding);
     await _handleUnauthorized(response);
     return response;
   }
 
-  Future<http.Response> put(Uri url, {Map<String, String>? headers, Object? body, Encoding? encoding}) async {
-    final response = await http.put(url, headers: _headers(headers), body: body, encoding: encoding);
+  Future<http.Response> put(Uri url,
+      {Map<String, String>? headers, Object? body, Encoding? encoding}) async {
+    final response = await http.put(url,
+        headers: _headers(headers), body: body, encoding: encoding);
     await _handleUnauthorized(response);
     return response;
   }
 
-  Future<http.Response> delete(Uri url, {Map<String, String>? headers, Object? body, Encoding? encoding}) async {
-    final response = await http.delete(url, headers: _headers(headers), body: body, encoding: encoding);
+  Future<http.Response> delete(Uri url,
+      {Map<String, String>? headers, Object? body, Encoding? encoding}) async {
+    final response = await http.delete(url,
+        headers: _headers(headers), body: body, encoding: encoding);
     await _handleUnauthorized(response);
     return response;
   }
 
-  http.MultipartRequest multipartRequest(String method, Uri url, {Map<String, String>? headers}) {
+  http.MultipartRequest multipartRequest(String method, Uri url,
+      {Map<String, String>? headers}) {
     final request = http.MultipartRequest(method, url);
     request.headers.addAll(_headers(headers));
     return request;

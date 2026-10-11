@@ -37,6 +37,7 @@ class _PlaylistSelectionDialogState extends State<PlaylistSelectionDialog> {
 
     try {
       final playlists = await widget.playlistService.getAllPlaylists();
+      if (!mounted) return;
       // Check which playlists already contain this track
       final Set<String> existingPlaylistIds = {};
       for (var playlist in playlists) {
@@ -56,6 +57,7 @@ class _PlaylistSelectionDialogState extends State<PlaylistSelectionDialog> {
         _isLoading = false;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _isLoading = false;
       });

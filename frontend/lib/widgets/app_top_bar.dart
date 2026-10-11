@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 /// Search — focusing it routes to the Search destination.
 class AppTopBar extends StatelessWidget {
   final TextEditingController searchController;
+  final FocusNode? searchFocusNode;
   final VoidCallback onSearchTap;
   final ValueChanged<String> onSearchSubmitted;
   final ValueChanged<String> onSearchChanged;
@@ -17,6 +18,7 @@ class AppTopBar extends StatelessWidget {
   const AppTopBar({
     super.key,
     required this.searchController,
+    this.searchFocusNode,
     required this.onSearchTap,
     required this.onSearchSubmitted,
     required this.onSearchChanged,
@@ -36,13 +38,16 @@ class AppTopBar extends StatelessWidget {
           Expanded(
             child: TextField(
               controller: searchController,
+              focusNode: searchFocusNode,
               onTap: onSearchTap,
               onSubmitted: onSearchSubmitted,
               onChanged: onSearchChanged,
               textInputAction: TextInputAction.search,
               decoration: InputDecoration(
                 isDense: true,
-                hintText: 'Search for a song, artist or album',
+                hintText: MediaQuery.sizeOf(context).width < 600
+                    ? 'What do you want to play?'
+                    : 'Search for a song, artist or album',
                 prefixIcon: const Icon(Icons.search, size: 20),
                 suffixIcon: searchController.text.isNotEmpty
                     ? IconButton(
@@ -54,7 +59,8 @@ class AppTopBar extends StatelessWidget {
                         },
                       )
                     : null,
-                contentPadding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                contentPadding:
+                    const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(24),
                   borderSide: BorderSide.none,
@@ -130,16 +136,28 @@ class _AccountMenu extends StatelessWidget {
         if (name.isNotEmpty) const PopupMenuDivider(),
         const PopupMenuItem(
           value: 'profile',
-          child: Row(children: [Icon(Icons.person_outline, size: 20), SizedBox(width: 12), Text('Profile')]),
+          child: Row(children: [
+            Icon(Icons.person_outline, size: 20),
+            SizedBox(width: 12),
+            Text('Profile')
+          ]),
         ),
         const PopupMenuItem(
           value: 'friends',
-          child: Row(children: [Icon(Icons.people_outline, size: 20), SizedBox(width: 12), Text('Friends')]),
+          child: Row(children: [
+            Icon(Icons.people_outline, size: 20),
+            SizedBox(width: 12),
+            Text('Friends')
+          ]),
         ),
         const PopupMenuDivider(),
         const PopupMenuItem(
           value: 'logout',
-          child: Row(children: [Icon(Icons.logout, size: 20), SizedBox(width: 12), Text('Log out')]),
+          child: Row(children: [
+            Icon(Icons.logout, size: 20),
+            SizedBox(width: 12),
+            Text('Log out')
+          ]),
         ),
       ],
       child: Container(
@@ -152,8 +170,14 @@ class _AccountMenu extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (name.isNotEmpty) ...[
-              Text(name, style: Theme.of(context).textTheme.labelMedium),
+            if (name.isNotEmpty && MediaQuery.sizeOf(context).width >= 600) ...[
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 120),
+                child: Text(name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.labelMedium),
+              ),
               const SizedBox(width: 6),
             ],
             CircleAvatar(
@@ -161,7 +185,10 @@ class _AccountMenu extends StatelessWidget {
               backgroundColor: scheme.primary,
               child: Text(
                 letter,
-                style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600),
+                style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600),
               ),
             ),
           ],

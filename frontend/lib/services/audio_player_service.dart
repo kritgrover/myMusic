@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:just_audio/just_audio.dart';
 import '../config.dart';
 
@@ -10,20 +11,39 @@ enum PlayerState {
 }
 
 class AudioPlayerService {
-  AudioPlayer _audioPlayer = AudioPlayer();
-  AudioPlayer _preloadPlayer = AudioPlayer();
+  final AudioPlayer _audioPlayer;
+  final AudioPlayer _preloadPlayer;
+  final StreamController<String> _errors = StreamController<String>.broadcast();
+  int _playRequest = 0;
+  bool _disposed = false;
   String? _currentUrl;
   String? _preloadedUrl;
-  
+
   AudioPlayer get player => _audioPlayer;
-  
-  AudioPlayerService() {
+
+  AudioPlayerService({AudioPlayer? player, AudioPlayer? preloadPlayer})
+      : _audioPlayer = player ?? AudioPlayer(),
+        _preloadPlayer = preloadPlayer ?? AudioPlayer();
+
+  Stream<String> get errorStream => _errors.stream;
+
+  /// Invalidate an in-flight source load without stopping the current song.
+  void cancelPendingPlayback() => ++_playRequest;
+
+  void _startPlayback() {
+    final request = _playRequest;
+    // just_audio's play() future lasts until pause/stop/completion. Waiting for
+    // it here would lock queue transitions for the entire duration of a song.
+    unawaited(_audioPlayer.play().catchError((Object error) {
+      if (!_disposed && request == _playRequest) {
+        _errors.add('Could not play audio: $error');
+      }
+    }));
   }
-  
+
   Future<void> playFromUrl(String url) async {
+    final request = ++_playRequest;
     try {
-      _currentUrl = url;
-      
       // If this URL is already preloaded, load from cache
       if (_preloadedUrl == url) {
         final preloadState = _preloadPlayer.processingState;
@@ -34,14 +54,16 @@ class AudioPlayerService {
           _preloadPlayer.stop().catchError((_) {});
         }
       }
-      
+
       await _audioPlayer.setUrl(url);
-      await _audioPlayer.play();
+      if (_disposed || request != _playRequest) return;
+      _currentUrl = url;
+      _startPlayback();
     } catch (e) {
       throw Exception('Failed to play audio: $e');
     }
   }
-  
+
   // Preload the next song URL
   Future<void> preloadUrl(String url) async {
     try {
@@ -49,7 +71,7 @@ class AudioPlayerService {
       if (url == _currentUrl || url == _preloadedUrl) {
         return;
       }
-      
+
       // Clear any existing preload
       if (_preloadedUrl != null) {
         try {
@@ -58,7 +80,7 @@ class AudioPlayerService {
           // Ignore errors
         }
       }
-      
+
       _preloadedUrl = url;
       // Preload the URL - setUrl() starts loading in the background
       await _preloadPlayer.setUrl(url);
@@ -67,7 +89,7 @@ class AudioPlayerService {
       _preloadedUrl = null;
     }
   }
-  
+
   // Clear preloaded song
   Future<void> clearPreload() async {
     _preloadedUrl = null;
@@ -77,9 +99,9 @@ class AudioPlayerService {
       // Ignore errors
     }
   }
-  
+
   String? get preloadedUrl => _preloadedUrl;
-  
+
   Future<void> playFromFile(String filePath) async {
     try {
       // For URLs, use playFromUrl
@@ -87,7 +109,7 @@ class AudioPlayerService {
         await playFromUrl(filePath);
         return;
       }
-      
+
       // For local files, we'll serve them via the backend
       // Convert to backend URL
       final encodedFilename = Uri.encodeComponent(filePath);
@@ -97,27 +119,31 @@ class AudioPlayerService {
       throw Exception('Failed to play file: $e');
     }
   }
-  
+
   Future<void> playFromBackend(String filename) async {
     // Play from backend server
     final encodedFilename = Uri.encodeComponent(filename);
     final url = '${AppConfig.apiBaseUrl}/downloads/$encodedFilename';
     await playFromUrl(url);
   }
-  
+
   Future<void> pause() async {
     await _audioPlayer.pause();
   }
-  
+
   Future<void> resume() async {
-    await _audioPlayer.play();
+    if (_audioPlayer.processingState == ProcessingState.completed) {
+      await _audioPlayer.seek(Duration.zero);
+    }
+    _startPlayback();
   }
-  
+
   Future<void> stop() async {
+    ++_playRequest;
     await _audioPlayer.stop();
     _currentUrl = null;
   }
-  
+
   Future<void> seek(Duration position) async {
     try {
       await _audioPlayer.seek(position);
@@ -125,48 +151,61 @@ class AudioPlayerService {
       // Ignore seek errors
     }
   }
-  
-  bool get isPlaying => _audioPlayer.playing;
+
+  bool get isPlaying =>
+      _audioPlayer.playing &&
+      _audioPlayer.processingState != ProcessingState.completed &&
+      _audioPlayer.processingState != ProcessingState.idle;
   Duration get duration => _audioPlayer.duration ?? Duration.zero;
   Duration get position => _audioPlayer.position;
   String? get currentUrl => _currentUrl;
-  
+
   // Streams for listening to changes
   Stream<Duration> get positionStream => _audioPlayer.positionStream;
   Stream<Duration?> get durationStream => _audioPlayer.durationStream;
-  
+
   // Map just_audio's player state to our PlayerState enum
-  Stream<PlayerState> get stateStream => _audioPlayer.playerStateStream.map((state) {
-    if (state.playing) {
-      return PlayerState.playing;
-    }
-    if (state.processingState == ProcessingState.loading || 
-        state.processingState == ProcessingState.buffering) {
-      return PlayerState.buffering;
-    }
-    if (state.processingState == ProcessingState.ready) {
-      return PlayerState.paused;
-    }
-    return PlayerState.stopped;
-  });
+  Stream<PlayerState> get stateStream =>
+      _audioPlayer.playerStateStream.map((state) {
+        if (state.processingState == ProcessingState.loading ||
+            state.processingState == ProcessingState.buffering) {
+          return PlayerState.buffering;
+        }
+        if (state.processingState == ProcessingState.completed ||
+            state.processingState == ProcessingState.idle) {
+          return PlayerState.stopped;
+        }
+        if (state.playing) {
+          return PlayerState.playing;
+        }
+        if (state.processingState == ProcessingState.ready) {
+          return PlayerState.paused;
+        }
+        return PlayerState.stopped;
+      });
 
   // Stream that emits when a song completes
   // This stream always listens to the current main player
   Stream<void> get completionStream {
     // Create a stream that listens to the current player
     return _audioPlayer.playerStateStream
-        .where((state) => state.processingState == ProcessingState.completed)
+        .map((state) => state.processingState)
+        .distinct()
+        .where((state) => state == ProcessingState.completed)
         .map((_) => null);
   }
-  
+
   // Get buffering state
   bool get isBuffering {
     final state = _audioPlayer.playerState;
-    return state.processingState == ProcessingState.loading || 
-           state.processingState == ProcessingState.buffering;
+    return state.processingState == ProcessingState.loading ||
+        state.processingState == ProcessingState.buffering;
   }
-  
+
   void dispose() {
+    _disposed = true;
+    ++_playRequest;
+    _errors.close();
     _audioPlayer.dispose();
     _preloadPlayer.dispose();
   }

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'dart:async';
 import '../utils/responsive_utils.dart';
 import 'downloads_screen.dart';
@@ -23,6 +24,8 @@ import '../models/queue_item.dart';
 import '../models/playlist.dart';
 import '../services/recommendation_service.dart';
 import '../services/auth_service.dart';
+import '../services/search_controller.dart';
+import '../services/auth_http_client.dart';
 import '../models/discovery.dart';
 import '../widgets/horizontal_song_list.dart';
 import '../widgets/horizontal_card_row.dart';
@@ -69,14 +72,17 @@ class _HomeScreenState extends State<HomeScreen> {
   // Nested navigator for the center content pane, so secondary screens (genre,
   // artist, album, playlist, mood, friends, profile) open in-pane while the
   // sidebar, top bar, and player stay put.
-  final GlobalKey<NavigatorState> _contentNavigatorKey = GlobalKey<NavigatorState>();
+  final GlobalKey<NavigatorState> _contentNavigatorKey =
+      GlobalKey<NavigatorState>();
   // Close the lyrics overlay whenever a screen is pushed into the content pane,
   // so it doesn't stay layered on top of (and hide) the new screen.
-  late final _NavPushObserver _contentNavObserver = _NavPushObserver(_onContentPushed);
+  late final _NavPushObserver _contentNavObserver =
+      _NavPushObserver(_onContentPushed);
 
   void _onContentPushed() {
     if (_showLyrics && mounted) setState(() => _showLyrics = false);
   }
+
   late final RecentlyPlayedService _recentlyPlayedService;
   late final PlayerStateService _playerStateService;
   final QueueService _queueService = QueueService();
@@ -84,25 +90,23 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _showQueuePanel = false;
   bool _showLyrics = false;
   StreamSubscription? _completionSubscription;
-  DateTime? _lastCompletionTime;
-  int? _lastCompletedIndex;
-  
+
   // CSV progress tracking
   CsvProgress? _csvProgress;
   Timer? _csvProgressTimer;
   String? _csvFilename;
-  
+
   // Download progress tracking
   DownloadProgress? _downloadProgress;
   Timer? _downloadProgressTimer;
   String? _downloadId;
-  
+
   // Pending dialog data
   List<Map<String, dynamic>>? _pendingNotFoundSongs;
   String? _pendingPlaylistId;
   // Pending playlist ID for navigation from recently played
   String? _navigateToPlaylistId;
-  
+
   // Services for dialog
   final ApiService _apiService = ApiService();
   final PlaylistService _playlistService = PlaylistService();
@@ -113,9 +117,24 @@ class _HomeScreenState extends State<HomeScreen> {
   List<Map<String, dynamic>> _newReleases = [];
   bool _isLoadingRecommendations = false;
   final List<String> _genres = [
-    'Pop', 'Rock', 'Hip Hop', 'Electronic', 'Jazz', 'Classical',
-    'Indie', 'Metal', 'R&B', 'Country', 'K-Pop', 'Latin',
-    'Reggae', 'Blues', 'Soul', 'Folk', 'Punk', 'Dance',
+    'Pop',
+    'Rock',
+    'Hip Hop',
+    'Electronic',
+    'Jazz',
+    'Classical',
+    'Indie',
+    'Metal',
+    'R&B',
+    'Country',
+    'K-Pop',
+    'Latin',
+    'Reggae',
+    'Blues',
+    'Soul',
+    'Folk',
+    'Punk',
+    'Dance',
   ];
 
   // Spotify-style home shelves (load independently and render progressively)
@@ -124,7 +143,7 @@ class _HomeScreenState extends State<HomeScreen> {
   List<SpotifyPlaylistInfo> _curated = [];
   List<ArtistInfo> _recommendedArtists = [];
   List<MoodCategory> _moods = [];
-  
+
   // Library hub state
   int _libraryTab = 0; // 0 playlists · 1 downloads
   int _libraryRefreshKey = 0;
@@ -138,13 +157,17 @@ class _HomeScreenState extends State<HomeScreen> {
 
   // Search state
   final TextEditingController _searchController = TextEditingController();
-  List<VideoInfo> _searchResults = [];
-  bool _isSearching = false;
+  final FocusNode _searchFocusNode = FocusNode();
+  final MusicSearchController _musicSearch = MusicSearchController();
+  List<VideoInfo> get _searchResults => _musicSearch.results;
+  bool get _isSearching => _musicSearch.isSearching;
 
   @override
   void initState() {
     super.initState();
-    _recentlyPlayedService = RecentlyPlayedService(userNamespace: widget.authService.username ?? 'default');
+    _musicSearch.addListener(_onSearchStateChanged);
+    _recentlyPlayedService = RecentlyPlayedService(
+        userNamespace: widget.authService.username ?? 'default');
     _playerStateService = PlayerStateService(
       recentlyPlayedService: _recentlyPlayedService,
       recommendationService: _recommendationService,
@@ -154,32 +177,30 @@ class _HomeScreenState extends State<HomeScreen> {
     _playerStateService.addListener(_onTrackChanged);
 
     // Listen for song completion and auto-play next song in queue
-    _completionSubscription = _playerStateService.audioPlayer.completionStream.listen((_) {
+    _completionSubscription =
+        _playerStateService.audioPlayer.completionStream.listen((_) {
       // Only auto-play next if we're playing from queue
       if (_queueService.currentIndex >= 0) {
-        final currentIndex = _queueService.currentIndex;
-        
-        // Debounce: ignore if this is a duplicate completion for the same song
-        final now = DateTime.now();
-        if (_lastCompletedIndex == currentIndex && 
-            _lastCompletionTime != null &&
-            now.difference(_lastCompletionTime!) < const Duration(milliseconds: 1000)) {
-          return;
-        }
-        
-        _lastCompletedIndex = currentIndex;
-        _lastCompletionTime = now;
-        
         final nextItem = _queueService.getNextForCompletion();
         if (nextItem != null) {
-          _queueService.playNext(_playerStateService);
+          _queueService
+              .playNext(_playerStateService, isAutomatic: true)
+              .catchError((Object error) {
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                    content: Text(
+                        'Could not play the next track. Try another song.')),
+              );
+            }
+          });
         }
       }
     });
 
     // Listen to recently played service changes
     _recentlyPlayedService.addListener(_onRecentlyPlayedChanged);
-    
+
     // Load items if they haven't been loaded yet
     if (_recentlyPlayedService.items.isEmpty) {
       // Wait a bit for async load to complete, then check again
@@ -189,15 +210,19 @@ class _HomeScreenState extends State<HomeScreen> {
         }
       });
     }
-    
+
     _fetchRecommendations();
     _fetchDiscoveryShelves();
     _loadSidebarPlaylists();
   }
 
   Future<void> _loadSidebarPlaylists() async {
-    final playlists = await _playlistService.getAllPlaylists();
-    if (mounted) setState(() => _sidebarPlaylists = playlists);
+    try {
+      final playlists = await _playlistService.getAllPlaylists();
+      if (mounted) setState(() => _sidebarPlaylists = playlists);
+    } catch (_) {
+      // Preserve the last library snapshot; the library page provides retry.
+    }
   }
 
   VideoInfo _trackToVideo(PlaylistTrack t) => VideoInfo(
@@ -261,7 +286,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _refreshHome() async {
     _fetchDiscoveryShelves();
-    await _fetchRecommendations();
+    await Future.wait([_fetchRecommendations(), _loadSidebarPlaylists()]);
   }
 
   // Navigation helpers for the new shelves
@@ -430,12 +455,18 @@ class _HomeScreenState extends State<HomeScreen> {
         content: TextField(
           controller: controller,
           autofocus: true,
-          decoration: const InputDecoration(hintText: 'Playlist name', border: OutlineInputBorder()),
+          decoration: const InputDecoration(
+              hintText: 'Playlist name', border: OutlineInputBorder()),
           onSubmitted: (v) => Navigator.of(context).pop(v.trim()),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
-          TextButton(onPressed: () => Navigator.of(context).pop(controller.text.trim()), child: const Text('Create')),
+          TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel')),
+          TextButton(
+              onPressed: () =>
+                  Navigator.of(context).pop(controller.text.trim()),
+              child: const Text('Create')),
         ],
       ),
     );
@@ -452,7 +483,8 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Could not create playlist: $e')));
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Could not create playlist: $e')));
       }
     }
   }
@@ -513,15 +545,17 @@ class _HomeScreenState extends State<HomeScreen> {
       _currentIndex = 1;
       _showLyrics = false;
     });
-    _performSearch();
+    _musicSearch.searchNow(query);
   }
 
   void _onSearchChanged(String value) {
-    setState(() {
-      if (value.isEmpty) {
-        _searchResults = [];
-      }
-    });
+    // Keyboard and accessibility focus do not trigger TextField.onTap.
+    _onSearchTap();
+    _musicSearch.updateQuery(value);
+  }
+
+  void _onSearchStateChanged() {
+    if (mounted) setState(() {});
   }
 
   /// The lyrics overlay, shown above the content stack when toggled from the
@@ -632,8 +666,10 @@ class _HomeScreenState extends State<HomeScreen> {
       children: [
         Padding(
           padding: EdgeInsets.only(
-            left: ResponsiveUtils.responsiveValue<double>(context, compact: 12, medium: 20, expanded: 24),
-            right: ResponsiveUtils.responsiveValue<double>(context, compact: 12, medium: 20, expanded: 24),
+            left: ResponsiveUtils.responsiveValue<double>(context,
+                compact: 12, medium: 20, expanded: 24),
+            right: ResponsiveUtils.responsiveValue<double>(context,
+                compact: 12, medium: 20, expanded: 24),
             top: 12,
             bottom: 4,
           ),
@@ -641,7 +677,8 @@ class _HomeScreenState extends State<HomeScreen> {
             children: [
               Text(
                 'Your Library',
-                style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700, letterSpacing: -0.3),
+                style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                    fontWeight: FontWeight.w700, letterSpacing: -0.3),
               ),
               const Spacer(),
               IconButton(
@@ -654,7 +691,8 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         Padding(
           padding: EdgeInsets.symmetric(
-            horizontal: ResponsiveUtils.responsiveValue<double>(context, compact: 12, medium: 20, expanded: 24),
+            horizontal: ResponsiveUtils.responsiveValue<double>(context,
+                compact: 12, medium: 20, expanded: 24),
             vertical: 4,
           ),
           child: Row(
@@ -687,8 +725,10 @@ class _HomeScreenState extends State<HomeScreen> {
             : 'Good evening';
     return Padding(
       padding: EdgeInsets.only(
-        left: ResponsiveUtils.responsiveValue<double>(context, compact: 12, medium: 20, expanded: 24),
-        right: ResponsiveUtils.responsiveValue<double>(context, compact: 12, medium: 20, expanded: 24),
+        left: ResponsiveUtils.responsiveValue<double>(context,
+            compact: 12, medium: 20, expanded: 24),
+        right: ResponsiveUtils.responsiveValue<double>(context,
+            compact: 12, medium: 20, expanded: 24),
         top: 12,
         bottom: 4,
       ),
@@ -706,112 +746,224 @@ class _HomeScreenState extends State<HomeScreen> {
     return RefreshIndicator(
       onRefresh: _refreshHome,
       child: SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             _buildGreetingHeader(),
+            if (_sidebarPlaylists.isNotEmpty) _buildSavedPlaylistShelf(),
+            if (!_isLoadingRecommendations &&
+                _dailyMix.isEmpty &&
+                _mixes.isEmpty &&
+                _curated.isEmpty)
+              Padding(
+                padding: ResponsiveUtils.responsivePadding(context),
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(24),
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                        colors: [Color(0xFF292454), Color(0xFF181820)]),
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Find your next favorite',
+                            style: Theme.of(context)
+                                .textTheme
+                                .headlineSmall
+                                ?.copyWith(fontWeight: FontWeight.w700)),
+                        const SizedBox(height: 8),
+                        const Text(
+                            'Search for music you love, or pick up where you left off in your library.'),
+                        const SizedBox(height: 20),
+                        Wrap(spacing: 12, runSpacing: 8, children: [
+                          FilledButton.icon(
+                              onPressed: () {
+                                _onSearchTap();
+                                _searchFocusNode.requestFocus();
+                              },
+                              icon: const Icon(Icons.search),
+                              label: const Text('Find music')),
+                          OutlinedButton.icon(
+                              onPressed: () => _onNavDestinationSelected(2),
+                              icon: const Icon(Icons.library_music_outlined),
+                              label: const Text('Your library')),
+                        ]),
+                      ]),
+                ),
+              ),
             // Recently Played
-                                ListenableBuilder(
-                                  listenable: _recentlyPlayedService,
-                                  builder: (context, _) {
-                                    if (_recentlyPlayedService.items.isEmpty) return const SizedBox.shrink();
-                                    
-                                    return Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: [
-                                        Padding(
-                                          padding: EdgeInsets.only(
-                                            left: ResponsiveUtils.responsiveValue<double>(context, compact: 12, medium: 20, expanded: 24),
-                                            right: ResponsiveUtils.responsiveValue<double>(context, compact: 12, medium: 20, expanded: 24),
-                                            top: 16,
-                                            bottom: 16,
-                                          ),
-                                          child: Text(
-                                            'Jump back in',
-                                            style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                                              fontWeight: FontWeight.w600,
-                                            ),
-                                          ),
-                                        ),
-                                        Padding(
-                                          padding: ResponsiveUtils.responsiveHorizontalPadding(context),
-                                          child: LayoutBuilder(
-                                            builder: (context, constraints) {
-                                              final crossAxisCount = ResponsiveUtils.responsiveValue<int>(
-                                                context,
-                                                compact: 1,
-                                                medium: 2,
-                                                expanded: 3,
-                                              );
-                                              final spacing = ResponsiveUtils.responsiveValue<double>(context, compact: 12, medium: 14, expanded: 16);
-                                              final totalSpacing = spacing * (crossAxisCount - 1);
-                                              final cardWidth = (constraints.maxWidth - totalSpacing) / crossAxisCount;
-                                              final cardHeight = ResponsiveUtils.responsiveCardHeight(context);
-                                              final aspectRatio = cardWidth / cardHeight;
+            ListenableBuilder(
+              listenable: _recentlyPlayedService,
+              builder: (context, _) {
+                if (_recentlyPlayedService.items.isEmpty)
+                  return const SizedBox.shrink();
 
-                                              return GridView.builder(
-                                                shrinkWrap: true,
-                                                physics: const NeverScrollableScrollPhysics(),
-                                                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                                                  crossAxisCount: crossAxisCount,
-                                                  crossAxisSpacing: spacing,
-                                                  mainAxisSpacing: spacing,
-                                                  childAspectRatio: aspectRatio,
-                                                ),
-                                                itemCount: _recentlyPlayedService.items.length,
-                                                itemBuilder: (context, index) {
-                                                  return _buildRecentlyPlayedCard(_recentlyPlayedService.items[index]);
-                                                },
-                                              );
-                                            },
-                                          ),
-                                        ),
-                                      ],
-                                    );
-                                  },
-                                ),
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Padding(
+                      padding: EdgeInsets.only(
+                        left: ResponsiveUtils.responsiveValue<double>(context,
+                            compact: 12, medium: 20, expanded: 24),
+                        right: ResponsiveUtils.responsiveValue<double>(context,
+                            compact: 12, medium: 20, expanded: 24),
+                        top: 16,
+                        bottom: 16,
+                      ),
+                      child: Text(
+                        'Jump back in',
+                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                              fontWeight: FontWeight.w600,
+                            ),
+                      ),
+                    ),
+                    Padding(
+                      padding:
+                          ResponsiveUtils.responsiveHorizontalPadding(context),
+                      child: LayoutBuilder(
+                        builder: (context, constraints) {
+                          final crossAxisCount =
+                              ResponsiveUtils.responsiveValue<int>(
+                            context,
+                            compact: 1,
+                            medium: 2,
+                            expanded: 3,
+                          );
+                          final spacing =
+                              ResponsiveUtils.responsiveValue<double>(context,
+                                  compact: 12, medium: 14, expanded: 16);
+                          final totalSpacing = spacing * (crossAxisCount - 1);
+                          final cardWidth =
+                              (constraints.maxWidth - totalSpacing) /
+                                  crossAxisCount;
+                          final cardHeight =
+                              ResponsiveUtils.responsiveCardHeight(context);
+                          final aspectRatio = cardWidth / cardHeight;
 
-                                // Made for You mixes (one row per top genre)
-                                ..._buildMadeForYouShelves(),
+                          return GridView.builder(
+                            shrinkWrap: true,
+                            physics: const NeverScrollableScrollPhysics(),
+                            gridDelegate:
+                                SliverGridDelegateWithFixedCrossAxisCount(
+                              crossAxisCount: crossAxisCount,
+                              crossAxisSpacing: spacing,
+                              mainAxisSpacing: spacing,
+                              childAspectRatio: aspectRatio,
+                            ),
+                            itemCount: _recentlyPlayedService.items.length,
+                            itemBuilder: (context, index) {
+                              return _buildRecentlyPlayedCard(
+                                  _recentlyPlayedService.items[index]);
+                            },
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
 
-                                // Songs for You (daily mix)
-                                if (_isLoadingRecommendations)
-                                  const Padding(
-                                    padding: EdgeInsets.all(32.0),
-                                    child: Center(child: CircularProgressIndicator()),
-                                  )
-                                else
-                                  HorizontalSongList(
-                                    title: 'Songs for You',
-                                    songs: _dailyMix,
-                                    onPlay: _streamRecommendedVideo,
-                                    onAddToQueue: _addRecommendedToQueue,
-                                    onDownload: _downloadRecommendedVideo,
-                                    onAddToPlaylist: _addRecommendedToPlaylist,
-                                    maxItems: 8,
-                                    onShowAll: () {
-                                      setState(() {
-                                        _showMadeForYou = true;
-                                      });
-                                    },
-                                  ),
+            // Made for You mixes (one row per top genre)
+            ..._buildMadeForYouShelves(),
 
-                                // Because you listened to {artist}
-                                ..._buildBecauseShelves(),
+            // Songs for You (daily mix)
+            if (_isLoadingRecommendations)
+              const Padding(
+                padding: EdgeInsets.all(32.0),
+                child: Center(child: CircularProgressIndicator()),
+              )
+            else
+              HorizontalSongList(
+                title: 'Songs for You',
+                songs: _dailyMix,
+                onPlay: _streamRecommendedVideo,
+                onAddToQueue: _addRecommendedToQueue,
+                onDownload: _downloadRecommendedVideo,
+                onAddToPlaylist: _addRecommendedToPlaylist,
+                maxItems: 8,
+                onShowAll: () {
+                  setState(() {
+                    _showMadeForYou = true;
+                  });
+                },
+              ),
 
-                                // Curated playlists
-                                _buildCuratedShelf(),
+            // Because you listened to {artist}
+            ..._buildBecauseShelves(),
 
-                                // New Releases
-                                if (!_isLoadingRecommendations) _buildNewReleasesSection(),
+            // Curated playlists
+            _buildCuratedShelf(),
 
-                                // Recommended artists
-                                _buildRecommendedArtistsShelf(),
+            // New Releases
+            if (!_isLoadingRecommendations) _buildNewReleasesSection(),
 
-            SizedBox(height: ResponsiveUtils.responsivePlayerBottomPadding(context)),
+            // Recommended artists
+            _buildRecommendedArtistsShelf(),
+
+            SizedBox(
+                height: ResponsiveUtils.responsivePlayerBottomPadding(context)),
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildSavedPlaylistShelf() {
+    final playlists = [..._sidebarPlaylists]
+      ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+    return HorizontalCardRow(
+      title: 'Made by you',
+      itemCount: playlists.length.clamp(0, 8),
+      itemWidth: ResponsiveUtils.responsiveHorizontalCardWidth(context),
+      onShowAll: () => _onNavDestinationSelected(2),
+      itemBuilder: (context, index) {
+        final playlist = playlists[index];
+        final cover = playlist.coverImage;
+        final placeholder = Container(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(colors: [
+              Theme.of(context).colorScheme.primary.withValues(alpha: 0.5),
+              const Color(0xFF232333),
+            ]),
+          ),
+          child:
+              const Center(child: Icon(Icons.library_music_rounded, size: 44)),
+        );
+        return InkWell(
+          onTap: () => _openLibraryPlaylist(playlist),
+          borderRadius: BorderRadius.circular(12),
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            AspectRatio(
+                aspectRatio: 1,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: cover != null && cover.startsWith('http')
+                      ? Image.network(cover,
+                          fit: BoxFit.cover,
+                          headers:
+                              AuthHttpClient.shared.authHeadersForUrl(cover),
+                          errorBuilder: (_, __, ___) => placeholder)
+                      : placeholder,
+                )),
+            const SizedBox(height: 8),
+            Text(playlist.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context)
+                    .textTheme
+                    .bodyMedium
+                    ?.copyWith(fontWeight: FontWeight.w600)),
+            Text(
+                '${playlist.tracks.length} ${playlist.tracks.length == 1 ? 'song' : 'songs'}',
+                style: Theme.of(context).textTheme.bodySmall),
+          ]),
+        );
+      },
     );
   }
 
@@ -821,9 +973,30 @@ class _HomeScreenState extends State<HomeScreen> {
     if (_isSearching) {
       return const Center(child: CircularProgressIndicator());
     }
+    if (_musicSearch.error != null) {
+      return Center(
+          child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          const Icon(Icons.wifi_off_rounded, size: 48),
+          const SizedBox(height: 16),
+          Text('Search is unavailable',
+              style: Theme.of(context).textTheme.titleLarge),
+          const SizedBox(height: 8),
+          const Text('Check your connection and try again.',
+              textAlign: TextAlign.center),
+          const SizedBox(height: 16),
+          FilledButton.icon(
+              onPressed: _musicSearch.retry,
+              icon: const Icon(Icons.refresh),
+              label: const Text('Try again')),
+        ]),
+      ));
+    }
     if (_searchResults.isNotEmpty) {
       return ListView.separated(
-        padding: ResponsiveUtils.responsiveHorizontalPadding(context).add(const EdgeInsets.symmetric(vertical: 8)),
+        padding: ResponsiveUtils.responsiveHorizontalPadding(context)
+            .add(const EdgeInsets.symmetric(vertical: 8)),
         itemCount: _searchResults.length,
         separatorBuilder: (context, index) => const SizedBox(height: 12),
         itemBuilder: (context, index) {
@@ -845,21 +1018,28 @@ class _HomeScreenState extends State<HomeScreen> {
         },
       );
     }
-    if (_searchController.text.isNotEmpty) {
+    if (_musicSearch.hasSearched && _musicSearch.query.isNotEmpty) {
       return Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.search_off, size: 64, color: Theme.of(context).colorScheme.onSurface.withOpacity(0.3)),
+            Icon(Icons.search_off,
+                size: 64,
+                color:
+                    Theme.of(context).colorScheme.onSurface.withOpacity(0.3)),
             const SizedBox(height: 16),
             Text(
               'No results found',
               style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+                    color: Theme.of(context)
+                        .colorScheme
+                        .onSurface
+                        .withOpacity(0.6),
                   ),
             ),
             const SizedBox(height: 8),
-            Text('Try a different search term', style: Theme.of(context).textTheme.bodySmall),
+            Text('Try a different search term',
+                style: Theme.of(context).textTheme.bodySmall),
           ],
         ),
       );
@@ -874,8 +1054,10 @@ class _HomeScreenState extends State<HomeScreen> {
         children: [
           Padding(
             padding: EdgeInsets.only(
-              left: ResponsiveUtils.responsiveValue<double>(context, compact: 12, medium: 20, expanded: 24),
-              right: ResponsiveUtils.responsiveValue<double>(context, compact: 12, medium: 20, expanded: 24),
+              left: ResponsiveUtils.responsiveValue<double>(context,
+                  compact: 12, medium: 20, expanded: 24),
+              right: ResponsiveUtils.responsiveValue<double>(context,
+                  compact: 12, medium: 20, expanded: 24),
               top: 16,
               bottom: 2,
             ),
@@ -909,23 +1091,28 @@ class _HomeScreenState extends State<HomeScreen> {
               },
             ),
           ],
-          SizedBox(height: ResponsiveUtils.responsivePlayerBottomPadding(context)),
+          SizedBox(
+              height: ResponsiveUtils.responsivePlayerBottomPadding(context)),
         ],
       ),
     );
   }
 
   /// Chunky, well-spaced category grid used by the Search "Browse all" surface.
-  Widget _browseGrid({required int itemCount, required IndexedWidgetBuilder itemBuilder}) {
+  Widget _browseGrid(
+      {required int itemCount, required IndexedWidgetBuilder itemBuilder}) {
     return Padding(
       padding: ResponsiveUtils.responsiveHorizontalPadding(context),
       child: GridView.builder(
         shrinkWrap: true,
         physics: const NeverScrollableScrollPhysics(),
         gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: ResponsiveUtils.responsiveValue<int>(context, compact: 2, medium: 3, expanded: 4),
-          crossAxisSpacing: ResponsiveUtils.responsiveValue<double>(context, compact: 14, medium: 16, expanded: 18),
-          mainAxisSpacing: ResponsiveUtils.responsiveValue<double>(context, compact: 14, medium: 16, expanded: 18),
+          crossAxisCount: ResponsiveUtils.responsiveValue<int>(context,
+              compact: 2, medium: 3, expanded: 4),
+          crossAxisSpacing: ResponsiveUtils.responsiveValue<double>(context,
+              compact: 14, medium: 16, expanded: 18),
+          mainAxisSpacing: ResponsiveUtils.responsiveValue<double>(context,
+              compact: 14, medium: 16, expanded: 18),
           childAspectRatio: 1.5,
         ),
         itemCount: itemCount,
@@ -1006,8 +1193,10 @@ class _HomeScreenState extends State<HomeScreen> {
       children: [
         Padding(
           padding: EdgeInsets.only(
-            left: ResponsiveUtils.responsiveValue<double>(context, compact: 12, medium: 20, expanded: 24),
-            right: ResponsiveUtils.responsiveValue<double>(context, compact: 12, medium: 20, expanded: 24),
+            left: ResponsiveUtils.responsiveValue<double>(context,
+                compact: 12, medium: 20, expanded: 24),
+            right: ResponsiveUtils.responsiveValue<double>(context,
+                compact: 12, medium: 20, expanded: 24),
             top: 16,
             bottom: 8,
           ),
@@ -1017,8 +1206,8 @@ class _HomeScreenState extends State<HomeScreen> {
               Text(
                 'New Releases',
                 style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                  fontWeight: FontWeight.w600,
-                ),
+                      fontWeight: FontWeight.w600,
+                    ),
               ),
               if (_newReleases.length > maxItems)
                 TextButton(
@@ -1056,11 +1245,13 @@ class _HomeScreenState extends State<HomeScreen> {
             scrollDirection: Axis.horizontal,
             itemCount: displayed.length,
             separatorBuilder: (context, index) => SizedBox(
-              width: ResponsiveUtils.responsiveValue<double>(context, compact: 16, medium: 20, expanded: 24),
+              width: ResponsiveUtils.responsiveValue<double>(context,
+                  compact: 16, medium: 20, expanded: 24),
             ),
             itemBuilder: (context, index) {
               final release = displayed[index];
-              final cardWidth = ResponsiveUtils.responsiveHorizontalCardWidth(context);
+              final cardWidth =
+                  ResponsiveUtils.responsiveHorizontalCardWidth(context);
               final name = release['name'] as String? ?? '';
               final artist = release['artist'] as String? ?? '';
               final type = release['type'] as String? ?? 'album';
@@ -1116,8 +1307,8 @@ class _HomeScreenState extends State<HomeScreen> {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        fontWeight: FontWeight.w600,
-                      ),
+                            fontWeight: FontWeight.w600,
+                          ),
                     ),
                     Text(
                       artist,
@@ -1131,9 +1322,12 @@ class _HomeScreenState extends State<HomeScreen> {
                         children: [
                           Text(
                             type == 'single' ? 'Single' : 'Album',
-                            style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                              color: Theme.of(context).colorScheme.primary,
-                            ),
+                            style: Theme.of(context)
+                                .textTheme
+                                .labelSmall
+                                ?.copyWith(
+                                  color: Theme.of(context).colorScheme.primary,
+                                ),
                           ),
                           Text(
                             ' • $releaseDate',
@@ -1165,10 +1359,12 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Future<void> _playAlbumFirstTrack(String albumId, String albumName, String artist) async {
+  Future<void> _playAlbumFirstTrack(
+      String albumId, String albumName, String artist) async {
     try {
       final tracks = await _recommendationService.getAlbumTracks(albumId);
-      final tracksWithUrl = tracks.where((t) => t.url != null && t.url!.isNotEmpty).toList();
+      final tracksWithUrl =
+          tracks.where((t) => t.url != null && t.url!.isNotEmpty).toList();
       if (tracksWithUrl.isEmpty) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -1181,14 +1377,16 @@ class _HomeScreenState extends State<HomeScreen> {
         }
         return;
       }
-      final queueItems = tracksWithUrl.map((track) => QueueItem.fromPlaylistTrackLazy(
-        trackId: track.id,
-        title: track.title,
-        artist: track.artist,
-        originalUrl: track.url!,
-        album: track.album,
-        thumbnail: track.thumbnail,
-      )).toList();
+      final queueItems = tracksWithUrl
+          .map((track) => QueueItem.fromPlaylistTrackLazy(
+                trackId: track.id,
+                title: track.title,
+                artist: track.artist,
+                originalUrl: track.url!,
+                album: track.album,
+                thumbnail: track.thumbnail,
+              ))
+          .toList();
 
       _queueService.clearQueue();
       _queueService.addAllToQueue(
@@ -1221,7 +1419,8 @@ class _HomeScreenState extends State<HomeScreen> {
     try {
       String youtubeUrl = originalUrl;
 
-      if (!youtubeUrl.contains('youtube.com') && !youtubeUrl.contains('youtu.be')) {
+      if (!youtubeUrl.contains('youtube.com') &&
+          !youtubeUrl.contains('youtu.be')) {
         final query = '${item.title} ${item.artist}';
         final results = await _apiService.searchYoutube(query);
         if (results.isEmpty) return null;
@@ -1244,7 +1443,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildRecentlyPlayedCard(RecentlyPlayedItem item) {
     final primaryColor = Theme.of(context).colorScheme.primary;
     final surfaceHover = Theme.of(context).colorScheme.surfaceVariant;
-    
+
     return Card(
       child: Material(
         color: Colors.transparent,
@@ -1265,11 +1464,19 @@ class _HomeScreenState extends State<HomeScreen> {
                         ? item.thumbnail != null && item.thumbnail!.isNotEmpty
                             ? Image.network(
                                 item.thumbnail!,
-                                width: ResponsiveUtils.responsiveMediumIconSize(context, base: 80),
-                                height: ResponsiveUtils.responsiveMediumIconSize(context, base: 80),
+                                width: ResponsiveUtils.responsiveMediumIconSize(
+                                    context,
+                                    base: 80),
+                                height:
+                                    ResponsiveUtils.responsiveMediumIconSize(
+                                        context,
+                                        base: 80),
                                 fit: BoxFit.cover,
                                 errorBuilder: (context, error, stackTrace) {
-                                  final size = ResponsiveUtils.responsiveMediumIconSize(context, base: 80);
+                                  final size =
+                                      ResponsiveUtils.responsiveMediumIconSize(
+                                          context,
+                                          base: 80);
                                   return Container(
                                     width: size,
                                     height: size,
@@ -1284,7 +1491,10 @@ class _HomeScreenState extends State<HomeScreen> {
                               )
                             : Builder(
                                 builder: (context) {
-                                  final size = ResponsiveUtils.responsiveMediumIconSize(context, base: 80);
+                                  final size =
+                                      ResponsiveUtils.responsiveMediumIconSize(
+                                          context,
+                                          base: 80);
                                   return Container(
                                     width: size,
                                     height: size,
@@ -1300,15 +1510,22 @@ class _HomeScreenState extends State<HomeScreen> {
                         : item.thumbnail != null
                             ? Image.network(
                                 item.thumbnail!,
-                                width: ResponsiveUtils.responsiveMediumIconSize(context, base: 80),
-                                height: ResponsiveUtils.responsiveMediumIconSize(context, base: 80),
+                                width: ResponsiveUtils.responsiveMediumIconSize(
+                                    context,
+                                    base: 80),
+                                height:
+                                    ResponsiveUtils.responsiveMediumIconSize(
+                                        context,
+                                        base: 80),
                                 fit: BoxFit.cover,
                                 errorBuilder: (context, error, stackTrace) {
                                   return AlbumCover(
                                     filename: item.filename,
                                     title: item.title,
                                     artist: item.artist,
-                                    size: ResponsiveUtils.responsiveMediumIconSize(context, base: 80),
+                                    size: ResponsiveUtils
+                                        .responsiveMediumIconSize(context,
+                                            base: 80),
                                   );
                                 },
                               )
@@ -1316,7 +1533,9 @@ class _HomeScreenState extends State<HomeScreen> {
                                 filename: item.filename,
                                 title: item.title,
                                 artist: item.artist,
-                                size: ResponsiveUtils.responsiveMediumIconSize(context, base: 80),
+                                size: ResponsiveUtils.responsiveMediumIconSize(
+                                    context,
+                                    base: 80),
                               ),
                   ),
                   const SizedBox(width: 16),
@@ -1335,23 +1554,38 @@ class _HomeScreenState extends State<HomeScreen> {
                                 child: Icon(
                                   Icons.playlist_play,
                                   size: 16,
-                                  color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onSurface
+                                      .withOpacity(0.6),
                                 ),
                               ),
                             Expanded(
                               child: Text(
                                 item.title,
-                                style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                                  fontWeight: FontWeight.w500,
-                                ),
-                                maxLines: ResponsiveUtils.responsiveValue<int>(context, compact: 1, medium: 2, expanded: 2),
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .bodyLarge
+                                    ?.copyWith(
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                maxLines: ResponsiveUtils.responsiveValue<int>(
+                                    context,
+                                    compact: 1,
+                                    medium: 2,
+                                    expanded: 2),
                                 overflow: TextOverflow.ellipsis,
                               ),
                             ),
                           ],
                         ),
                         if (item.artist != null && item.artist!.isNotEmpty) ...[
-                          SizedBox(height: ResponsiveUtils.responsiveValue<double>(context, compact: 2, medium: 6, expanded: 6)),
+                          SizedBox(
+                              height: ResponsiveUtils.responsiveValue<double>(
+                                  context,
+                                  compact: 2,
+                                  medium: 6,
+                                  expanded: 6)),
                           Text(
                             item.artist!,
                             style: Theme.of(context).textTheme.bodySmall,
@@ -1379,18 +1613,29 @@ class _HomeScreenState extends State<HomeScreen> {
           // Check if it exists in local playlists
           final localPlaylists = await _playlistService.getAllPlaylists();
           isLocal = localPlaylists.any((p) => p.id == item.playlistId);
-        } catch (_) {}
+        } catch (_) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                  content:
+                      Text('Your library is unavailable. Please try again.')),
+            );
+          }
+          return;
+        }
+        if (!mounted) return;
 
         if (isLocal) {
           // Switch to playlists tab and show the playlist directly
           setState(() {
             _navigateToPlaylistId = item.playlistId;
+            _libraryTab = 0;
+            _libraryRefreshKey++;
             _currentIndex = 2; // Switch to Playlists tab
           });
         } else {
           // Navigate to SpotifyPlaylistScreen
-          Navigator.push(
-            context,
+          _contentNavigatorKey.currentState?.push(
             MaterialPageRoute(
               builder: (context) => SpotifyPlaylistScreen(
                 playlistId: item.playlistId!,
@@ -1521,7 +1766,8 @@ class _HomeScreenState extends State<HomeScreen> {
               if (mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
-                    content: Text('Failed to play file and stream: $streamError'),
+                    content:
+                        Text('Failed to play file and stream: $streamError'),
                     backgroundColor: Colors.red,
                     behavior: SnackBarBehavior.floating,
                   ),
@@ -1583,7 +1829,8 @@ class _HomeScreenState extends State<HomeScreen> {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
-                content: Text('Cannot play: ${item.title} (not downloaded and no URL available)'),
+                content: Text(
+                    'Cannot play: ${item.title} (not downloaded and no URL available)'),
                 backgroundColor: Colors.red,
                 behavior: SnackBarBehavior.floating,
               ),
@@ -1599,29 +1846,29 @@ class _HomeScreenState extends State<HomeScreen> {
       final playlists = await _playlistService.getAllPlaylists();
       final titleLower = title.toLowerCase().trim();
       final artistLower = artist?.toLowerCase().trim() ?? '';
-      
+
       for (final playlist in playlists) {
         for (final track in playlist.tracks) {
           final trackTitleLower = track.title.toLowerCase().trim();
           final trackArtistLower = track.artist?.toLowerCase().trim() ?? '';
-          
+
           // Match by title (case insensitive, allow partial matches)
-          bool titleMatches = trackTitleLower == titleLower || 
-                              trackTitleLower.contains(titleLower) ||
-                              titleLower.contains(trackTitleLower);
-          
+          bool titleMatches = trackTitleLower == titleLower ||
+              trackTitleLower.contains(titleLower) ||
+              titleLower.contains(trackTitleLower);
+
           if (titleMatches) {
             // If artist is provided, try to match it too (but don't require exact match)
-            bool artistMatches = artistLower.isEmpty || 
-                                 trackArtistLower.isEmpty ||
-                                 trackArtistLower == artistLower ||
-                                 trackArtistLower.contains(artistLower) ||
-                                 artistLower.contains(trackArtistLower);
-            
+            bool artistMatches = artistLower.isEmpty ||
+                trackArtistLower.isEmpty ||
+                trackArtistLower == artistLower ||
+                trackArtistLower.contains(artistLower) ||
+                artistLower.contains(trackArtistLower);
+
             // If we have a URL, return it (prefer exact matches but accept partial)
             if (track.url != null && track.url!.isNotEmpty) {
               // Prefer exact matches
-              if (trackTitleLower == titleLower && 
+              if (trackTitleLower == titleLower &&
                   (artistLower.isEmpty || trackArtistLower == artistLower)) {
                 return track.url;
               }
@@ -1629,17 +1876,17 @@ class _HomeScreenState extends State<HomeScreen> {
           }
         }
       }
-      
+
       // Second pass: if no exact match, return first partial match
       for (final playlist in playlists) {
         for (final track in playlist.tracks) {
           final trackTitleLower = track.title.toLowerCase().trim();
           final trackArtistLower = track.artist?.toLowerCase().trim() ?? '';
-          
-          bool titleMatches = trackTitleLower == titleLower || 
-                              trackTitleLower.contains(titleLower) ||
-                              titleLower.contains(trackTitleLower);
-          
+
+          bool titleMatches = trackTitleLower == titleLower ||
+              trackTitleLower.contains(titleLower) ||
+              titleLower.contains(trackTitleLower);
+
           if (titleMatches && track.url != null && track.url!.isNotEmpty) {
             return track.url;
           }
@@ -1649,33 +1896,6 @@ class _HomeScreenState extends State<HomeScreen> {
       print('Error searching playlists for URL: $e');
     }
     return null;
-  }
-
-  Future<void> _performSearch() async {
-    final query = _searchController.text.trim();
-    if (query.isEmpty) return;
-
-    setState(() {
-      _isSearching = true;
-      _searchResults = [];
-    });
-
-    try {
-      final results = await _apiService.searchYoutube(query);
-      setState(() {
-        _searchResults = results;
-        _isSearching = false;
-      });
-    } catch (e) {
-      setState(() {
-        _isSearching = false;
-      });
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Search failed: $e')),
-        );
-      }
-    }
   }
 
   Future<void> _streamVideo(VideoInfo video) async {
@@ -1801,7 +2021,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
       String youtubeUrl = currentItem.originalUrl ?? currentItem.url ?? '';
       if (youtubeUrl.isEmpty ||
-          (!youtubeUrl.contains('youtube.com') && !youtubeUrl.contains('youtu.be'))) {
+          (!youtubeUrl.contains('youtube.com') &&
+              !youtubeUrl.contains('youtu.be'))) {
         final searchResults = await _apiService.searchYoutube(
           '${currentItem.title} ${currentItem.artist}',
         );
@@ -1810,7 +2031,8 @@ class _HomeScreenState extends State<HomeScreen> {
             Navigator.of(context).pop();
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
-                content: Text('Could not find "${currentItem.title}" on YouTube'),
+                content:
+                    Text('Could not find "${currentItem.title}" on YouTube'),
                 backgroundColor: Colors.red,
                 behavior: SnackBarBehavior.floating,
               ),
@@ -2171,7 +2393,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _startProgressPolling(String filename) {
     _csvProgressTimer?.cancel();
-    _csvProgressTimer = Timer.periodic(const Duration(milliseconds: 500), (timer) async {
+    _csvProgressTimer =
+        Timer.periodic(const Duration(milliseconds: 500), (timer) async {
       try {
         final progress = await _apiService.getCsvProgress(filename);
         if (mounted) {
@@ -2196,7 +2419,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _startDownloadProgressPolling(String downloadId) {
     _downloadProgressTimer?.cancel();
-    _downloadProgressTimer = Timer.periodic(const Duration(milliseconds: 500), (timer) async {
+    _downloadProgressTimer =
+        Timer.periodic(const Duration(milliseconds: 500), (timer) async {
       try {
         final progress = await _apiService.getDownloadProgress(downloadId);
         if (mounted) {
@@ -2234,13 +2458,14 @@ class _HomeScreenState extends State<HomeScreen> {
     _downloadProgressTimer = null;
   }
 
-  Future<void> _showNotFoundSongsDialog(List<Map<String, dynamic>> notFoundSongs, String? playlistId) async {
+  Future<void> _showNotFoundSongsDialog(
+      List<Map<String, dynamic>> notFoundSongs, String? playlistId) async {
     if (!mounted || notFoundSongs.isEmpty) return;
-    
+
     try {
       // Find the root navigator to ensure dialog shows above everything
       final navigator = Navigator.of(context, rootNavigator: true);
-      
+
       await showDialog(
         context: context,
         barrierDismissible: false,
@@ -2301,166 +2526,214 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
-
   @override
   Widget build(BuildContext context) {
     final compact = ResponsiveUtils.isCompact(context);
     final expandedSidebar = ResponsiveUtils.isExpanded(context);
+    final wideQueue = MediaQuery.sizeOf(context).width >= 1100;
 
-    return Scaffold(
-      body: SafeArea(
-        bottom: false,
-        child: Column(
-          children: [
-            Expanded(
-              child: Row(
-                children: [
-                  // Persistent sidebar (medium/expanded only)
-                  if (!compact)
-                    SizedBox(
-                      width: expandedSidebar ? 220 : 72,
-                      child: AppSidebar(
-                        selectedIndex: _currentIndex,
-                        onSelect: _onNavDestinationSelected,
-                        expanded: expandedSidebar,
-                        playlists: _sidebarPlaylists,
-                        onOpenPlaylist: _openLibraryPlaylist,
-                        onCreate: _showCreateOrImportMenu,
+    return CallbackShortcuts(
+      bindings: {
+        const SingleActivator(LogicalKeyboardKey.keyK, control: true): () {
+          _onSearchTap();
+          _searchFocusNode.requestFocus();
+        },
+        const SingleActivator(LogicalKeyboardKey.keyK, meta: true): () {
+          _onSearchTap();
+          _searchFocusNode.requestFocus();
+        },
+      },
+      child: Scaffold(
+        body: SafeArea(
+          bottom: false,
+          child: Column(
+            children: [
+              Expanded(
+                child: Row(
+                  children: [
+                    // Persistent sidebar (medium/expanded only)
+                    if (!compact)
+                      SizedBox(
+                        width: expandedSidebar ? 220 : 72,
+                        child: AppSidebar(
+                          selectedIndex: _currentIndex,
+                          onSelect: _onNavDestinationSelected,
+                          expanded: expandedSidebar,
+                          playlists: _sidebarPlaylists,
+                          onOpenPlaylist: _openLibraryPlaylist,
+                          onCreate: _showCreateOrImportMenu,
+                        ),
+                      ),
+                    // Top bar + current destination
+                    Expanded(
+                      child: Column(
+                        children: [
+                          AppTopBar(
+                            searchController: _searchController,
+                            searchFocusNode: _searchFocusNode,
+                            onSearchTap: _onSearchTap,
+                            onSearchSubmitted: _onSearchSubmitted,
+                            onSearchChanged: _onSearchChanged,
+                            username: widget.authService.username,
+                            onProfile: _openProfile,
+                            onFriends: _openFriends,
+                            onLogout: () async {
+                              await widget.authService.logout();
+                            },
+                          ),
+                          Expanded(
+                            // Nested routes block earlier semantics inside their
+                            // container. Keep the persistent search/sidebar outside
+                            // that boundary so screen readers can still reach them.
+                            child: Semantics(
+                              container: true,
+                              explicitChildNodes: true,
+                              child: Stack(
+                                children: [
+                                  // Nested navigator for the content pane. Its root page
+                                  // is the current destination (opaque + interactive, and
+                                  // rebuilt each frame via the pages API); secondary
+                                  // screens are pushed on top imperatively via _open*.
+                                  Positioned.fill(
+                                    child: Navigator(
+                                      key: _contentNavigatorKey,
+                                      observers: [_contentNavObserver],
+                                      pages: [
+                                        MaterialPage(
+                                          key: const ValueKey('content-root'),
+                                          child: _buildCurrentScreen(),
+                                        ),
+                                      ],
+                                      onPopPage: (route, result) =>
+                                          route.didPop(result),
+                                    ),
+                                  ),
+                                  // Lyrics overlay (above content + pushed screens).
+                                  if (_showLyrics &&
+                                      _playerStateService.currentTrackName !=
+                                          null &&
+                                      _playerStateService.currentTrackArtist !=
+                                          null)
+                                    Positioned.fill(
+                                        child: _buildLyricsOverlay()),
+                                  if (_showQueuePanel && !wideQueue) ...[
+                                    Positioned.fill(
+                                        child: ModalBarrier(
+                                      color: Colors.black54,
+                                      dismissible: true,
+                                      onDismiss: () => setState(
+                                          () => _showQueuePanel = false),
+                                    )),
+                                    Positioned.fill(
+                                        child: Align(
+                                      alignment: Alignment.centerRight,
+                                      child: _buildQueuePanel(),
+                                    )),
+                                  ],
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                  // Top bar + current destination
-                  Expanded(
-                    child: Column(
-                      children: [
-                        AppTopBar(
-                          searchController: _searchController,
-                          onSearchTap: _onSearchTap,
-                          onSearchSubmitted: _onSearchSubmitted,
-                          onSearchChanged: _onSearchChanged,
-                          username: widget.authService.username,
-                          onProfile: _openProfile,
-                          onFriends: _openFriends,
-                          onLogout: () async {
-                            await widget.authService.logout();
-                          },
-                        ),
-                        Expanded(
-                          child: Stack(
-                            children: [
-                              // Nested navigator for the content pane. Its root page
-                              // is the current destination (opaque + interactive, and
-                              // rebuilt each frame via the pages API); secondary
-                              // screens are pushed on top imperatively via _open*.
-                              Positioned.fill(
-                                child: Navigator(
-                                  key: _contentNavigatorKey,
-                                  observers: [_contentNavObserver],
-                                  pages: [
-                                    MaterialPage(
-                                      key: const ValueKey('content-root'),
-                                      child: _buildCurrentScreen(),
-                                    ),
-                                  ],
-                                  onPopPage: (route, result) => route.didPop(result),
-                                ),
-                              ),
-                              // Lyrics overlay (above content + pushed screens).
-                              if (_showLyrics &&
-                                  _playerStateService.currentTrackName != null &&
-                                  _playerStateService.currentTrackArtist != null)
-                                Positioned.fill(child: _buildLyricsOverlay()),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  // Queue panel (right side, above the player)
-                  if (_showQueuePanel)
-                    QueuePanel(
-                      queueService: _queueService,
-                      onClose: () {
-                        setState(() {
-                          _showQueuePanel = false;
-                        });
-                      },
-                      onItemTap: (item) async {
-                        final index = _queueService.queue.indexOf(item);
-                        if (index >= 0) {
-                          await _queueService.playItem(index, _playerStateService);
+                    // Queue panel (right side, above the player)
+                    if (_showQueuePanel && wideQueue) _buildQueuePanel(),
+                  ],
+                ),
+              ),
+              // CSV / download progress bars (full width, above the player)
+              if (_csvProgress != null && _csvFilename != null)
+                CsvProgressBar(
+                  processed: _csvProgress!.processed,
+                  notFound: _csvProgress!.notFound,
+                  total: _csvProgress!.total,
+                  status: _csvProgress!.status,
+                  progress: _csvProgress!.progress,
+                ),
+              if (_downloadProgress != null && _downloadId != null)
+                DownloadProgressBar(
+                  processed: _downloadProgress!.processed,
+                  failed: _downloadProgress!.failed,
+                  total: _downloadProgress!.total,
+                  status: _downloadProgress!.status,
+                  progress: _downloadProgress!.progress,
+                ),
+              // Persistent now-playing bar (full width). Listen to BOTH the player
+              // state and the queue so track changes (e.g. Next) refresh the bar's
+              // artwork/title even when only the queue's currentItem changed.
+              ListenableBuilder(
+                listenable:
+                    Listenable.merge([_playerStateService, _queueService]),
+                builder: (context, _) {
+                  return BottomPlayer(
+                    playerService: _playerStateService.audioPlayer,
+                    currentTrackName: _playerStateService.currentTrackName,
+                    currentTrackArtist: _playerStateService.currentTrackArtist,
+                    queueService: _queueService,
+                    playerStateService: _playerStateService,
+                    onQueueToggle: () {
+                      setState(() {
+                        _showQueuePanel = !_showQueuePanel;
+                      });
+                    },
+                    onLyricsToggle: () {
+                      setState(() {
+                        _showLyrics = !_showLyrics;
+                        if (_showLyrics &&
+                            _playerStateService.currentTrackName != null &&
+                            _playerStateService.currentTrackArtist != null) {
+                          final currentItem = _queueService.currentItem;
+                          final dur = _playerStateService.audioPlayer.duration;
+                          _lyricsService.fetchLyrics(
+                            _playerStateService.currentTrackName!,
+                            _playerStateService.currentTrackArtist ?? '',
+                            albumName: currentItem?.album,
+                            duration: dur.inSeconds > 0 ? dur.inSeconds : null,
+                          );
                         }
-                      },
-                    ),
-                ],
+                      });
+                    },
+                    onDownload: _downloadCurrentTrack,
+                    onAddToPlaylist: _addCurrentTrackToPlaylist,
+                  );
+                },
               ),
-            ),
-            // CSV / download progress bars (full width, above the player)
-            if (_csvProgress != null && _csvFilename != null)
-              CsvProgressBar(
-                processed: _csvProgress!.processed,
-                notFound: _csvProgress!.notFound,
-                total: _csvProgress!.total,
-                status: _csvProgress!.status,
-                progress: _csvProgress!.progress,
-              ),
-            if (_downloadProgress != null && _downloadId != null)
-              DownloadProgressBar(
-                processed: _downloadProgress!.processed,
-                failed: _downloadProgress!.failed,
-                total: _downloadProgress!.total,
-                status: _downloadProgress!.status,
-                progress: _downloadProgress!.progress,
-              ),
-            // Persistent now-playing bar (full width). Listen to BOTH the player
-            // state and the queue so track changes (e.g. Next) refresh the bar's
-            // artwork/title even when only the queue's currentItem changed.
-            ListenableBuilder(
-              listenable: Listenable.merge([_playerStateService, _queueService]),
-              builder: (context, _) {
-                return BottomPlayer(
-                  playerService: _playerStateService.audioPlayer,
-                  currentTrackName: _playerStateService.currentTrackName,
-                  currentTrackArtist: _playerStateService.currentTrackArtist,
-                  queueService: _queueService,
-                  playerStateService: _playerStateService,
-                  onQueueToggle: () {
-                    setState(() {
-                      _showQueuePanel = !_showQueuePanel;
-                    });
-                  },
-                  onLyricsToggle: () {
-                    setState(() {
-                      _showLyrics = !_showLyrics;
-                      if (_showLyrics && _playerStateService.currentTrackName != null && _playerStateService.currentTrackArtist != null) {
-                        final currentItem = _queueService.currentItem;
-                        final dur = _playerStateService.audioPlayer.duration;
-                        _lyricsService.fetchLyrics(
-                          _playerStateService.currentTrackName!,
-                          _playerStateService.currentTrackArtist ?? '',
-                          albumName: currentItem?.album,
-                          duration: dur.inSeconds > 0 ? dur.inSeconds : null,
-                        );
-                      }
-                    });
-                  },
-                  onDownload: _downloadCurrentTrack,
-                  onAddToPlaylist: _addCurrentTrackToPlaylist,
-                );
-              },
-            ),
-          ],
+            ],
+          ),
         ),
+        bottomNavigationBar: compact
+            ? NavigationBar(
+                selectedIndex: _currentIndex,
+                onDestinationSelected: _onNavDestinationSelected,
+                destinations: _navDestinations,
+                labelBehavior:
+                    NavigationDestinationLabelBehavior.onlyShowSelected,
+              )
+            : null,
       ),
-      bottomNavigationBar: compact
-          ? NavigationBar(
-              selectedIndex: _currentIndex,
-              onDestinationSelected: _onNavDestinationSelected,
-              destinations: _navDestinations,
-              labelBehavior: NavigationDestinationLabelBehavior.onlyShowSelected,
-            )
-          : null,
     );
   }
+
+  Widget _buildQueuePanel() => QueuePanel(
+        queueService: _queueService,
+        onClose: () => setState(() => _showQueuePanel = false),
+        onItemTap: (item) async {
+          final index = _queueService.queue.indexOf(item);
+          if (index < 0) return;
+          try {
+            await _queueService.playItem(index, _playerStateService);
+          } catch (_) {
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                    content:
+                        Text('Could not play this track. Try another song.')),
+              );
+            }
+          }
+        },
+      );
 
   void _onTrackChanged() {
     // Rebuild the shell so the open lyrics overlay receives the new track's props
@@ -2474,6 +2747,9 @@ class _HomeScreenState extends State<HomeScreen> {
     _csvProgressTimer?.cancel();
     _downloadProgressTimer?.cancel();
     _searchController.dispose();
+    _searchFocusNode.dispose();
+    _musicSearch.removeListener(_onSearchStateChanged);
+    _musicSearch.dispose();
     _recentlyPlayedService.removeListener(_onRecentlyPlayedChanged);
     _playerStateService.removeListener(_onTrackChanged);
     _playerStateService.dispose();
@@ -2481,5 +2757,3 @@ class _HomeScreenState extends State<HomeScreen> {
     super.dispose();
   }
 }
-
-

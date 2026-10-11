@@ -13,18 +13,12 @@ class PlaylistService {
         _client = client ?? AuthHttpClient.shared;
 
   Future<List<Playlist>> getAllPlaylists() async {
-    try {
-      final response = await _client.get(Uri.parse('$baseUrl/playlists'));
-
-      if (response.statusCode == 200) {
-        final Map<String, dynamic> data = jsonDecode(response.body);
-        return data.values.map((json) => Playlist.fromJson(json)).toList();
-      } else {
-        return [];
-      }
-    } catch (e) {
-      return [];
+    final response = await _client.get(Uri.parse('$baseUrl/playlists'));
+    if (response.statusCode != 200) {
+      throw Exception('Failed to load playlists: ${response.statusCode}');
     }
+    final Map<String, dynamic> data = jsonDecode(response.body);
+    return data.values.map((json) => Playlist.fromJson(json)).toList();
   }
 
   Future<Playlist?> getPlaylist(String id) async {
