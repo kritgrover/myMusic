@@ -79,6 +79,11 @@ A full-stack application for searching YouTube, downloading music, playing audio
 - 📄 **CSV Import**: Import playlists from CSV files with automatic YouTube search
 
 ### Library and Player Experience
+- Native apps have **Your Library → On this device** for audio stored on the current phone or computer. Use **Save on this device** from Server files, **Download for offline** on a playlist, or Download from catalog/search track actions.
+- Completed device downloads include persistent track metadata, playlist membership/order, and available artwork. Search and play this collection without the backend; removing a device copy keeps the server copy and account library intact.
+- Device playback checks local files before requesting server media authorization. Queues and playback history retain canonical track references, while local storage is isolated by account and backend.
+- A previously signed-in account can reopen its offline library during network outages. Explicitly rejected credentials still require signing in again.
+- This first offline implementation transfers while the app is running, with progress, cancellation and retry. Interrupted files are never listed as complete. OS-managed mobile background downloads, automatic playlist synchronization, Wi-Fi-only rules and file export are follow-up work. Browser builds continue to use server downloads and do not claim device-offline support.
 - Liked Songs, saved albums, and followed artists persist in your account. Save from track rows or the player, then search, sort, and play your collection in Your Library.
 - Saving the same song from different screens shares one like; failed saves are rolled back with a retryable error.
 - Private audio and embedded artwork are restricted to their owner's account. Browser playback uses short-lived, file-scoped media links that are never stored in playback history.
