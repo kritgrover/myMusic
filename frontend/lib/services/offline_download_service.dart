@@ -62,6 +62,14 @@ class OfflineDownloadService extends ChangeNotifier {
   List<OfflineTrack> get tracks => List.unmodifiable(_tracks.values);
   List<OfflineDownloadJob> get jobs =>
       List.unmodifiable(_work.values.map((work) => work.job));
+
+  /// Looks up the requested recording rather than another job with the same
+  /// catalog ID (for example, a previously failed source that was corrected).
+  OfflineDownloadJob? jobFor(QueueItem item) {
+    final id = sha256.convert(utf8.encode(_keys(item).first)).toString();
+    return _work[id]?.job;
+  }
+
   int get totalBytes =>
       _tracks.values.fold(0, (sum, track) => sum + track.bytes);
 

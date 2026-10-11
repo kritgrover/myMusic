@@ -15,6 +15,7 @@ import '../config.dart';
 import 'add_to_playlist_screen.dart';
 import '../utils/song_display_utils.dart';
 import '../utils/playlist_download_matching.dart';
+import '../utils/download_error_utils.dart';
 import '../widgets/album_cover.dart';
 
 enum PlaylistSortOption {
@@ -29,6 +30,7 @@ class PlaylistDetailScreen extends StatefulWidget {
   final dynamic playerStateService; // Optional, for playing tracks
   final QueueService? queueService;
   final OfflineDownloadService? offlineService;
+  final ApiService? apiService;
   final RecentlyPlayedService?
       recentlyPlayedService; // Optional, for tracking play history
   final VoidCallback? onBack; // Callback to return to playlists list
@@ -42,6 +44,7 @@ class PlaylistDetailScreen extends StatefulWidget {
     this.playerStateService,
     this.queueService,
     this.offlineService,
+    this.apiService,
     this.recentlyPlayedService,
     this.onBack,
     this.onDownloadStart,
@@ -56,7 +59,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
   bool _isLoading = false;
   bool _showAddSongs = false;
   PlaylistSortOption _sortOption = PlaylistSortOption.defaultOrder;
-  final ApiService _apiService = ApiService();
+  late final ApiService _apiService = widget.apiService ?? ApiService();
   final Map<String, String> _confirmedDownloads = {};
   int _loadRequestId = 0;
   OfflineDownloadService get _offline =>
@@ -64,19 +67,46 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
 
   Future<void> _downloadOffline() async {
     if (_playlist.tracks.isEmpty) return;
+    if (!_offline.isInitialized) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Device downloads are not ready. Please retry.'),
+      ));
+      return;
+    }
+    final playlist = _playlist;
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
       content: Text(
           'Saving this playlist on your device. See Offline library for progress.'),
     ));
     try {
-      await _offline.downloadPlaylist(_playlist);
+      await _offline.downloadPlaylist(playlist);
+      if (!mounted) return;
+      _showOfflineFailures(playlist.tracks);
     } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-            content: Text('Could not download playlist for offline: $error')),
-      );
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(SnackBar(
+          content: Text(downloadFailureMessage(error)),
+          backgroundColor: Colors.red,
+        ));
     }
+  }
+
+  void _showOfflineFailures(Iterable<PlaylistTrack> tracks) {
+    final failures = tracks
+        .map((track) => _offline.jobFor(_downloadItem(track)))
+        .whereType<OfflineDownloadJob>()
+        .where((job) => job.status == OfflineDownloadStatus.failed);
+    if (failures.isEmpty) return;
+    final prefix =
+        failures.length > 1 ? '${failures.length} downloads failed. ' : '';
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(
+        content: Text('$prefix${downloadFailureMessage(failures.first.error)}'),
+        backgroundColor: Colors.red,
+      ));
   }
 
   @override
@@ -225,35 +255,89 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
   }
 
   bool _isTrackDownloaded(PlaylistTrack track) {
-    // A track is considered downloaded if it has a non-empty filename
+    if (_offline.isSupported) {
+      final spotifyId = ApiService.spotifyTrackId(track.url, id: track.id);
+      final source = ApiService.canonicalYouTubeSource(track.url);
+      final key = track.filename.isNotEmpty
+          ? 'file:${track.filename}'
+          : source != null
+              ? 'source:$source'
+              : spotifyId != null
+                  ? 'spotify:$spotifyId'
+                  : 'id:track_${track.id}';
+      return _offline.tracks.any((saved) => saved.sourceKeys.contains(key));
+    }
     return track.filename.isNotEmpty;
   }
 
+  QueueItem _downloadItem(PlaylistTrack track) => QueueItem(
+        id: 'track_${track.id}',
+        title: track.title,
+        artist: track.artist,
+        album: track.album,
+        duration: track.duration,
+        filename: track.filename,
+        originalUrl: track.url,
+        thumbnail: track.thumbnail,
+        spotifyId: ApiService.spotifyTrackId(track.url, id: track.id),
+      );
+
+  Future<Map<String, dynamic>> _serverDownload(PlaylistTrack track) async {
+    final spotifyId = ApiService.spotifyTrackId(track.url, id: track.id);
+    final source = await _apiService.resolveToYouTubeUrl(
+      track.url,
+      track.title,
+      track.artist,
+      album: track.album,
+      duration: track.duration,
+      spotifyId: spotifyId,
+    );
+    if (source == null) {
+      throw StateError('No matching recording found for ${track.title}.');
+    }
+    return {
+      'url': source,
+      'title': track.title,
+      'artist': track.artist ?? '',
+      'album': track.album ?? '',
+      if (spotifyId != null) 'spotify_id': spotifyId,
+      'output_format': 'm4a',
+      'embed_thumbnail': true,
+    };
+  }
+
   Future<void> _downloadTrack(PlaylistTrack track) async {
-    if (track.url == null || track.url!.isEmpty) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('No URL available for download'),
+    if (_offline.isSupported) {
+      if (!_offline.isInitialized) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Device downloads are not ready. Please retry.'),
+        ));
+        return;
+      }
+      final item = _downloadItem(track);
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content:
+            Text('Saving on this device. See Offline library for progress.'),
+      ));
+      try {
+        await _offline.downloadTrack(item,
+            playlistId: _playlist.id, playlistName: _playlist.name);
+        if (!mounted) return;
+        _showOfflineFailures([track]);
+      } catch (error) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(SnackBar(
+            content: Text(downloadFailureMessage(error)),
             backgroundColor: Colors.red,
-          ),
-        );
+          ));
       }
       return;
     }
 
     try {
-      // Use batch download API for progress tracking
-      final downloads = [
-        {
-          'url': track.url!,
-          'title': track.title,
-          'artist': track.artist ?? '',
-          'album': track.album ?? '',
-          'output_format': 'm4a',
-          'embed_thumbnail': true,
-        }
-      ];
+      final downloads = [await _serverDownload(track)];
 
       final result = await _apiService.startBatchDownload(downloads);
       final downloadId = result['download_id'] as String;
@@ -269,7 +353,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Download failed: $e'),
+            content: Text(downloadFailureMessage(e)),
             backgroundColor: Colors.red,
             behavior: SnackBarBehavior.floating,
           ),
@@ -306,11 +390,16 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
           if (mounted) {
             final successCount = progress.processed;
             final failCount = progress.failed;
+            final failures = progress.downloads
+                .where((result) => result['success'] == false);
+            final reason = failures.isEmpty
+                ? downloadFailureMessage(null)
+                : downloadFailureMessage(failures.first['error']);
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
                 content: Text(
                   failCount > 0
-                      ? 'Downloaded $successCount ${successCount == 1 ? 'track' : 'tracks'}${failCount > 0 ? ' ($failCount failed)' : ''}'
+                      ? '$successCount downloaded, $failCount failed. $reason'
                       : 'Downloaded ${successCount} ${successCount == 1 ? 'track' : 'tracks'}',
                 ),
                 backgroundColor: failCount > 0 ? Colors.orange : null,
@@ -326,7 +415,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
-                content: Text('Download error: ${progress.status}'),
+                content: Text(downloadFailureMessage(progress.status)),
                 backgroundColor: Colors.red,
                 behavior: SnackBarBehavior.floating,
               ),
@@ -680,13 +769,13 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
   }
 
   Future<void> _downloadUndownloadedTracks() async {
+    if (_offline.isSupported) {
+      await _downloadOffline();
+      return;
+    }
     // Find all tracks that need to be downloaded
-    final tracksToDownload = _playlist.tracks
-        .where((track) =>
-            !_isTrackDownloaded(track) &&
-            track.url != null &&
-            track.url!.isNotEmpty)
-        .toList();
+    final tracksToDownload =
+        _playlist.tracks.where((track) => !_isTrackDownloaded(track)).toList();
 
     if (tracksToDownload.isEmpty) {
       if (mounted) {
@@ -730,16 +819,10 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
 
     try {
       // Prepare batch download requests
-      final downloads = tracksToDownload
-          .map((track) => {
-                'url': track.url!,
-                'title': track.title,
-                'artist': track.artist ?? '',
-                'album': track.album ?? '',
-                'output_format': 'm4a',
-                'embed_thumbnail': true,
-              })
-          .toList();
+      final downloads = <Map<String, dynamic>>[];
+      for (final track in tracksToDownload) {
+        downloads.add(await _serverDownload(track));
+      }
 
       // Start batch download
       final result = await _apiService.startBatchDownload(downloads);
@@ -756,7 +839,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Download error: $e'),
+            content: Text(downloadFailureMessage(e)),
             backgroundColor: Colors.red,
             behavior: SnackBarBehavior.floating,
             shape: RoundedRectangleBorder(
@@ -1114,8 +1197,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
     }
   }
 
-  @override
-  Widget build(BuildContext context) {
+  Widget _buildContent(BuildContext context) {
     final primaryColor = Theme.of(context).colorScheme.primary;
     final surfaceHover = Theme.of(context).colorScheme.surfaceVariant;
 
@@ -1265,8 +1347,9 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                                         icon: const Icon(Icons.download,
                                             size: 20),
                                         onPressed: _downloadUndownloadedTracks,
-                                        tooltip:
-                                            'Prepare missing tracks on server',
+                                        tooltip: _offline.isSupported
+                                            ? 'Download playlist for offline'
+                                            : 'Prepare missing tracks on server',
                                       ),
                                     ],
                                   ),
@@ -1543,10 +1626,12 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                                                             'Add to queue')),
                                                   if (!_isTrackDownloaded(
                                                       track))
-                                                    const PopupMenuItem(
+                                                    PopupMenuItem(
                                                         value: 'download',
-                                                        child: Text(
-                                                            'Download to server')),
+                                                        child: Text(_offline
+                                                                .isSupported
+                                                            ? 'Save on this device'
+                                                            : 'Download to server')),
                                                   const PopupMenuItem(
                                                       value: 'remove',
                                                       child: Text(
@@ -1577,8 +1662,10 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                                                         size: 20,
                                                       ),
                                                       onPressed: null,
-                                                      tooltip:
-                                                          'Available on server',
+                                                      tooltip: _offline
+                                                              .isSupported
+                                                          ? 'Saved on this device'
+                                                          : 'Available on server',
                                                     )
                                                   : IconButton(
                                                       icon: const Icon(
@@ -1587,8 +1674,10 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                                                           size: 20),
                                                       onPressed: () =>
                                                           _downloadTrack(track),
-                                                      tooltip:
-                                                          'Download to server',
+                                                      tooltip: _offline
+                                                              .isSupported
+                                                          ? 'Save on this device'
+                                                          : 'Download to server',
                                                     ),
                                             // Delete button
                                             if (MediaQuery.sizeOf(context)
@@ -1618,6 +1707,12 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
             ],
           );
   }
+
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+        animation: _offline,
+        builder: (context, _) => _buildContent(context),
+      );
 }
 
 class _PlaylistCoverWidget extends StatefulWidget {

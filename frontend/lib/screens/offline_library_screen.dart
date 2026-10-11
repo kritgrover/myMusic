@@ -3,6 +3,7 @@ import '../models/queue_item.dart';
 import '../services/offline_download_service.dart';
 import '../services/player_state_service.dart';
 import '../services/queue_service.dart';
+import '../utils/download_error_utils.dart';
 import '../utils/responsive_utils.dart';
 import '../widgets/offline_artwork.dart';
 
@@ -90,7 +91,7 @@ class _OfflineLibraryScreenState extends State<OfflineLibraryScreen> {
     try {
       await _offline.retry(job.id);
     } catch (error) {
-      _message('Could not retry download: $error');
+      _message(downloadFailureMessage(error));
     }
   }
 
@@ -123,8 +124,11 @@ class _OfflineLibraryScreenState extends State<OfflineLibraryScreen> {
       if (_offline.lastError != null) {
         return SingleChildScrollView(
           child: Column(children: [
-            _empty(context, Icons.folder_off_outlined,
-                'Could not open offline library', _offline.lastError!),
+            _empty(
+                context,
+                Icons.folder_off_outlined,
+                'Could not open offline library',
+                'Check access to device storage and retry.'),
             if (widget.onRetryInitialization != null)
               OutlinedButton.icon(
                 onPressed: widget.onRetryInitialization,
@@ -248,7 +252,7 @@ class _OfflineLibraryScreenState extends State<OfflineLibraryScreen> {
                 ),
                 if (_offline.lastError != null) ...[
                   const SizedBox(height: 12),
-                  Text(_offline.lastError!,
+                  Text(downloadFailureMessage(_offline.lastError),
                       style: TextStyle(color: colors.error)),
                 ],
                 if (jobs.isNotEmpty) ...[
@@ -369,7 +373,7 @@ class _OfflineLibraryScreenState extends State<OfflineLibraryScreen> {
             if (job.error != null &&
                 job.status == OfflineDownloadStatus.failed) ...[
               const SizedBox(height: 4),
-              Text(job.error!,
+              Text(downloadFailureMessage(job.error),
                   maxLines: 3,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(color: Theme.of(context).colorScheme.error)),
