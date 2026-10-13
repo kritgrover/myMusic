@@ -100,8 +100,11 @@ class DownloadService:
         Returns:
             List of command arguments ready for subprocess
         """
-        if search_spec.startswith(("ytsearch1:", "ytsearch3:")):
-            search_query(search_spec.split(":", 1)[1])
+        # Unified search requests up to 20 results; keep the same bounded
+        # search syntax here as search_youtube instead of treating it as a URL.
+        bounded_search = re.fullmatch(r"ytsearch(?:[1-9]|1[0-9]|20):(.+)", search_spec)
+        if bounded_search:
+            search_query(bounded_search.group(1))
         else:
             search_spec = youtube_url(search_spec)
         if isinstance(self.yt_dlp_exe, list):

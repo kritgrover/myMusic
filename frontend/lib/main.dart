@@ -7,6 +7,7 @@ import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
 import 'services/auth_http_client.dart';
 import 'services/auth_service.dart';
+import 'services/offline_download_service.dart';
 
 // Modern color palette for dedicated music listeners
 const Color primaryAccent = Color(0xFF6366F1); // Indigo
@@ -41,15 +42,35 @@ class MyApp extends StatefulWidget {
 
 class _MyAppState extends State<MyApp> {
   final AuthService _authService = AuthService();
+  int? _offlineUserId;
 
   @override
   void initState() {
     super.initState();
+    _authService.addListener(_onAuthChanged);
     AuthHttpClient.shared.configure(
       tokenProvider: () => _authService.token,
       onUnauthorized: _authService.handleUnauthorized,
     );
     _authService.initialize();
+  }
+
+  void _onAuthChanged() {
+    final userId = _authService.isAuthenticated ? _authService.userId : null;
+    if (userId != _offlineUserId) {
+      // Invalidate the old account before a new HomeScreen can initialize.
+      // A departing HomeScreen must never reset the next account's singleton.
+      OfflineDownloadService.shared.reset();
+      _offlineUserId = userId;
+    }
+  }
+
+  @override
+  void dispose() {
+    _authService.removeListener(_onAuthChanged);
+    _authService.dispose();
+    OfflineDownloadService.shared.reset();
+    super.dispose();
   }
 
   @override

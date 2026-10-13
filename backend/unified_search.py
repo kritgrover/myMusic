@@ -11,6 +11,8 @@ from concurrent.futures import ThreadPoolExecutor
 from difflib import SequenceMatcher
 from urllib.parse import urlsplit
 
+from spotipy.exceptions import SpotifyException
+
 from source_security import youtube_url
 
 
@@ -194,6 +196,16 @@ class ProviderBusy(Exception):
     pass
 
 
+class CatalogPremiumRequired(Exception):
+    """A known catalog access restriction, with a safe message for the client."""
+
+    def __init__(self):
+        super().__init__(
+            "Spotify catalog access requires an active Premium subscription for the app owner's Spotify account. "
+            'Showing available sources and your library.'
+        )
+
+
 class SearchProviders:
     """Bound concurrent blocking clients; timed-out work cannot accumulate in a queue."""
 
@@ -225,7 +237,14 @@ class SearchProviders:
         client = self.spotify().sp
         if client is None:
             raise ProviderBusy('Catalog is unavailable')
-        result = format_catalog(client.search(q=query, type='track,artist,album,playlist', limit=min(10, limit), market='US'))
+        try:
+            catalog = client.search(q=query, type='track,artist,album,playlist', limit=min(10, limit), market='US')
+        except SpotifyException as exc:
+            if (exc.http_status == 403
+                    and 'active premium subscription required for the owner of the app' in str(exc.msg).casefold()):
+                raise CatalogPremiumRequired() from None
+            raise
+        result = format_catalog(catalog)
         database.set_search_cache(key, result, ttl_seconds=600)
         return result
 

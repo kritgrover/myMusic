@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import '../services/album_cover_service.dart';
 import '../services/auth_http_client.dart';
+import '../services/offline_download_service.dart';
+import 'offline_artwork.dart';
 
 /// Widget that fetches and displays album covers for tracks
 /// Tries: 1) Pre-resolved URL, 2) Embedded artwork from file, 3) iTunes API, 4) Placeholder
@@ -62,6 +64,16 @@ class _AlbumCoverState extends State<AlbumCover> {
 
   Future<void> _loadAlbumCover() async {
     final request = ++_loadRequest;
+    final local = OfflineDownloadService.shared.tracks
+        .where((track) => track.filename == widget.filename);
+    if (local.isNotEmpty) {
+      setState(() {
+        _isLoading = false;
+        _hasError = false;
+        _artworkUrl = null;
+      });
+      return;
+    }
     final session = AuthHttpClient.shared.cacheScope;
     final needsFetch = widget.artworkUrl == null || widget.artworkUrl!.isEmpty;
     if (needsFetch) {
@@ -99,6 +111,17 @@ class _AlbumCoverState extends State<AlbumCover> {
     final defaultIconColor = widget.iconColor ??
         Theme.of(context).colorScheme.onSurface.withOpacity(0.5);
     final defaultBorderRadius = widget.borderRadius ?? BorderRadius.circular(8);
+    final local = OfflineDownloadService.shared.tracks
+        .where((track) => track.filename == widget.filename);
+    if (local.isNotEmpty) {
+      return OfflineArtwork(
+        localArtworkUrl: local.first.localArtworkUrl,
+        size: widget.size,
+        borderRadius: defaultBorderRadius,
+        backgroundColor: defaultBgColor,
+        iconColor: defaultIconColor,
+      );
+    }
 
     // Show placeholder while loading or on error
     if (_isLoading || _hasError || _artworkUrl == null) {

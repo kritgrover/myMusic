@@ -6,6 +6,7 @@ import '../services/auth_http_client.dart';
 import '../services/saved_music_service.dart';
 import '../services/player_state_service.dart';
 import '../services/queue_service.dart';
+import '../services/offline_download_service.dart';
 import '../services/recently_played_service.dart';
 import '../models/queue_item.dart';
 import '../utils/song_display_utils.dart';
@@ -22,6 +23,7 @@ class DownloadsScreen extends StatefulWidget {
   final RecentlyPlayedService? recentlyPlayedService;
   final ApiService? apiService;
   final SavedMusicService? savedMusicService;
+  final OfflineDownloadService? offlineService;
 
   const DownloadsScreen({
     super.key,
@@ -30,6 +32,7 @@ class DownloadsScreen extends StatefulWidget {
     this.recentlyPlayedService,
     this.apiService,
     this.savedMusicService,
+    this.offlineService,
   });
 
   @override
@@ -44,6 +47,8 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
   List<DownloadedFile> _downloads = [];
   bool _isLoading = true;
   String _searchQuery = '';
+  OfflineDownloadService get _offline =>
+      widget.offlineService ?? OfflineDownloadService.shared;
 
   @override
   void initState() {
@@ -54,6 +59,7 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
     // Listen to player state changes to update highlighting
     widget.playerStateService.addListener(_onPlayerStateChanged);
     _searchController.addListener(_onSearchChanged);
+    _offline.addListener(_onPlayerStateChanged);
   }
 
   void _onSearchChanged() {
@@ -74,6 +80,7 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
   void dispose() {
     _searchController.dispose();
     widget.playerStateService.removeListener(_onPlayerStateChanged);
+    _offline.removeListener(_onPlayerStateChanged);
     super.dispose();
   }
 
@@ -149,8 +156,9 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Delete Song'),
-        content: Text('Are you sure you want to delete "${file.filename}"?'),
+        title: const Text('Delete server copy'),
+        content: Text('Delete "${file.filename}" from the server? '
+            'Copies saved on your devices will remain available.'),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
@@ -235,6 +243,39 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
     }
   }
 
+  QueueItem _offlineItem(DownloadedFile file) => QueueItem.fromDownloadedFile(
+        filename: file.filename,
+        title: file.title,
+        artist: file.artist,
+      );
+
+  bool _savedOnDevice(DownloadedFile file) =>
+      _offline.tracks.any((track) => track.filename == file.filename);
+
+  bool _savingOnDevice(DownloadedFile file) => _offline.jobs.any((job) =>
+      job.track.filename == file.filename &&
+      (job.status == OfflineDownloadStatus.queued ||
+          job.status == OfflineDownloadStatus.preparing ||
+          job.status == OfflineDownloadStatus.downloading));
+
+  Future<void> _saveOnDevice(List<DownloadedFile> files) async {
+    final pending = files
+        .where((file) => !_savedOnDevice(file) && !_savingOnDevice(file))
+        .toList();
+    if (pending.isEmpty) return;
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content:
+            Text('Saving on this device. See Offline library for progress.')));
+    try {
+      await Future.wait(
+          pending.map((file) => _offline.downloadTrack(_offlineItem(file))));
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not save on this device: $error')));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final filteredDownloads = _filteredDownloads;
@@ -251,9 +292,27 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               GradientSectionHeader(
-                title: 'My Library',
+                title: 'Server files',
                 showGradientBar: true,
               ),
+              const SizedBox(height: 8),
+              const Text(
+                  'Music stored on your server. Save songs on this device for offline listening.'),
+              if (_offline.isSupported && hasDownloads)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: TextButton.icon(
+                    onPressed: _offline.isInitialized &&
+                            filteredDownloads.any((file) =>
+                                !_savedOnDevice(file) && !_savingOnDevice(file))
+                        ? () => _saveOnDevice(filteredDownloads)
+                        : null,
+                    icon: const Icon(Icons.download_for_offline_outlined),
+                    label: Text(_searchQuery.isEmpty
+                        ? 'Save all on this device'
+                        : 'Save results on this device'),
+                  ),
+                ),
               const SizedBox(height: 20),
               TextField(
                 controller: _searchController,
@@ -439,6 +498,31 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
                                                 track: PlaylistTrack
                                                     .fromDownloadedFile(file),
                                                 service: _savedMusic),
+                                            if (_offline.isSupported &&
+                                                MediaQuery.sizeOf(context)
+                                                        .width >=
+                                                    600)
+                                              IconButton(
+                                                icon: Icon(_savedOnDevice(file)
+                                                    ? Icons.offline_pin_rounded
+                                                    : _savingOnDevice(file)
+                                                        ? Icons
+                                                            .downloading_rounded
+                                                        : Icons
+                                                            .download_for_offline_outlined),
+                                                tooltip: _savedOnDevice(file)
+                                                    ? 'Saved on this device'
+                                                    : _savingOnDevice(file)
+                                                        ? 'Saving on this device'
+                                                        : 'Save on this device',
+                                                onPressed: !_offline
+                                                            .isInitialized ||
+                                                        _savedOnDevice(file) ||
+                                                        _savingOnDevice(file)
+                                                    ? null
+                                                    : () =>
+                                                        _saveOnDevice([file]),
+                                              ),
                                             if (MediaQuery.sizeOf(context)
                                                     .width <
                                                 600)
@@ -452,9 +536,28 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
                                                       _addToQueue(file);
                                                     case 'delete':
                                                       _deleteFile(file);
+                                                    case 'offline':
+                                                      _saveOnDevice([file]);
                                                   }
                                                 },
                                                 itemBuilder: (_) => [
+                                                  if (_offline.isSupported)
+                                                    PopupMenuItem(
+                                                      value: 'offline',
+                                                      enabled: _offline
+                                                              .isInitialized &&
+                                                          !_savedOnDevice(
+                                                              file) &&
+                                                          !_savingOnDevice(
+                                                              file),
+                                                      child: Text(_savedOnDevice(
+                                                              file)
+                                                          ? 'Saved on this device'
+                                                          : _savingOnDevice(
+                                                                  file)
+                                                              ? 'Saving on this device'
+                                                              : 'Save on this device'),
+                                                    ),
                                                   const PopupMenuItem(
                                                       value: 'playlist',
                                                       child: Text(
@@ -468,7 +571,7 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
                                                   const PopupMenuItem(
                                                       value: 'delete',
                                                       child: Text(
-                                                          'Delete download')),
+                                                          'Delete server copy')),
                                                 ],
                                               ),
                                             if (MediaQuery.sizeOf(context)

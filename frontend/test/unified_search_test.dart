@@ -23,6 +23,60 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
+  test('device library appears immediately and survives both remote failures',
+      () async {
+    final remote = Completer<SearchResults>();
+    final state = UnifiedSearchController(
+      userId: 1,
+      search: (_) => remote.future,
+      librarySearch: (_) async => throw StateError('offline'),
+      deviceSearch: (_) => const SearchResults(library: [
+        SearchEntry({
+          'id': 'local',
+          'title': 'Saved offline',
+          'filename': 'song.m4a',
+          'library_origin': 'device',
+        })
+      ]),
+    );
+    addTearDown(state.dispose);
+    final pending = state.searchNow('Saved');
+    expect(state.results.library.single.origin, 'device');
+    remote.completeError(StateError('offline'));
+    await pending;
+    expect(state.results.library.single.title, 'Saved offline');
+    expect(state.error, isNull);
+    expect(state.isSearching, isFalse);
+  });
+
+  test(
+      'online results retain device availability without duplicate server files',
+      () async {
+    final state = UnifiedSearchController(
+      userId: 1,
+      search: (_) async => const SearchResults(
+        songs: [
+          SearchEntry({'title': 'Catalog song'})
+        ],
+        library: [
+          SearchEntry({'id': 'server', 'filename': 'song.m4a'})
+        ],
+      ),
+      deviceSearch: (_) => const SearchResults(library: [
+        SearchEntry({
+          'id': 'local',
+          'title': 'Saved offline',
+          'filename': 'song.m4a',
+          'library_origin': 'device',
+        })
+      ]),
+    );
+    addTearDown(state.dispose);
+    await state.searchNow('Saved');
+    expect(state.results.library.single.origin, 'device');
+    expect(state.results.songs.single.title, 'Catalog song');
+  });
+
   test('saved library search preserves original catalog recording identity',
       () {
     const saved = SearchEntry({
@@ -114,6 +168,93 @@ void main() {
     ]));
     await Future<void>.delayed(Duration.zero);
     expect(state.results.songs.single.title, 'music');
+    expect(state.results.library, isEmpty);
+  });
+
+  for (final libraryFirst in [true, false]) {
+    test(
+        'independent library survives combined library failure '
+        'when library completes ${libraryFirst ? 'first' : 'last'}', () async {
+      final local = Completer<SearchResults>();
+      final combined = Completer<SearchResults>();
+      final state = UnifiedSearchController(
+          userId: 1,
+          search: (_) => combined.future,
+          librarySearch: (_) => local.future);
+      addTearDown(state.dispose);
+      final searching = state.searchNow('Metallica');
+      const library = SearchResults(library: [
+        SearchEntry({'id': 'saved', 'title': 'Saved Metallica song'})
+      ], playlists: [
+        SearchEntry({'id': 'mine', 'name': 'My Metallica', 'provider': 'local'})
+      ]);
+      const catalog = SearchResults(songs: [
+        SearchEntry({'id': 'song', 'title': 'Catalog Metallica song'})
+      ], playlists: [
+        SearchEntry(
+            {'id': 'public', 'name': 'Public mix', 'provider': 'spotify'})
+      ], warnings: [
+        'Your library could not be searched. Please try again.'
+      ]);
+      if (libraryFirst) {
+        local.complete(library);
+        await Future<void>.delayed(Duration.zero);
+        combined.complete(catalog);
+      } else {
+        combined.complete(catalog);
+        await searching;
+        local.complete(library);
+      }
+      await searching;
+      await Future<void>.delayed(Duration.zero);
+      expect(state.results.songs.single.title, 'Catalog Metallica song');
+      expect(state.results.library.single.title, 'Saved Metallica song');
+      expect(
+          state.results.playlists.map((entry) => entry.id), ['mine', 'public']);
+      expect(state.results.warnings, isEmpty);
+      expect(state.isSearching, isFalse);
+    });
+  }
+
+  test('successful empty combined library replaces an early library result',
+      () async {
+    final combined = Completer<SearchResults>();
+    final state = UnifiedSearchController(
+        userId: 1,
+        search: (_) => combined.future,
+        librarySearch: (_) async => const SearchResults(library: [
+              SearchEntry({'title': 'Previously saved song'})
+            ]));
+    addTearDown(state.dispose);
+    final searching = state.searchNow('song');
+    await Future<void>.delayed(Duration.zero);
+    expect(state.results.library, hasLength(1));
+    combined.complete(const SearchResults(
+        warnings: ['Music catalog is temporarily unavailable.']));
+    await searching;
+    expect(state.results.library, isEmpty);
+  });
+
+  test('late library recovery cannot replace a newer query', () async {
+    final oldLibrary = Completer<SearchResults>();
+    final state = UnifiedSearchController(
+        userId: 1,
+        search: (query) async => query == 'old'
+            ? const SearchResults(warnings: [
+                'Your library could not be searched. Please try again.'
+              ])
+            : result(query),
+        librarySearch: (query) => query == 'old'
+            ? oldLibrary.future
+            : Future.value(const SearchResults()));
+    addTearDown(state.dispose);
+    await state.searchNow('old');
+    await state.searchNow('new');
+    oldLibrary.complete(const SearchResults(library: [
+      SearchEntry({'title': 'Old library song'})
+    ]));
+    await Future<void>.delayed(Duration.zero);
+    expect(state.results.songs.single.title, 'new');
     expect(state.results.library, isEmpty);
   });
 
@@ -293,5 +434,76 @@ void main() {
     await tester.pump();
     expect(find.text('Saved song'), findsOneWidget);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('provider outage keeps library visible and Retry recovers search',
+      (tester) async {
+    var requests = 0;
+    final state = UnifiedSearchController(
+        userId: 1,
+        search: (_) async => ++requests == 1
+            ? const SearchResults(library: [
+                SearchEntry({
+                  'title': 'Saved Metallica song',
+                  'library_origin': 'playlist'
+                })
+              ], warnings: [
+                'Music catalog is temporarily unavailable. Showing available sources and your library.',
+                'Video search is temporarily unavailable. Please try again.'
+              ])
+            : result('Recovered Metallica song'));
+    addTearDown(state.dispose);
+    await state.searchNow('Metallica');
+    await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+            body: UnifiedSearchResults(
+      controller: state,
+      onSearch: (_) {},
+      onOpen: (_) {},
+      trackBuilder: (entry) => ListTile(title: Text(entry.title)),
+      browse: const SizedBox(),
+    ))));
+    expect(find.text('Saved Metallica song'), findsOneWidget);
+    expect(find.text('Retry'), findsOneWidget);
+    await tester.tap(find.widgetWithText(ChoiceChip, 'Artists'));
+    await tester.pump();
+    expect(find.text('Artist search is unavailable'), findsOneWidget);
+    expect(find.text('No artists found'), findsNothing);
+    await tester.tap(find.text('Retry'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(ChoiceChip, 'All'));
+    await tester.pump();
+    expect(find.text('Recovered Metallica song'), findsOneWidget);
+    expect(find.text('Retry'), findsNothing);
+  });
+
+  testWidgets('empty outage differs from no matches in an available category',
+      (tester) async {
+    final state = UnifiedSearchController(
+        userId: 1,
+        search: (_) async => const SearchResults(warnings: [
+              'Music catalog is temporarily unavailable.',
+              'Video search is temporarily unavailable. Please try again.'
+            ]));
+    addTearDown(state.dispose);
+    await state.searchNow('Metallica');
+    await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+            body: UnifiedSearchResults(
+      controller: state,
+      onSearch: (_) {},
+      onOpen: (_) {},
+      trackBuilder: (entry) => ListTile(title: Text(entry.title)),
+      browse: const SizedBox(),
+    ))));
+    expect(find.text('Search is unavailable'), findsOneWidget);
+    expect(find.text('No results for “Metallica”'), findsNothing);
+    expect(
+        find.text('Try another spelling, an artist name, or a shorter search.'),
+        findsNothing);
+    await tester.tap(find.widgetWithText(ChoiceChip, 'Your Library'));
+    await tester.pump();
+    expect(find.text('No matches in your library'), findsOneWidget);
+    expect(find.text('Library search is unavailable'), findsNothing);
   });
 }

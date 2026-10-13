@@ -6,6 +6,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config.dart';
 
+enum _TokenValidation { valid, unavailable, invalid }
+
 class AuthService extends ChangeNotifier {
   AuthService({
     http.Client? client,
@@ -21,6 +23,7 @@ class AuthService extends ChangeNotifier {
   static const String _userIdKey = 'auth_user_id';
   static const String _usernameKey = 'auth_username';
   static const String _taglineKey = 'auth_tagline';
+  static const String _apiBaseUrlKey = 'auth_api_base_url';
   static const String _invalidResponseError =
       'The music server returned an invalid sign-in response. Please try again.';
 
@@ -35,6 +38,7 @@ class AuthService extends ChangeNotifier {
   String _tagline = '';
   bool _isLoading = false;
   bool _isInitialized = false;
+  bool _isOfflineSession = false;
   String? _lastLoginError;
 
   String? get token => _token;
@@ -43,6 +47,7 @@ class AuthService extends ChangeNotifier {
   String get tagline => _tagline;
   bool get isLoading => _isLoading;
   bool get isInitialized => _isInitialized;
+  bool get isOfflineSession => _isOfflineSession;
   String? get lastLoginError => _lastLoginError;
   bool get isAuthenticated =>
       _token != null && _userId != null && _username != null;
@@ -53,16 +58,34 @@ class AuthService extends ChangeNotifier {
     notifyListeners();
     try {
       final prefs = await SharedPreferences.getInstance();
-      _token = prefs.getString(_tokenKey);
-      _userId = prefs.getInt(_userIdKey);
-      _username = prefs.getString(_usernameKey);
-      _tagline = prefs.getString(_taglineKey) ?? '';
+      final token = prefs.get(_tokenKey);
+      final userId = prefs.get(_userIdKey);
+      final username = prefs.get(_usernameKey);
+      final tagline = prefs.get(_taglineKey) ?? '';
+      final apiBaseUrl = prefs.get(_apiBaseUrlKey);
+      if (token is! String ||
+          token.trim().isEmpty ||
+          userId is! int ||
+          userId <= 0 ||
+          username is! String ||
+          username.trim().isEmpty ||
+          tagline is! String ||
+          (apiBaseUrl != null && apiBaseUrl != _apiBaseUrl)) {
+        await _clearSession();
+        return;
+      }
 
-      if (_token != null) {
-        final isValid = await _validateCurrentToken();
-        if (!isValid) {
-          await _clearSession();
-        }
+      _token = token;
+      _userId = userId;
+      _username = username;
+      _tagline = tagline;
+
+      final validation = await _validateCurrentToken();
+      if (validation == _TokenValidation.invalid) {
+        await _clearSession();
+      } else {
+        // A server outage cannot revoke a previously authenticated local user.
+        _isOfflineSession = validation == _TokenValidation.unavailable;
       }
     } finally {
       _isInitialized = true;
@@ -124,10 +147,12 @@ class AuthService extends ChangeNotifier {
       await prefs.setInt(_userIdKey, userId);
       await prefs.setString(_usernameKey, nextUsername);
       await prefs.setString(_taglineKey, tagline);
+      await prefs.setString(_apiBaseUrlKey, _apiBaseUrl);
       _token = token;
       _userId = userId;
       _username = nextUsername;
       _tagline = tagline;
+      _isOfflineSession = false;
       return true;
     } on TimeoutException {
       _lastLoginError =
@@ -166,14 +191,16 @@ class AuthService extends ChangeNotifier {
     _userId = null;
     _username = null;
     _tagline = '';
+    _isOfflineSession = false;
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_tokenKey);
     await prefs.remove(_userIdKey);
     await prefs.remove(_usernameKey);
     await prefs.remove(_taglineKey);
+    await prefs.remove(_apiBaseUrlKey);
   }
 
-  Future<bool> _validateCurrentToken() async {
+  Future<_TokenValidation> _validateCurrentToken() async {
     try {
       final response = await _client.get(
         Uri.parse('$_apiBaseUrl/auth/me'),
@@ -181,15 +208,25 @@ class AuthService extends ChangeNotifier {
           'Authorization': 'Bearer $_token',
         },
       ).timeout(_requestTimeout);
-      if (response.statusCode != 200) {
-        return false;
+      if (response.statusCode >= 500 && response.statusCode <= 599) {
+        return _TokenValidation.unavailable;
       }
-      final data = jsonDecode(response.body) as Map<String, dynamic>;
-      final nextUserId = data['id'] as int?;
-      final nextUsername = data['username'] as String?;
-      final nextTagline = data['tagline'] as String? ?? '';
-      if (nextUserId == null || nextUsername == null) {
-        return false;
+      if (response.statusCode != 200) {
+        return _TokenValidation.invalid;
+      }
+      final data = jsonDecode(response.body);
+      if (data is! Map<String, dynamic>) {
+        return _TokenValidation.invalid;
+      }
+      final nextUserId = data['id'];
+      final nextUsername = data['username'];
+      final nextTagline = data['tagline'] ?? '';
+      if (nextUserId is! int ||
+          nextUserId <= 0 ||
+          nextUsername is! String ||
+          nextUsername.trim().isEmpty ||
+          nextTagline is! String) {
+        return _TokenValidation.invalid;
       }
       _userId = nextUserId;
       _username = nextUsername;
@@ -199,9 +236,15 @@ class AuthService extends ChangeNotifier {
       await prefs.setInt(_userIdKey, _userId!);
       await prefs.setString(_usernameKey, _username!);
       await prefs.setString(_taglineKey, _tagline);
-      return true;
+      // Sessions saved before server scoping are bound after validation.
+      await prefs.setString(_apiBaseUrlKey, _apiBaseUrl);
+      return _TokenValidation.valid;
+    } on TimeoutException {
+      return _TokenValidation.unavailable;
+    } on http.ClientException {
+      return _TokenValidation.unavailable;
     } catch (_) {
-      return false;
+      return _TokenValidation.invalid;
     }
   }
 

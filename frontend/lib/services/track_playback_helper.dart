@@ -1,4 +1,7 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
+import '../config.dart';
+import 'offline_download_service.dart';
 import 'api_service.dart';
 import 'queue_service.dart';
 import 'player_state_service.dart';
@@ -20,18 +23,24 @@ class TrackPlaybackHelper {
   final QueueService queueService;
   final PlayerStateService playerStateService;
   final PlaylistService playlistService;
+  final OfflineDownloadService _offline;
 
   TrackPlaybackHelper({
     required this.apiService,
     required this.queueService,
     required this.playerStateService,
     required this.playlistService,
-  });
+    OfflineDownloadService? offlineService,
+  }) : _offline = offlineService ?? OfflineDownloadService.shared;
 
   /// Lazy loader used by queued items: resolves originalUrl (Spotify/empty -> YouTube)
   /// then returns the backend streaming URL. Mirrors home_screen._loadStreamingUrlForAlbumItem.
   Future<String?> loadStreamingUrl(QueueItem item) async {
     try {
+      final local = await _offline.localQueueItemFor(item);
+      if (local?.filename != null) {
+        return '${AppConfig.apiBaseUrl}/downloads/${Uri.encodeComponent(local!.filename!)}';
+      }
       final youtubeUrl = await apiService.resolveToYouTubeUrl(
         item.originalUrl,
         item.title ?? '',
@@ -65,6 +74,12 @@ class TrackPlaybackHelper {
   /// Play a single track immediately (replaces the queue with just this track).
   Future<void> playTrack(BuildContext context, PlaylistTrack track) async {
     try {
+      final local = await _offline.localQueueItemFor(_queueItem(track));
+      if (local != null) {
+        queueService.clearQueue();
+        await queueService.addAndPlay(local, playerStateService);
+        return;
+      }
       if (track.filename.isNotEmpty) {
         queueService.clearQueue();
         await queueService.addAndPlay(
@@ -140,6 +155,14 @@ class TrackPlaybackHelper {
   Future<void> addToQueue(BuildContext context, PlaylistTrack track,
       {bool showSnackbar = true}) async {
     try {
+      final local = await _offline.localQueueItemFor(_queueItem(track));
+      if (local != null) {
+        queueService.addToQueue(local);
+        if (showSnackbar && context.mounted) {
+          _info(context, 'Added "${track.title}" to queue');
+        }
+        return;
+      }
       if (track.filename.isNotEmpty) {
         queueService.addToQueue(QueueItem.fromDownloadedFile(
           filename: track.filename,
@@ -147,7 +170,9 @@ class TrackPlaybackHelper {
           artist: track.artist,
           album: track.album,
         ));
-        if (showSnackbar) _info(context, 'Added "${track.title}" to queue');
+        if (showSnackbar && context.mounted) {
+          _info(context, 'Added "${track.title}" to queue');
+        }
         return;
       }
       final yt = await _resolve(track);
@@ -179,6 +204,24 @@ class TrackPlaybackHelper {
   }
 
   Future<void> download(BuildContext context, PlaylistTrack track) async {
+    final offline = _offline;
+    if (offline.isSupported) {
+      if (!offline.isInitialized) {
+        _info(context,
+            'Your offline library is still opening. Please try again in a moment.');
+        return;
+      }
+      _info(context,
+          'Saving "${track.title}" on this device. Follow progress in Your Library → On this device.');
+      unawaited(
+          offline.downloadTrack(_queueItem(track)).catchError((Object error) {
+        if (context.mounted) {
+          _error(context,
+              'Could not save "${track.title}". Retry in On this device.');
+        }
+      }));
+      return;
+    }
     String? yt;
     try {
       yt = await _resolve(track);
@@ -216,6 +259,18 @@ class TrackPlaybackHelper {
       }
     }
   }
+
+  QueueItem _queueItem(PlaylistTrack track) => QueueItem(
+        id: track.id,
+        title: track.title,
+        artist: track.artist,
+        album: track.album,
+        filename: track.filename.isEmpty ? null : track.filename,
+        originalUrl: track.url,
+        thumbnail: track.thumbnail,
+        duration: track.duration,
+        spotifyId: ApiService.spotifyTrackId(track.url, id: track.id),
+      );
 
   Future<void> addToPlaylist(BuildContext context, PlaylistTrack track) async {
     try {

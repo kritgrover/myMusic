@@ -6,10 +6,12 @@ import '../services/recommendation_service.dart';
 import '../services/player_state_service.dart';
 import '../services/api_service.dart';
 import '../services/queue_service.dart';
+import '../services/offline_download_service.dart';
 import '../services/recently_played_service.dart';
 import '../models/playlist.dart';
 import '../models/queue_item.dart';
 import '../utils/song_display_utils.dart';
+import '../utils/download_error_utils.dart';
 import '../widgets/album_cover.dart';
 
 enum PlaylistSortOption {
@@ -38,6 +40,8 @@ class SpotifyPlaylistScreen extends StatefulWidget {
   /// When provided, shows a "Save to my playlists" action that calls this callback.
   final Future<void> Function()? onSaveToLibrary;
   final RecommendationService? recommendationService;
+  final ApiService? apiService;
+  final OfflineDownloadService? offlineService;
 
   const SpotifyPlaylistScreen({
     super.key,
@@ -53,6 +57,8 @@ class SpotifyPlaylistScreen extends StatefulWidget {
     this.trackLoader,
     this.onSaveToLibrary,
     this.recommendationService,
+    this.apiService,
+    this.offlineService,
   });
 
   @override
@@ -61,7 +67,9 @@ class SpotifyPlaylistScreen extends StatefulWidget {
 
 class _SpotifyPlaylistScreenState extends State<SpotifyPlaylistScreen> {
   late final RecommendationService _recommendationService;
-  final ApiService _apiService = ApiService();
+  late final ApiService _apiService = widget.apiService ?? ApiService();
+  OfflineDownloadService get _offline =>
+      widget.offlineService ?? OfflineDownloadService.shared;
   List<PlaylistTrack> _tracks = [];
   bool _isLoading = true;
   bool _loadFailed = false;
@@ -139,34 +147,109 @@ class _SpotifyPlaylistScreenState extends State<SpotifyPlaylistScreen> {
   }
 
   bool _isTrackDownloaded(PlaylistTrack track) {
+    if (_offline.isSupported) {
+      final spotifyId = ApiService.spotifyTrackId(track.url, id: track.id);
+      final source = ApiService.canonicalYouTubeSource(track.url);
+      // Match the service's strongest identity so an older recording with the
+      // same catalog ID cannot hide a newly selected recording's download.
+      final key = track.filename.isNotEmpty
+          ? 'file:${track.filename}'
+          : source != null
+              ? 'source:$source'
+              : spotifyId != null
+                  ? 'spotify:$spotifyId'
+                  : 'id:track_${track.id}';
+      return _offline.tracks.any((saved) => saved.sourceKeys.contains(key));
+    }
     return track.filename.isNotEmpty;
   }
 
-  Future<void> _downloadTrack(PlaylistTrack track) async {
-    if (track.url == null || track.url!.isEmpty) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('No URL available for download'),
-            backgroundColor: Colors.red,
-          ),
-        );
+  QueueItem _downloadItem(PlaylistTrack track) => QueueItem(
+        id: 'track_${track.id}',
+        title: track.title,
+        artist: track.artist,
+        album: track.album,
+        duration: track.duration,
+        filename: track.filename,
+        originalUrl: track.url,
+        thumbnail: track.thumbnail,
+        spotifyId: ApiService.spotifyTrackId(track.url, id: track.id),
+      );
+
+  void _showDownloadFailure(Object? error) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(
+        content: Text(downloadFailureMessage(error)),
+        backgroundColor: Colors.red,
+        behavior: SnackBarBehavior.floating,
+      ));
+  }
+
+  Future<void> _downloadOffline({PlaylistTrack? track}) async {
+    if (!_offline.isInitialized) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Device downloads are not ready. Please retry.'),
+      ));
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(track == null
+          ? 'Saving this playlist on your device. See Offline library for progress.'
+          : 'Saving on this device. See Offline library for progress.'),
+    ));
+    try {
+      if (track != null) {
+        await _offline.downloadTrack(_downloadItem(track),
+            playlistId: widget.playlistId, playlistName: widget.playlistName);
+      } else {
+        final now = DateTime.now();
+        await _offline.downloadPlaylist(Playlist(
+          id: widget.playlistId,
+          name: widget.playlistName,
+          tracks: List.of(_tracks),
+          createdAt: now,
+          updatedAt: now,
+          coverImage: widget.coverUrl,
+        ));
       }
+      if (!mounted) return;
+      final failures = (track == null ? _tracks : [track])
+          .map((entry) => _offline.jobFor(_downloadItem(entry)))
+          .whereType<OfflineDownloadJob>()
+          .where((job) => job.status == OfflineDownloadStatus.failed);
+      if (failures.isNotEmpty) _showDownloadFailure(failures.first.error);
+    } catch (error) {
+      _showDownloadFailure(error);
+    }
+  }
+
+  Future<Map<String, dynamic>> _serverDownload(PlaylistTrack track) async {
+    final source = await _resolveTrackSource(track);
+    if (source == null || source.isEmpty) {
+      throw StateError('No matching recording found for ${track.title}.');
+    }
+    final spotifyId = ApiService.spotifyTrackId(track.url, id: track.id);
+    return {
+      'url': source,
+      'title': track.title,
+      'artist': track.artist ?? '',
+      'album': track.album ?? '',
+      if (spotifyId != null) 'spotify_id': spotifyId,
+      'output_format': 'm4a',
+      'embed_thumbnail': true,
+    };
+  }
+
+  Future<void> _downloadTrack(PlaylistTrack track) async {
+    if (_offline.isSupported) {
+      await _downloadOffline(track: track);
       return;
     }
 
     try {
-      // Use batch download API for progress tracking
-      final downloads = [
-        {
-          'url': track.url!,
-          'title': track.title,
-          'artist': track.artist ?? '',
-          'album': track.album ?? '',
-          'output_format': 'm4a',
-          'embed_thumbnail': true,
-        }
-      ];
+      final downloads = [await _serverDownload(track)];
 
       final result = await _apiService.startBatchDownload(downloads);
       final downloadId = result['download_id'] as String;
@@ -185,19 +268,15 @@ class _SpotifyPlaylistScreenState extends State<SpotifyPlaylistScreen> {
         );
       }
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Download failed: $e'),
-            backgroundColor: Colors.red,
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-      }
+      _showDownloadFailure(e);
     }
   }
 
   Future<void> _downloadUndownloadedTracks() async {
+    if (_offline.isSupported) {
+      if (_tracks.isNotEmpty) await _downloadOffline();
+      return;
+    }
     final tracksToDownload = _tracks
         .where((track) =>
             !_isTrackDownloaded(track) &&
@@ -243,16 +322,10 @@ class _SpotifyPlaylistScreenState extends State<SpotifyPlaylistScreen> {
     if (confirmed != true) return;
 
     try {
-      final downloads = tracksToDownload
-          .map((track) => {
-                'url': track.url!,
-                'title': track.title,
-                'artist': track.artist ?? '',
-                'album': track.album ?? '',
-                'output_format': 'm4a',
-                'embed_thumbnail': true,
-              })
-          .toList();
+      final downloads = <Map<String, dynamic>>[];
+      for (final track in tracksToDownload) {
+        downloads.add(await _serverDownload(track));
+      }
 
       final result = await _apiService.startBatchDownload(downloads);
       final downloadId = result['download_id'] as String;
@@ -273,18 +346,7 @@ class _SpotifyPlaylistScreenState extends State<SpotifyPlaylistScreen> {
         );
       }
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Download error: $e'),
-            backgroundColor: Colors.red,
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(8),
-            ),
-          ),
-        );
-      }
+      _showDownloadFailure(e);
     }
   }
 
@@ -857,7 +919,9 @@ class _SpotifyPlaylistScreenState extends State<SpotifyPlaylistScreen> {
                                         icon: const Icon(Icons.download,
                                             size: 20),
                                         onPressed: _downloadUndownloadedTracks,
-                                        tooltip: 'Download undownloaded tracks',
+                                        tooltip: _offline.isSupported
+                                            ? 'Download for offline'
+                                            : 'Download undownloaded tracks',
                                       ),
                                       if (widget.onSaveToLibrary != null)
                                         IconButton(
@@ -1105,7 +1169,10 @@ class _SpotifyPlaylistScreenState extends State<SpotifyPlaylistScreen> {
                                                       size: 20,
                                                     ),
                                                     onPressed: null,
-                                                    tooltip: 'Downloaded',
+                                                    tooltip: _offline
+                                                            .isSupported
+                                                        ? 'Saved on this device'
+                                                        : 'Downloaded',
                                                   )
                                                 : IconButton(
                                                     icon: const Icon(
@@ -1134,15 +1201,19 @@ class _SpotifyPlaylistScreenState extends State<SpotifyPlaylistScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final content = AnimatedBuilder(
+      animation: _offline,
+      builder: (context, _) => _buildContent(),
+    );
     if (widget.embedded) {
-      return _buildContent();
+      return content;
     }
 
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.playlistName),
       ),
-      body: _buildContent(),
+      body: content,
     );
   }
 }

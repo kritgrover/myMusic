@@ -9,6 +9,7 @@ from contextlib import closing
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
+from spotipy.exceptions import SpotifyException
 from isolated_backend import isolated_backend
 
 
@@ -90,6 +91,52 @@ class UnifiedSearchTests(unittest.TestCase):
         self.assertTrue(all('My Night' not in str(row) for row in other['library']))
         self.assertTrue(all('file_path' not in row for row in own['library']))
         self.assertEqual(own['playlists'][0]['provider'], 'local')
+
+    def test_catalog_premium_restriction_explains_access_and_keeps_source_fallback(self):
+        error = SpotifyException(
+            403, -1,
+            'https://api.spotify.com/v1/search?private=value: '
+            'Active premium subscription required for the owner of the app. '
+            'When the subscription status changes, it can take a few hours before requests are allowed again.',
+        )
+        client = types.SimpleNamespace(search=lambda **kwargs: None)
+        with patch.object(client, 'search', side_effect=error), \
+                patch.object(self.api.spotify_service, 'sp', client), \
+                patch.object(self.api.download_service, 'search_youtube', return_value=self.videos):
+            response = self.client.get('/search/unified?q=night', headers=self.headers)
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.json()
+        self.assertEqual(len(body['songs']), len(self.videos))
+        self.assertTrue(all(row['provider'] == 'youtube' for row in body['songs']))
+        self.assertEqual(len(body['warnings']), 1)
+        self.assertIn("app owner's Spotify account", body['warnings'][0])
+        self.assertIn('active Premium subscription', body['warnings'][0])
+        self.assertNotIn('private=value', response.text)
+        self.assertNotIn('api.spotify.com', response.text)
+
+        # Access failures must not replace later successful results in the cache.
+        catalog = {'tracks': {'items': [{'id': 'restored', 'name': 'Night Restored'}]}}
+        with patch.object(client, 'search', return_value=catalog) as search, \
+                patch.object(self.api.spotify_service, 'sp', client), \
+                patch.object(self.api.download_service, 'search_youtube') as videos:
+            restored = self.client.get('/search/unified?q=night', headers=self.headers).json()
+        self.assertEqual(restored['songs'][0]['spotify_id'], 'restored')
+        self.assertEqual(restored['warnings'], [])
+        search.assert_called_once()
+        videos.assert_not_called()
+
+    def test_unknown_catalog_failure_keeps_generic_warning_and_hides_diagnostics(self):
+        client = types.SimpleNamespace(search=lambda **kwargs: None)
+        with patch.object(client, 'search', side_effect=SpotifyException(403, -1, 'private diagnostic')), \
+                patch.object(self.api.spotify_service, 'sp', client), \
+                patch.object(self.api.download_service, 'search_youtube', return_value=[]):
+            response = self.client.get('/search/unified?q=night', headers=self.headers)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()['warnings'], [
+            'Music catalog is temporarily unavailable. Showing available sources and your library.'
+        ])
+        self.assertNotIn('private diagnostic', response.text)
+        self.assertEqual(response.json()['songs'], [])
 
     def test_library_search_returns_only_owned_matches_without_external_providers(self):
         self.api.db.save_library_item(self.user['id'], 'tracks', 'local-song',
