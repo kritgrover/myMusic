@@ -5,6 +5,7 @@ import 'api_service.dart';
 import 'recently_played_service.dart';
 import 'recommendation_service.dart';
 import 'listening_session_service.dart';
+import 'listening_event_store.dart';
 import 'media_exceptions.dart';
 import '../config.dart';
 import '../models/playlist.dart';
@@ -33,6 +34,7 @@ class PlayerStateService extends ChangeNotifier {
     RecentlyPlayedService? recentlyPlayedService,
     RecommendationService? recommendationService,
     ListeningSessionService? listeningSessionService,
+    Future<ListeningEventStore>? listeningEventStore,
   })  : _audioPlayerService = audioPlayerService ?? AudioPlayerService(),
         _recentlyPlayedService = recentlyPlayedService,
         _recommendationService =
@@ -41,6 +43,7 @@ class PlayerStateService extends ChangeNotifier {
     _listening = listeningSessionService ??
         ListeningSessionService(
             audio: _audioPlayerService,
+            store: listeningEventStore,
             sendEvent: _recommendationService.recordListeningEvent,
             isSessionCurrent: () =>
                 _recommendationService.sessionScope == listeningScope);
@@ -69,10 +72,12 @@ class PlayerStateService extends ChangeNotifier {
   /// System interruptions use this to avoid resuming after a manual pause.
   int get playbackRevision => _playRequest;
   Future<void> flushListeningHistory() => _listening.flush();
+  Future<void> persistListeningHistory() => _listening.persistPending();
 
   Future<void> finishListeningSession() async {
     await _audioPlayerService.pause();
-    await _listening.finish('stopped');
+    // Signing out needs the local checkpoint, not a live server connection.
+    await _listening.finish('stopped', send: false);
   }
 
   /// Audio already changed decks on its scheduling clock. Adopt its metadata

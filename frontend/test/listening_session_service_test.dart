@@ -269,7 +269,7 @@ void main() {
   });
 
   test(
-      'switching account during delivery drops later pending events permanently',
+      'switching account during delivery retains events without sending across accounts',
       () async {
     await tracker.dispose();
     final gate = Completer<void>();
@@ -293,10 +293,11 @@ void main() {
     sessionCurrent = true;
     await tracker.flush();
     expect(sent.length, 1);
-    expect(tracker.pendingEventCount, 0);
+    expect(tracker.pendingEventCount, 2);
   });
 
-  test('pending retry queue stays bounded during a long outage', () async {
+  test('pending retry queue retains all occurrences during a long outage',
+      () async {
     await tracker.dispose();
     tracker = ListeningSessionService(
         audio: audio,
@@ -308,7 +309,7 @@ void main() {
       now += const Duration(seconds: 1);
       await tracker.finish('skipped');
     }
-    expect(tracker.pendingEventCount, ListeningSessionService.maxPendingEvents);
+    expect(tracker.pendingEventCount, 50);
   });
 
   test(

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math';
 import 'api_service.dart';
 import 'audio_player_service.dart';
+import 'listening_event_store.dart';
 
 class _ListeningOccurrence {
   final String id;
@@ -10,20 +11,20 @@ class _ListeningOccurrence {
   final String? source;
   final String? spotifyId;
   final String? audioIdentity;
+  final String startedAt;
   int sequence = 0;
   int listenedMicroseconds = 0;
   int lastQueuedMicroseconds = 0;
   String? lastQueuedReason;
   double durationSeconds;
   _ListeningOccurrence(this.id, this.title, this.artist, this.source,
-      this.spotifyId, this.audioIdentity, this.durationSeconds);
+      this.spotifyId, this.audioIdentity, this.durationSeconds, this.startedAt);
 }
 
 /// Measures real elapsed playback, independently of the seekable media clock.
 /// Each queue occurrence owns a cumulative, idempotent event. Pending payloads
 /// are immutable and serialized so retries never race newer checkpoints.
 class ListeningSessionService {
-  static const maxPendingEvents = 32;
   static const _maxSeconds = 86400;
   static const _reasons = {
     'ongoing',
@@ -38,12 +39,21 @@ class ListeningSessionService {
   final bool Function() _isSessionCurrent;
   final Duration Function() _now;
   final String Function() _eventIdFactory;
+  final DateTime Function() _wallNow;
+  final Future<ListeningEventStore> _store;
   final Map<String, Map<String, dynamic>> _pending = {};
+  final Map<String, Map<String, dynamic>> _dirty = {};
+  final Map<String, int> _persisted = {};
   final Duration checkpointInterval;
+  final Duration sendTimeout;
   StreamSubscription<PlayerState>? _states;
   Timer? _timer;
   Future<void>? _sending;
   Future<void>? _disposing;
+  Future<void>? _persisting;
+  Future<void>? _loading;
+  late final Future<void> ready;
+  bool _loaded = false;
   _ListeningOccurrence? _active;
   late Duration _lastObserved;
   bool _eligible = false;
@@ -57,20 +67,30 @@ class ListeningSessionService {
     bool Function()? isSessionCurrent,
     Duration Function()? now,
     String Function()? eventIdFactory,
+    DateTime Function()? wallNow,
+    Future<ListeningEventStore>? store,
     this.checkpointInterval = const Duration(seconds: 5),
+    this.sendTimeout = const Duration(seconds: 8),
   })  : _audio = audio,
         _sendEvent = sendEvent,
         _isSessionCurrent = isSessionCurrent ?? (() => true),
         _now = now ?? _monotonicClock(),
-        _eventIdFactory = eventIdFactory ?? _newEventId {
+        _eventIdFactory = eventIdFactory ?? _newEventId,
+        _wallNow = wallNow ?? DateTime.now,
+        _store = store ?? Future.value(MemoryListeningEventStore()) {
     if (checkpointInterval <= Duration.zero) {
       throw ArgumentError.value(checkpointInterval, 'checkpointInterval');
+    }
+    if (sendTimeout <= Duration.zero) {
+      throw ArgumentError.value(sendTimeout, 'sendTimeout');
     }
     _lastObserved = _now();
     _states = _audio.stateStream.listen(_onAudioState);
     _timer = Timer.periodic(checkpointInterval, (_) {
       unawaited(flush());
     });
+    ready = _restore();
+    unawaited(ready.then((_) => _drain()));
   }
 
   static Duration Function() _monotonicClock() {
@@ -92,12 +112,70 @@ class ListeningSessionService {
   bool _checkSession() {
     if (_invalidated) return false;
     if (_isSessionCurrent()) return true;
+    // Credentials can be invalidated before the screen's dispose callback.
+    // Capture the old occurrence into its immutable account store first.
+    _observe();
+    _enqueue('stopped', checkSession: false);
     _invalidated = true;
     _active = null;
     _eligible = false;
-    _pending.clear();
     _timer?.cancel();
+    unawaited(_persist());
     return false;
+  }
+
+  Future<void> _restore({bool refresh = false}) {
+    if (_loaded && !refresh) return Future.value();
+    if (_loading != null) return _loading!;
+    final work = Future<void>.microtask(() async {
+      try {
+        final events = await (await _store).read();
+        for (final raw in events) {
+          final event = validateStoredListeningEvent(raw);
+          if (event == null) continue;
+          final id = event['event_id'] as String;
+          final sequence = event['sequence'] as int;
+          final current = _pending[id];
+          if (current == null || (current['sequence'] as int) < sequence) {
+            _pending[id] = event;
+            _dirty.remove(id);
+          }
+          _persisted[id] = max(_persisted[id] ?? 0, sequence);
+        }
+        _loaded = true;
+      } catch (_) {
+        _lastError = 'Could not restore listening history. It will retry.';
+      }
+    });
+    _loading = work;
+    return work.whenComplete(() {
+      if (identical(_loading, work)) _loading = null;
+    });
+  }
+
+  Future<void> _persist() {
+    if (_persisting != null) return _persisting!;
+    final work = Future<void>.microtask(() async {
+      await _restore();
+      if (!_loaded) return;
+      try {
+        final store = await _store;
+        while (_dirty.isNotEmpty) {
+          final id = _dirty.keys.first;
+          final payload = _dirty[id]!;
+          await store.put(payload);
+          _persisted[id] = payload['sequence'] as int;
+          if (identical(_dirty[id], payload)) _dirty.remove(id);
+        }
+      } catch (_) {
+        _lastError =
+            'Could not save listening history on this device. It will retry.';
+      }
+    });
+    _persisting = work;
+    return work.whenComplete(() {
+      if (identical(_persisting, work)) _persisting = null;
+    });
   }
 
   static String _text(String value, String fallback, int limit) {
@@ -207,7 +285,8 @@ class ListeningSessionService {
             ? spotifyId.trim()
             : null,
         _audio.currentUrl,
-        _duration(_audio.duration));
+        _duration(_audio.duration),
+        _wallNow().toUtc().toIso8601String());
     _lastObserved = _now();
     _eligible = _canCount;
     unawaited(_drain());
@@ -217,9 +296,10 @@ class ListeningSessionService {
     if (!_reasons.contains(reason)) throw ArgumentError.value(reason, 'reason');
   }
 
-  void _enqueue(String reason, {bool onlyIfAdvanced = false}) {
+  void _enqueue(String reason,
+      {bool onlyIfAdvanced = false, bool checkSession = true}) {
     final active = _active;
-    if (active == null || !_checkSession()) return;
+    if (active == null || (checkSession && !_checkSession())) return;
     if (onlyIfAdvanced &&
         active.listenedMicroseconds <= active.lastQueuedMicroseconds &&
         !(reason == 'paused' &&
@@ -239,15 +319,11 @@ class ListeningSessionService {
       'duration_seconds': active.durationSeconds,
       'listened_seconds': active.listenedMicroseconds / 1000000,
       'end_reason': reason,
+      'started_at': active.startedAt,
     });
     _pending[active.id] = payload;
-    _boundPending();
-  }
-
-  void _boundPending() {
-    while (_pending.length > maxPendingEvents) {
-      _pending.remove(_pending.keys.first);
-    }
+    _dirty[active.id] = payload;
+    unawaited(_persist());
   }
 
   Future<void> _drain() {
@@ -257,21 +333,32 @@ class ListeningSessionService {
     // Deferring the body lets _sending be installed before a synchronous sender
     // callback can ask for another checkpoint.
     final next = Future<void>.microtask(() async {
+      // A previous account session may finish a delayed checkpoint after this
+      // service loaded. Reconcile once per delivery pass so that write does not
+      // wait for another app restart. Never scan once per individual event.
+      await _restore(refresh: true);
+      await _persist();
       while (_pending.isNotEmpty && _checkSession()) {
         final id = _pending.keys.first;
-        final payload = _pending.remove(id)!;
+        final payload = _pending[id]!;
+        final sequence = payload['sequence'] as int;
+        // Never put an event on the wire before its checkpoint is durable.
+        if (_persisted[id] != sequence) {
+          await _persist();
+          if (_persisted[id] != sequence) return;
+        }
+        if (!_checkSession()) return;
         try {
-          await _sendEvent(payload);
+          await _sendEvent(payload).timeout(sendTimeout);
           if (!_checkSession()) return;
+          await (await _store).acknowledge(id, sequence);
+          if (identical(_pending[id], payload)) {
+            _pending.remove(id);
+            _persisted.remove(id);
+          }
           _lastError = null;
         } catch (_) {
           if (!_checkSession()) return;
-          final newer = _pending[id];
-          if (newer == null ||
-              (newer['sequence'] as int) < (payload['sequence'] as int)) {
-            _pending[id] = payload;
-          }
-          _boundPending();
           _lastError =
               'Listening history will retry when the connection is available.';
           return;
@@ -293,14 +380,25 @@ class ListeningSessionService {
     return _drain();
   }
 
-  Future<void> finish(String reason) {
+  /// Save a checkpoint without waiting for connectivity (background/logout).
+  Future<void> persistPending() {
+    if (!_disposed && _checkSession()) {
+      _observe();
+      _enqueue(_eligible ? 'ongoing' : 'paused', onlyIfAdvanced: true);
+    }
+    return _persist();
+  }
+
+  Future<void> finish(String reason, {bool send = true}) {
     _validateReason(reason);
-    if (_disposed || !_checkSession()) return _sending ?? Future.value();
+    if (_disposed || !_checkSession()) {
+      return send ? (_sending ?? Future.value()) : _persist();
+    }
     _observe();
     _enqueue(reason);
     _active = null;
     _eligible = false;
-    return _drain();
+    return send ? _drain() : _persist();
   }
 
   Future<void> dispose() {
@@ -315,8 +413,10 @@ class ListeningSessionService {
     _timer?.cancel();
     final subscription = _states;
     _states = null;
-    return _disposing =
-        Future.wait([if (subscription != null) subscription.cancel(), _drain()])
-            .then((_) => _pending.clear());
+    return _disposing = Future.wait([
+      if (subscription != null) subscription.cancel(),
+      _persist(),
+      _drain(),
+    ]).then((_) {});
   }
 }

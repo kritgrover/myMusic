@@ -382,7 +382,7 @@ class Database:
                     timestamp, updated_at, duration_played, duration_seconds, source_url, spotify_id,
                     end_reason, qualified, closed) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
                     (user_id, report['event_id'], report['sequence'], report['song_title'], report['artist'],
-                     now, now, report['listened_seconds'], report['duration_seconds'], report['source_url'],
+                     report.get('started_at') or now, now, report['listened_seconds'], report['duration_seconds'], report['source_url'],
                      report['spotify_id'], report['end_reason'], int(qualified(report['listened_seconds'], report['duration_seconds'])),
                      int(report['end_reason'] in TERMINAL_REASONS)))
             return dict(conn.execute('SELECT * FROM history WHERE user_id = ? AND event_id = ?',

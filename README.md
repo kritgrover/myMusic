@@ -27,6 +27,7 @@ A full-stack application for searching YouTube, downloading music, playing audio
 │   │   │   ├── saved_music_service.dart   # Account library state
 │   │   │   ├── playback_session_service.dart # Paused session restoration
 │   │   │   ├── listening_session_service.dart # Measured listening events
+│   │   │   ├── listening_event_store.dart # Account-scoped offline history outbox
 │   │   │   ├── playlist_service.dart      # Playlist operations
 │   │   │   ├── recently_played_service.dart
 │   │   │   ├── lyrics_service.dart        # Lyrics fetching and management
@@ -98,6 +99,13 @@ A full-stack application for searching YouTube, downloading music, playing audio
 - Completed device downloads include persistent track metadata, playlist membership/order, and available artwork. Search and play this collection without the backend; removing a device copy keeps the server copy and account library intact.
 - Device playback checks local files before requesting server media authorization. Queues and playback history retain canonical track references, while local storage is isolated by account and backend.
 - A previously signed-in account can reopen its offline library during network outages. Explicitly rejected credentials still require signing in again.
+- Unsent listening history is saved on the device per account and server, and
+  retried after reopening or reconnecting. Reports keep their original listening
+  dates and are removed only after the server confirms them. Signing out saves
+  the last checkpoint locally without waiting for a network connection.
+- The offline library opens from its catalog and lightweight file checks. Full
+  integrity checks run in the background; a selected track is verified before
+  playback. Large native files are hashed away from the main UI thread.
 - This first offline implementation transfers while the app is running, with progress, cancellation and retry. Interrupted files are never listed as complete. OS-managed mobile background downloads, automatic playlist synchronization, Wi-Fi-only rules and file export are follow-up work. Browser builds continue to use server downloads and do not claim device-offline support.
 - Liked Songs, saved albums, and followed artists persist in your account. Save from track rows or the player, then search, sort, and play your collection in Your Library.
 - Saving the same song from different screens shares one like; failed saves are rolled back with a retryable error.
@@ -330,10 +338,19 @@ The player measures elapsed time while audio is playing and ready, excluding
 paused/buffering time and seek jumps. It reports cumulative progress every five
 seconds and on pause or track completion/change. Each playback occurrence has
 one event ID; pause/resume keeps the same event, while replay creates another.
-Each report has a five-second delivery timeout so a stalled request cannot
-indefinitely hold up logout. Retries coalesce the latest report per event, with
-at most 32 pending events in memory. Pending reports are scoped to the authenticated session and are not an
-offline durable journal; closing the app during an outage can lose unsent time.
+Each report has a five-second delivery timeout. Checkpoints are written locally
+before delivery, coalescing the latest report per event without dropping older
+listens at a fixed event-count limit. Native apps use atomic files and browser
+builds use local preferences, partitioned by backend and immutable account ID.
+Only a matching server acknowledgement removes a saved checkpoint; a newer
+checkpoint survives an older acknowledgement. Signing out stops delivery and
+keeps unsent reports for the same account's next sign-in. Reopening restores
+the outbox even before another song is played.
+
+Pause, track changes, app backgrounding and sign-out save a checkpoint. An abrupt
+process kill can still lose playback since the last five-second checkpoint;
+clearing app/browser storage also removes unsent history. Device downloads and
+server history are independent, so this does not require downloading the audio.
 
 Authenticated `POST /history/listening` accepts, for example:
 
@@ -346,7 +363,8 @@ Authenticated `POST /history/listening` accepts, for example:
   "source_url": "https://www.youtube.com/watch?v=abcdefghijk",
   "duration_seconds": 180,
   "listened_seconds": 35.5,
-  "end_reason": "paused"
+  "end_reason": "paused",
+  "started_at": "2026-11-20T15:00:00Z"
 }
 ```
 
@@ -357,6 +375,10 @@ URL; optional `spotify_id` is an opaque ID of at most 128 letters, digits,
 underscores or hyphens. Both duration fields must be finite within 0–86400
 seconds. Listening time may exceed track duration when a listener seeks back.
 Reasons are `ongoing`, `paused`, `completed`, `skipped`, `stopped` or `error`.
+Optional `started_at` is a timezone-aware ISO timestamp for the occurrence's
+start. It is normalized to UTC and retained on retries, so delayed offline
+reports appear in the correct recap period. Future device-clock skew is clamped
+to receipt time; older clients that omit it retain receipt-time behavior.
 
 The response includes `accepted`, stored `sequence`, `listened_seconds`,
 `qualified` and `closed`. SQLite atomically keeps one row per account/event,

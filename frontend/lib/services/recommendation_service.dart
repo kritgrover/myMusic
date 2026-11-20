@@ -106,8 +106,8 @@ class RecommendationService extends ChangeNotifier {
     super.dispose();
   }
 
-  /// Non-secret identity used by the listening recorder to discard pending
-  /// events when an account signs out or another account signs in.
+  /// Non-secret identity used by the listening recorder to stop delivery
+  /// when an account signs out or another account signs in.
   String get sessionScope => _client.cacheScope;
 
   Future<void> recordListeningEvent(Map<String, dynamic> body) async {
@@ -126,6 +126,16 @@ class RecommendationService extends ChangeNotifier {
       if (response.statusCode != 200) {
         throw StateError(
             'Could not record listening progress (${response.statusCode}).');
+      }
+      final acknowledgement = jsonDecode(response.body);
+      if (acknowledgement is! Map<String, dynamic> ||
+          acknowledgement['success'] != true ||
+          acknowledgement['event_id'] != body['event_id'] ||
+          acknowledgement['sequence'] is! int ||
+          (acknowledgement['sequence'] as int) < 1 ||
+          ((acknowledgement['sequence'] as int) < (body['sequence'] as int) &&
+              acknowledgement['closed'] != true)) {
+        throw StateError('The server did not confirm this listening event.');
       }
     } catch (_) {
       if (scope != sessionScope) {

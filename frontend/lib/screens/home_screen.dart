@@ -19,6 +19,7 @@ import 'playlist_detail_screen.dart';
 import '../widgets/album_cover.dart';
 import '../widgets/playlist_selection_dialog.dart';
 import '../services/player_state_service.dart';
+import '../services/listening_event_store.dart';
 import '../services/queue_service.dart';
 import '../services/lyrics_service.dart';
 import '../services/api_service.dart';
@@ -200,6 +201,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _playerStateService = PlayerStateService(
       recentlyPlayedService: _recentlyPlayedService,
       recommendationService: _recommendationService,
+      listeningEventStore: createListeningEventStore(
+          userId: offlineUserId, baseUrl: _recommendationService.baseUrl),
     );
     _searchPlayback = TrackPlaybackHelper(
         apiService: _apiService,
@@ -316,6 +319,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state != AppLifecycleState.resumed) {
       unawaited(_playbackSession.flush());
+      unawaited(_playerStateService.persistListeningHistory());
+    } else {
       unawaited(_playerStateService.flushListeningHistory());
     }
   }

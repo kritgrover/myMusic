@@ -134,6 +134,14 @@ build type, track, and whether playback used streaming or a device download.
 - Save tracks on the device and wait until they show as complete. Enable
   airplane mode, reopen the app, and play them from Your Library → On this
   device. Check seeking, queue advancement, and background playback.
+- While offline, listen to more than 32 tracks, leave the app after a checkpoint,
+  and reopen it. Reconnect and confirm the history syncs once, with the original
+  listening dates. Repeat across sign-out/sign-in and with a second account to
+  confirm history remains private to the original account and server.
+- With a large saved collection, cold-launch the offline library and start a
+  track before background verification finishes. Confirm the selected track
+  starts without waiting for the entire collection; a damaged file must be
+  rejected before playback and removed from the available catalog.
 - Disconnect Wi-Fi while streaming an uncached track. Confirm the error is
   clear, then reconnect and retry. The PC backend cannot be reached on cellular
   without a separately deployed reachable server.

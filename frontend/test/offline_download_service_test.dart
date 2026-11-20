@@ -84,6 +84,9 @@ class _PausedIndexStorage implements OfflineStorage {
   @override
   Future<void> rename(String from, String to) => delegate.rename(from, to);
   @override
+  Future<bool> quickValidate(String name, int bytes) =>
+      delegate.quickValidate(name, bytes);
+  @override
   Future<bool> validate(String name, int bytes, String checksum) =>
       delegate.validate(name, bytes, checksum);
   @override
@@ -95,6 +98,37 @@ class _PausedIndexStorage implements OfflineStorage {
           expectedBytes: expectedBytes,
           isCancelled: isCancelled,
           onProgress: onProgress);
+}
+
+class _BlockedValidationStorage extends _PausedIndexStorage {
+  final Map<String, Completer<bool?>> blocked = {};
+  final List<String> checked = [];
+  FileSystemException? quickFailure;
+  int activeChecks = 0;
+  int maxActiveChecks = 0;
+  _BlockedValidationStorage(super.delegate) {
+    pause = false;
+  }
+
+  @override
+  Future<bool> quickValidate(String name, int bytes) async {
+    if (quickFailure != null) throw quickFailure!;
+    return delegate.quickValidate(name, bytes);
+  }
+
+  @override
+  Future<bool> validate(String name, int bytes, String checksum) async {
+    checked.add(name);
+    activeChecks++;
+    if (activeChecks > maxActiveChecks) maxActiveChecks = activeChecks;
+    try {
+      final gate = blocked[name];
+      final forced = gate == null ? null : await gate.future;
+      return forced ?? await delegate.validate(name, bytes, checksum);
+    } finally {
+      activeChecks--;
+    }
+  }
 }
 
 Future<void> until(bool Function() condition) async {
@@ -533,6 +567,218 @@ void main() {
     final restarted = service();
     await restarted.initialize(userId: 1, baseUrl: backend);
     expect(restarted.tracks, isEmpty);
+  });
+
+  test('catalog opens before hashing and background checks stay serial',
+      () async {
+    final original = service();
+    await original.initialize(userId: 1, baseUrl: backend);
+    for (final name in ['one.m4a', 'two.m4a', 'three.m4a']) {
+      await original.downloadTrack(QueueItem(id: name, filename: name));
+    }
+    final records = original.tracks;
+    late _BlockedValidationStorage blocked;
+    final restarted = service(storageFactory: (scope) async {
+      blocked = _BlockedValidationStorage(
+          await NativeOfflineStorage.open(Directory('${root.path}/$scope')));
+      for (final record in records) {
+        blocked.blocked[record.relativePath] = Completer<bool?>();
+      }
+      return blocked;
+    });
+    await restarted
+        .initialize(userId: 1, baseUrl: backend)
+        .timeout(const Duration(seconds: 2));
+    expect(restarted.isInitialized, isTrue);
+    expect(restarted.tracks, hasLength(3));
+    await until(() => blocked.checked.isNotEmpty);
+    expect(blocked.checked, [records.first.relativePath]);
+    for (var i = 0; i < records.length; i++) {
+      await until(() => blocked.checked.length == i + 1);
+      expect(blocked.activeChecks, 1);
+      blocked.blocked[records[i].relativePath]!.complete(null);
+    }
+    await restarted.backgroundVerification;
+    expect(blocked.maxActiveChecks, 1);
+    expect(restarted.tracks, hasLength(3));
+  });
+
+  test('selected audio waits for integrity while the catalog is available',
+      () async {
+    final original = service();
+    await original.initialize(userId: 1, baseUrl: backend);
+    await original.downloadTrack(QueueItem(id: 'one', filename: 'one.m4a'));
+    final record = original.tracks.single;
+    final gate = Completer<bool?>();
+    late _BlockedValidationStorage blocked;
+    final restarted = service(storageFactory: (scope) async {
+      blocked = _BlockedValidationStorage(
+          await NativeOfflineStorage.open(Directory('${root.path}/$scope')))
+        ..blocked[record.relativePath] = gate;
+      return blocked;
+    });
+    await restarted.initialize(userId: 1, baseUrl: backend);
+    var ready = false;
+    final selected = restarted
+        .localUrlFor('$backend/downloads/one.m4a')
+        .then((value) {
+      ready = true;
+      return value;
+    });
+    await until(() => blocked.checked.isNotEmpty);
+    expect(restarted.tracks.single.title, record.title);
+    expect(ready, isFalse);
+    gate.complete(null);
+    expect(await selected, startsWith('file:'));
+    await restarted.backgroundVerification;
+  });
+
+  test('background corruption removal persists without a playback attempt',
+      () async {
+    final original = service();
+    await original.initialize(userId: 1, baseUrl: backend);
+    await original.downloadTrack(QueueItem(id: 'bad', filename: 'bad.m4a'));
+    final url = await original.localUrlFor('$backend/downloads/bad.m4a');
+    await File.fromUri(Uri.parse(url!))
+        .writeAsBytes(List.filled(audio.length, 0), flush: true);
+    final restarted = service();
+    await restarted.initialize(userId: 1, baseUrl: backend);
+    // Equal-sized corruption cannot be detected with metadata alone.
+    expect(restarted.tracks, hasLength(1));
+    await restarted.backgroundVerification;
+    expect(restarted.tracks, isEmpty);
+    final again = service();
+    await again.initialize(userId: 1, baseUrl: backend);
+    expect(again.tracks, isEmpty);
+    expect(await File.fromUri(Uri.parse(url)).exists(), isFalse);
+  });
+
+  test('old account integrity results cannot remove the new account catalog',
+      () async {
+    final original = service();
+    await original.initialize(userId: 1, baseUrl: backend);
+    await original.downloadTrack(QueueItem(id: 'one', filename: 'same.m4a'));
+    final record = original.tracks.single;
+    final gate = Completer<bool?>();
+    late _BlockedValidationStorage blocked;
+    var first = true;
+    final restarted = service(storageFactory: (scope) async {
+      final native =
+          await NativeOfflineStorage.open(Directory('${root.path}/$scope'));
+      if (!first) return native;
+      first = false;
+      blocked = _BlockedValidationStorage(native)
+        ..blocked[record.relativePath] = gate;
+      return blocked;
+    });
+    await restarted.initialize(userId: 1, baseUrl: backend);
+    final oldScan = restarted.backgroundVerification;
+    await until(() => blocked.checked.isNotEmpty);
+    await restarted.initialize(userId: 2, baseUrl: backend);
+    await restarted.downloadTrack(QueueItem(id: 'two', filename: 'same.m4a'));
+    final other = restarted.tracks.single;
+    gate.complete(false);
+    await oldScan;
+    expect(restarted.tracks.single.relativePath, other.relativePath);
+    expect(await restarted.localUrlFor('$backend/downloads/same.m4a'),
+        startsWith('file:'));
+    await restarted.initialize(userId: 1, baseUrl: backend);
+    expect(restarted.tracks.single.relativePath, record.relativePath);
+    await restarted.backgroundVerification;
+    expect(restarted.tracks, hasLength(1));
+  });
+
+  test('temporary integrity read errors preserve files and stored catalog',
+      () async {
+    final original = service();
+    await original.initialize(userId: 1, baseUrl: backend);
+    await original.downloadTrack(QueueItem(id: 'one', filename: 'one.m4a'));
+    final record = original.tracks.single;
+    final gate = Completer<bool?>();
+    late _BlockedValidationStorage blocked;
+    final restarted = service(storageFactory: (scope) async {
+      blocked = _BlockedValidationStorage(
+          await NativeOfflineStorage.open(Directory('${root.path}/$scope')))
+        ..blocked[record.relativePath] = gate;
+      return blocked;
+    });
+    await restarted.initialize(userId: 1, baseUrl: backend);
+    await until(() => blocked.checked.isNotEmpty);
+    gate.completeError(const FileSystemException(
+        'Temporarily unavailable', 'fixture', OSError('Access denied', 5)));
+    await restarted.backgroundVerification;
+    expect(restarted.tracks.single.relativePath, record.relativePath);
+    expect(await blocked.exists(record.relativePath), isTrue);
+    expect((await blocked.readIndex()).single['relativePath'],
+        record.relativePath);
+    await expectLater(
+        restarted.localUrlFor('$backend/downloads/one.m4a'),
+        throwsA(isA<FileSystemException>()));
+    expect(restarted.tracks, hasLength(1));
+    blocked.blocked.remove(record.relativePath);
+    expect(await restarted.localUrlFor('$backend/downloads/one.m4a'),
+        startsWith('file:'));
+  });
+
+  test('temporary startup inspection error never rewrites the saved catalog',
+      () async {
+    final original = service();
+    await original.initialize(userId: 1, baseUrl: backend);
+    await original.downloadTrack(QueueItem(id: 'one', filename: 'one.m4a'));
+    final record = original.tracks.single;
+    late _BlockedValidationStorage blocked;
+    var unavailable = true;
+    final restarted = service(storageFactory: (scope) async {
+      blocked = _BlockedValidationStorage(
+          await NativeOfflineStorage.open(Directory('${root.path}/$scope')));
+      if (unavailable) {
+        blocked.quickFailure = const FileSystemException(
+            'Temporarily unavailable', 'fixture', OSError('Access denied', 5));
+      }
+      return blocked;
+    });
+    await restarted.initialize(userId: 1, baseUrl: backend);
+    expect(restarted.isInitialized, isFalse);
+    expect(restarted.lastError, isNotNull);
+    expect((await blocked.readIndex()).single['relativePath'],
+        record.relativePath);
+    expect(await blocked.exists(record.relativePath), isTrue);
+    unavailable = false;
+    await restarted.initialize(userId: 1, baseUrl: backend);
+    expect(restarted.isInitialized, isTrue);
+    expect(restarted.tracks.single.relativePath, record.relativePath);
+    await restarted.backgroundVerification;
+  });
+
+  test('stale integrity result never deletes a replacement for the same song',
+      () async {
+    final original = service();
+    await original.initialize(userId: 1, baseUrl: backend);
+    await original.downloadTrack(QueueItem(id: 'one', filename: 'one.m4a'));
+    final record = original.tracks.single;
+    final gate = Completer<bool?>();
+    late _BlockedValidationStorage blocked;
+    final restarted = service(storageFactory: (scope) async {
+      blocked = _BlockedValidationStorage(
+          await NativeOfflineStorage.open(Directory('${root.path}/$scope')))
+        ..blocked[record.relativePath] = gate;
+      return blocked;
+    });
+    await restarted.initialize(userId: 1, baseUrl: backend);
+    await until(() => blocked.checked.isNotEmpty);
+    await restarted.remove(record.id);
+    await restarted.downloadTrack(QueueItem(id: 'one', filename: 'one.m4a'));
+    final replacement = restarted.tracks.single;
+    expect(replacement.relativePath, isNot(record.relativePath));
+    gate.complete(false);
+    await restarted.backgroundVerification;
+    expect(restarted.tracks.single.relativePath, replacement.relativePath);
+    expect(await restarted.localUrlFor('$backend/downloads/one.m4a'),
+        startsWith('file:'));
+    final again = service();
+    await again.initialize(userId: 1, baseUrl: backend);
+    expect(again.tracks.single.relativePath, replacement.relativePath);
+    await again.backgroundVerification;
   });
 
   test('persists safe names and metadata without media capabilities', () async {

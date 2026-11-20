@@ -3,6 +3,7 @@
 import math
 import re
 import unicodedata
+from datetime import datetime, timezone
 from fastapi import HTTPException
 from saved_library import _reject_credentials
 from source_security import youtube_url
@@ -31,7 +32,7 @@ def early_skip(row):
 
 def validate_report(value):
     allowed = {"event_id", "sequence", "song_title", "artist", "source_url", "spotify_id",
-               "duration_seconds", "listened_seconds", "end_reason"}
+               "duration_seconds", "listened_seconds", "end_reason", "started_at"}
     if not isinstance(value, dict) or set(value) - allowed:
         raise HTTPException(400, "Unsupported listening report fields")
     result = {}
@@ -62,6 +63,25 @@ def validate_report(value):
     if not isinstance(reason, str) or reason not in END_REASONS:
         raise HTTPException(400, "Invalid listening end reason")
     result["end_reason"] = reason
+    # Offline events retain their original occurrence time instead of appearing
+    # as new listens when the device reconnects. Old clients omit this field.
+    started_at = value.get("started_at")
+    if started_at is not None:
+        if not isinstance(started_at, str) or not 1 <= len(started_at) <= 64:
+            raise HTTPException(400, "Invalid listening start time")
+        try:
+            started = datetime.fromisoformat(started_at)
+            if started.tzinfo is None or started.utcoffset() is None:
+                raise ValueError('Missing timezone')
+            started = started.astimezone(timezone.utc)
+            if started.year < 1970:
+                raise ValueError('Invalid date range')
+        except (ValueError, OverflowError):
+            raise HTTPException(400, "Invalid listening start time") from None
+        # A device clock set ahead must not poison the retry queue or create
+        # future-dated recommendations. Never reject valid offline history for
+        # being old; clamp future clock skew to the server's receipt time.
+        result['started_at'] = min(started, datetime.now(timezone.utc)).isoformat()
     if result["source_url"]:
         _reject_credentials(result["source_url"])
         try:

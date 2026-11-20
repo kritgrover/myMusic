@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:music_downloader/models/queue_item.dart';
@@ -28,10 +30,15 @@ class _Offline extends ChangeNotifier implements OfflineDownloadService {
   final retried = <String>[];
   final downloadedPlaylists = <Playlist>[];
   bool missingFile = false;
+  final checked = <String>[];
+  final pending = <String, Completer<QueueItem?>>{};
 
   @override
-  Future<QueueItem?> localQueueItemFor(QueueItem item) async =>
-      missingFile ? null : item;
+  Future<QueueItem?> localQueueItemFor(QueueItem item) async {
+    checked.add(item.id);
+    if (pending.containsKey(item.id)) return await pending[item.id]!.future;
+    return missingFile ? null : item;
+  }
 
   @override
   OfflineDownloadJob? jobFor(QueueItem item) => null;
@@ -215,6 +222,47 @@ void main() {
         find.text(
             'Removed from this device. Your server library is unchanged.'),
         findsOneWidget);
+  });
+
+  testWidgets('selected song waits only for its own file verification',
+      (tester) async {
+    offline.tracks = [
+      _track('first', 'First song', position: 0),
+      _track('second', 'Second song', position: 1),
+      _track('third', 'Third song', position: 2),
+    ];
+    offline.pending['first'] = Completer<QueueItem?>();
+    offline.pending['second'] = Completer<QueueItem?>();
+    offline.pending['third'] = Completer<QueueItem?>();
+    await show(tester);
+    await tester.tap(find.text('Evening mix'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Play Second song'));
+    await tester.pump();
+    expect(offline.checked, ['second']);
+    expect(queue.playedIndex, isNull);
+    offline.pending['second']!.complete(offline.tracks[1].toQueueItem());
+    await tester.pumpAndSettle();
+    expect(queue.playedIndex, 1);
+    expect(queue.items.map((item) => item.filename),
+        ['first.m4a', 'second.m4a', 'third.m4a']);
+    expect(offline.checked, ['second']);
+    expect(queue.items.every((item) => item.url == null), isTrue);
+  });
+
+  testWidgets('leaving the library during verification does not replace queue',
+      (tester) async {
+    offline.tracks = [_track('one', 'One song')];
+    offline.pending['one'] = Completer<QueueItem?>();
+    await show(tester);
+    await tester.tap(find.byTooltip('Play One song'));
+    await tester.pump();
+    await tester.pumpWidget(const SizedBox.shrink());
+    offline.pending['one']!.complete(offline.tracks.single.toQueueItem());
+    await tester.pumpAndSettle();
+    expect(queue.items, isEmpty);
+    expect(queue.playedIndex, isNull);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('jobs show progress and support cancel and retry',

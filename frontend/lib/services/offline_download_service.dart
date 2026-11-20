@@ -21,7 +21,7 @@ typedef OfflineApiFactory = ApiService Function(String baseUrl);
 typedef OfflineAuthHeaders = Map<String, String> Function(String url);
 
 /// Device downloads are independent of the server's downloaded-file library.
-/// Only committed, checksum-verified files are exposed for local playback.
+/// The catalog opens from file metadata; audio is verified before local playback.
 class OfflineDownloadService extends ChangeNotifier {
   static final OfflineDownloadService shared = OfflineDownloadService();
 
@@ -41,6 +41,7 @@ class OfflineDownloadService extends ChangeNotifier {
   String? _lastError;
   Future<void>? _initializing;
   Future<void> _indexTail = Future.value();
+  Future<void> _backgroundVerification = Future.value();
   final Map<String, OfflineTrack> _tracks = {};
   final Map<String, _Work> _work = {};
 
@@ -58,6 +59,8 @@ class OfflineDownloadService extends ChangeNotifier {
 
   bool get isSupported => _supported;
   bool get isInitialized => _initialized;
+  /// Completes when the current startup integrity pass has settled.
+  Future<void> get backgroundVerification => _backgroundVerification;
   String? get lastError => _lastError;
   List<OfflineTrack> get tracks => List.unmodifiable(_tracks.values);
   List<OfflineDownloadJob> get jobs =>
@@ -113,8 +116,8 @@ class OfflineDownloadService extends ChangeNotifier {
         for (final entry in entries) {
           try {
             var track = OfflineTrack.fromJson(entry);
-            if (!await storage.validate(
-                track.relativePath, track.bytes, track.checksum)) {
+            if (!RegExp(r'^[a-f0-9]{64}$').hasMatch(track.checksum) ||
+                !await storage.quickValidate(track.relativePath, track.bytes)) {
               if (!_current(generation)) return;
               continue;
             }
@@ -141,6 +144,10 @@ class OfflineDownloadService extends ChangeNotifier {
         _tracks.addAll(valid);
         _initialized = true;
         _lastError = null;
+        // Complete initialization before opening any audio. The first event
+        // turn lets the library render, and each later file yields again.
+        _backgroundVerification = _verifyCatalog(
+            storage, generation, valid.values.toList(growable: false));
       } catch (error) {
         if (_current(generation)) {
           _lastError = 'Could not open device downloads: $error';
@@ -155,6 +162,53 @@ class OfflineDownloadService extends ChangeNotifier {
     _initializing = initialization;
     await initialization;
   }
+
+  Future<void> _verifyCatalog(OfflineStorage storage, int generation,
+      List<OfflineTrack> candidates) async {
+    for (final track in candidates) {
+      await Future<void>.delayed(Duration.zero);
+      if (!_current(generation) || !identical(_storage, storage)) return;
+      if (!_sameFile(_tracks[track.id], track)) continue;
+      try {
+        final valid = await storage.validate(
+            track.relativePath, track.bytes, track.checksum);
+        if (!_current(generation)) return;
+        if (!valid) await _discardInvalid(track, generation, storage);
+      } catch (_) {
+        // A transient storage failure must not erase a saved entry. Playback
+        // still performs its own verification and never trusts this scan.
+      }
+    }
+  }
+
+  bool _sameFile(OfflineTrack? current, OfflineTrack expected) =>
+      current != null &&
+      current.relativePath == expected.relativePath &&
+      current.bytes == expected.bytes &&
+      current.checksum == expected.checksum;
+
+  Future<void> _discardInvalid(
+          OfflineTrack expected, int generation, OfflineStorage storage) =>
+      _serialized(() async {
+        if (!_current(generation) ||
+            !identical(_storage, storage) ||
+            !_sameFile(_tracks[expected.id], expected)) {
+          return;
+        }
+        final remaining = {..._tracks}..remove(expected.id);
+        await storage.writeIndex(
+            remaining.values.map((track) => track.toJson()).toList());
+        if (_current(generation)) {
+          _tracks.remove(expected.id);
+          _notify();
+        }
+        // Replacement downloads use distinct paths, so an old check never
+        // removes their bytes or cancels an unrelated pending download.
+        await storage.delete(expected.relativePath);
+        if (expected.artworkPath != null) {
+          await storage.delete(expected.artworkPath!);
+        }
+      });
 
   /// Invalidates jobs before any asynchronous cleanup can run.
   void reset() {
@@ -171,6 +225,7 @@ class OfflineDownloadService extends ChangeNotifier {
     _initialized = false;
     _lastError = null;
     _pumping = null;
+    _backgroundVerification = Future.value();
     _notify();
   }
 
@@ -694,8 +749,9 @@ class OfflineDownloadService extends ChangeNotifier {
     final valid =
         await storage.validate(track.relativePath, track.bytes, track.checksum);
     if (!_current(generation)) return null;
+    if (!_sameFile(_tracks[track.id], track)) return null;
     if (!valid) {
-      await remove(track.id);
+      await _discardInvalid(track, generation, storage);
       return null;
     }
     return storage.fileUrl(track.relativePath);

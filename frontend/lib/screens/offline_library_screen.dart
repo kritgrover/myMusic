@@ -7,7 +7,7 @@ import '../utils/download_error_utils.dart';
 import '../utils/responsive_utils.dart';
 import '../widgets/offline_artwork.dart';
 
-/// The device's verified files, independent of the server's download list.
+/// The device's saved catalog, independent of the server's download list.
 class OfflineLibraryScreen extends StatefulWidget {
   const OfflineLibraryScreen({
     super.key,
@@ -30,12 +30,14 @@ class _OfflineLibraryScreenState extends State<OfflineLibraryScreen> {
   final _search = TextEditingController();
   String? _playlistId;
   String _query = '';
+  int _playRequest = 0;
 
   OfflineDownloadService get _offline =>
       widget.offlineService ?? OfflineDownloadService.shared;
 
   @override
   void dispose() {
+    _playRequest++;
     _search.dispose();
     super.dispose();
   }
@@ -46,16 +48,20 @@ class _OfflineLibraryScreenState extends State<OfflineLibraryScreen> {
   }
 
   Future<void> _play(List<OfflineTrack> tracks, {int startIndex = 0}) async {
+    if (startIndex < 0 || startIndex >= tracks.length) return;
+    final request = ++_playRequest;
     try {
-      final items = <QueueItem>[];
-      for (final track in tracks) {
-        final local = await _offline.localQueueItemFor(track.toQueueItem());
-        if (local == null) {
-          throw StateError('A saved file is unavailable. Download it again.');
-        }
-        items.add(local);
+      final items = <QueueItem>[
+        for (final track in tracks) track.toQueueItem(),
+      ];
+      // Only the requested song gates playback. Queue successors keep their
+      // canonical identities and are verified by the local resolver when used.
+      final selected = await _offline.localQueueItemFor(items[startIndex]);
+      if (!mounted || request != _playRequest) return;
+      if (selected == null) {
+        throw StateError('A saved file is unavailable. Download it again.');
       }
-      if (items.isEmpty) return;
+      items[startIndex] = selected;
       final queue = widget.queueService;
       if (queue != null) {
         queue.clearQueue();
@@ -74,7 +80,9 @@ class _OfflineLibraryScreenState extends State<OfflineLibraryScreen> {
         );
       }
     } catch (error) {
-      _message('Could not play saved music: $error');
+      if (request == _playRequest) {
+        _message('Could not play saved music: $error');
+      }
     }
   }
 

@@ -19,6 +19,7 @@ void main() {
     'duration_seconds': 120.0,
     'listened_seconds': 34.5,
     'end_reason': 'paused',
+    'started_at': '2026-10-10T12:00:00.000Z',
   };
   final track = <String, dynamic>{
     'id': 'local:1',
@@ -40,13 +41,25 @@ void main() {
     return RecommendationService(baseUrl: base, client: client);
   }
 
+  http.Response acknowledge(http.Request request) {
+    final body = jsonDecode(request.body) as Map<String, dynamic>;
+    return http.Response(
+        jsonEncode({
+          'success': true,
+          'event_id': body['event_id'],
+          'sequence': body['sequence'],
+          'closed': false,
+        }),
+        200);
+  }
+
   test(
       'listening events send one authenticated JSON request with measured progress',
       () async {
     final requests = <http.Request>[];
     final service = serviceFor((request) async {
       requests.add(request);
-      return http.Response('{}', 200);
+      return acknowledge(request);
     });
     await service.recordListeningEvent(event);
     expect(requests, hasLength(1));
@@ -95,7 +108,7 @@ void main() {
       authorizations.add(request.headers['Authorization']);
       return authorizations.length == 1
           ? response.future
-          : Future.value(http.Response('{}', 200));
+          : Future.value(acknowledge(request));
     }, tokenProvider: () => token);
     final firstScope = service.sessionScope;
     final pending = service.recordListeningEvent(event);
@@ -146,7 +159,7 @@ void main() {
           authorizations.add(request.headers['Authorization']);
           return authorizations.length == 1
               ? response.future
-              : Future.value(http.Response('{}', 200));
+              : Future.value(acknowledge(request));
         }));
     client.configure(
         tokenProvider: () => token,
@@ -167,6 +180,47 @@ void main() {
     await service
         .recordListeningEvent({...event, 'event_id': 'event-account-b'});
     expect(authorizations, ['Bearer account-a', 'Bearer account-b']);
+  });
+
+  test('listening delivery requires an acknowledgement for the sent event',
+      () async {
+    for (final invalid in [
+      <String, dynamic>{},
+      {'success': false, 'event_id': 'event-123', 'sequence': 2},
+      {'success': true, 'event_id': 'another-event', 'sequence': 2},
+      {'success': true, 'event_id': 'event-123', 'sequence': 1},
+      {'success': true, 'event_id': 'event-123', 'sequence': '2'},
+      {'success': true, 'event_id': 'event-123', 'sequence': 0, 'closed': true},
+    ]) {
+      final service =
+          serviceFor((_) async => http.Response(jsonEncode(invalid), 200));
+      addTearDown(service.dispose);
+      await expectLater(
+          service.recordListeningEvent(event), throwsA(isA<StateError>()));
+    }
+    final malformed = serviceFor((_) async => http.Response('not json', 200));
+    addTearDown(malformed.dispose);
+    await expectLater(
+        malformed.recordListeningEvent(event), throwsA(isA<FormatException>()));
+  });
+
+  test('duplicate, newer, and closed events acknowledge safe retries',
+      () async {
+    for (final response in [
+      {'sequence': 2, 'accepted': false, 'closed': false},
+      {'sequence': 3, 'accepted': false, 'closed': false},
+      {'sequence': 1, 'accepted': false, 'closed': true},
+    ]) {
+      final service = serviceFor((_) async => http.Response(
+          jsonEncode({
+            'success': true,
+            'event_id': 'event-123',
+            ...response,
+          }),
+          200));
+      addTearDown(service.dispose);
+      await service.recordListeningEvent(event);
+    }
   });
 
   test('discovery timeout has a retryable state that clears on success',

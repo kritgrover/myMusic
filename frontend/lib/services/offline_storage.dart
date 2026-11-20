@@ -30,6 +30,8 @@ abstract class OfflineStorage {
     void Function(int bytes)? onProgress,
   });
   Future<void> rename(String from, String to);
+  /// Checks file metadata only; callers must still validate before playback.
+  Future<bool> quickValidate(String name, int bytes);
   Future<bool> validate(String name, int bytes, String checksum);
   Future<bool> exists(String name);
   Future<void> delete(String name);

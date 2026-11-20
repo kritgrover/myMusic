@@ -4,6 +4,7 @@ import 'package:music_downloader/config.dart';
 import 'package:music_downloader/models/queue_item.dart';
 import 'package:music_downloader/services/audio_player_service.dart';
 import 'package:music_downloader/services/listening_session_service.dart';
+import 'package:music_downloader/services/listening_event_store.dart';
 import 'package:music_downloader/services/player_state_service.dart';
 import 'package:music_downloader/services/recommendation_service.dart';
 
@@ -116,6 +117,7 @@ void main() {
   late _Audio audio;
   late PlayerStateService player;
   late ListeningSessionService tracker;
+  late MemoryListeningEventStore historyStore;
   late List<Map<String, dynamic>> sent;
   late Duration now;
   late bool currentSession;
@@ -128,8 +130,10 @@ void main() {
     currentSession = true;
     ids = 0;
     deliveryGate = null;
+    historyStore = MemoryListeningEventStore();
     tracker = ListeningSessionService(
         audio: audio,
+        store: Future.value(historyStore),
         now: () => now,
         isSessionCurrent: () => currentSession,
         eventIdFactory: () => 'occurrence_${++ids}',
@@ -269,8 +273,7 @@ void main() {
     expect(tracker.hasActiveEvent, false);
   });
 
-  test(
-      'logout awaits final checkpoint before account switch and guards disposal',
+  test('logout saves final checkpoint without waiting for an offline server',
       () async {
     await play('A');
     now = const Duration(seconds: 5);
@@ -280,15 +283,17 @@ void main() {
         player.finishListeningSession().then((_) => finished = true);
     await _settle();
     expect(audio.isPlaying, false);
-    expect(finished, false);
-    deliveryGate!.complete();
+    expect(finished, true);
     await logoutFlush;
-    expect(sent.last['end_reason'], 'stopped');
-    expect(sent.last['listened_seconds'], 5);
+    final saved = await historyStore.read();
+    expect(saved.single['end_reason'], 'stopped');
+    expect(saved.single['listened_seconds'], 5);
     currentSession = false;
     final count = sent.length;
+    deliveryGate!.complete();
     await player.flushListeningHistory();
     await tracker.dispose();
     expect(sent.length, count);
+    expect((await historyStore.read()).single['end_reason'], 'stopped');
   });
 }

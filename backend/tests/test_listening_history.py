@@ -157,3 +157,51 @@ class ListeningHistoryTests(unittest.TestCase):
         self.assertEqual(recap['top_tracks'], [])
         self.assertTrue(self.history()[0]['timestamp'].endswith('+00:00'))
         self.assertTrue(recap['end_date'].endswith('+00:00'))
+
+    def test_offline_occurrence_time_survives_replay_and_cannot_move_on_checkpoint(self):
+        started = '2026-01-12T09:30:00-05:00'
+        response = self.post(started_at=started, listened_seconds=35)
+        self.assertEqual(response.status_code, 200, response.text)
+        row = self.history()[0]
+        self.assertEqual(row['timestamp'], '2026-01-12T14:30:00+00:00')
+        self.assertGreater(datetime.fromisoformat(row['updated_at']),
+                           datetime.fromisoformat(row['timestamp']))
+        # A repeat after a lost acknowledgement counts once. A later cumulative
+        # checkpoint updates listen duration, never the original occurrence date.
+        self.assertFalse(self.post(started_at=started, listened_seconds=35).json()['accepted'])
+        newer = datetime.now(timezone.utc).isoformat()
+        self.assertTrue(self.post(sequence=2, started_at=newer, listened_seconds=50).json()['accepted'])
+        self.assertEqual(self.history()[0]['timestamp'], row['timestamp'])
+        with closing(self.api.db.get_connection()) as conn:
+            self.assertEqual(conn.execute('SELECT COUNT(*) FROM history').fetchone()[0], 1)
+        totals = self.api.db.get_history_summary(self.user['id'],
+            '2026-01-12T00:00:00+00:00', '2026-01-13T00:00:00+00:00')
+        self.assertEqual(totals['plays'], 1)
+        self.assertEqual(totals['total_duration_played'], 50)
+
+    def test_old_offline_occurrences_keep_their_date_and_future_clock_skew_is_clamped(self):
+        old = self.post(event_id='long-offline-event', started_at='2000-01-01T00:00:00Z')
+        self.assertEqual(old.status_code, 200, old.text)
+        self.assertEqual(self.history()[0]['timestamp'], '2000-01-01T00:00:00+00:00')
+        before = datetime.now(timezone.utc)
+        future = self.post(event_id='future-clock-event', started_at='9999-12-31T00:00:00Z')
+        after = datetime.now(timezone.utc)
+        self.assertEqual(future.status_code, 200, future.text)
+        row = next(row for row in self.history() if row['event_id'] == 'future-clock-event')
+        stored = datetime.fromisoformat(row['timestamp'])
+        self.assertLessEqual(before, stored)
+        self.assertLessEqual(stored, after)
+
+    def test_invalid_occurrence_times_never_write_and_old_clients_keep_receipt_time(self):
+        for started in ('', 'invalid', '2026-01-12', '2026-01-12T09:30:00',
+                        '1969-12-31T23:59:59Z', '2026-99-99T00:00:00Z',
+                        '2026-01-12T00:00:00Z' * 5, True, 123, {'time': 'private'}):
+            with self.subTest(started=started):
+                self.assertEqual(self.post(started_at=started).status_code, 400)
+        self.assertEqual(self.history(), [])
+        before = datetime.now(timezone.utc)
+        self.assertEqual(self.post().status_code, 200)
+        after = datetime.now(timezone.utc)
+        stored = datetime.fromisoformat(self.history()[0]['timestamp'])
+        self.assertLessEqual(before, stored)
+        self.assertLessEqual(stored, after)
