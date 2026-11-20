@@ -18,6 +18,10 @@ import tempfile
 import signal
 
 
+class DownloadCancelled(RuntimeError):
+    """A cooperative cancellation stopped an unfinished download."""
+
+
 class DownloadService:
     def __init__(self, output_dir="downloads"):
         self.output_dir = output_dir
@@ -265,99 +269,94 @@ class DownloadService:
         
         return results
     
-    def download_audio(self, url: str, title: str, artist: str = "", album: str = "", 
-                      output_format: str = "m4a", embed_thumbnail: bool = False, owner_id: int = None):
-        """Download audio from YouTube URL"""
+    def download_audio(self, url: str, title: str, artist: str = "", album: str = "",
+                      output_format: str = "m4a", embed_thumbnail: bool = False, owner_id: int = None,
+                      download_key: str = None, cancel_check=None,
+                      timeout: float = 600, max_bytes: int = 536870912):
+        """Publish only complete audio; a durable item key makes recovery idempotent."""
         url = youtube_url(url)
-        creationflags = self._get_creationflags()
-        
-        # Sanitize filename
-        safe_title = re.sub(r"[^\w\s]", "", title).strip()
-        if not safe_title:
-            safe_title = "Unknown"
-        
-        filename = f"{safe_title}"
-        if artist:
-            safe_artist = re.sub(r"[^\w\s]", "", artist).strip()
-            if safe_artist:
-                filename += f" - {safe_artist}"
-        
-        output_folder = self.output_dir
+        if output_format not in ('m4a', 'mp3'):
+            raise ValueError('Unsupported audio format')
+        key = download_key or uuid.uuid4().hex
+        if not re.fullmatch(r'[a-f0-9]{32}', key):
+            raise ValueError('Invalid download identity')
+        if cancel_check and cancel_check():
+            raise DownloadCancelled('Download cancelled')
+        output_folder = Path(self.output_dir)
         if owner_id is not None:
-            output_folder = os.path.join(output_folder, "users", str(int(owner_id)))
-            os.makedirs(output_folder, exist_ok=True)
-            filename = uuid.uuid4().hex + "-" + filename[:160]
-        output_path = os.path.join(output_folder, filename)
-        
-        # Build download command
-        args = [
-            '-f', 'bestaudio[ext=m4a]/bestaudio',
-            '--output', output_path + '.%(ext)s',
-            '--no-playlist'
-        ]
-        
-        if embed_thumbnail:
-            args += ['--embed-thumbnail', '--add-metadata']
-        
-        if output_format == 'mp3':
-            args += ['--extract-audio', '--audio-format', 'mp3', '--audio-quality', '0']
-        else:
-            args += ['--remux-video', 'm4a']
+            output_folder /= 'users'
+            output_folder /= str(int(owner_id))
+        output_folder.mkdir(parents=True, exist_ok=True)
+        name = re.sub(r'[^\w\s-]', '', f'{title} - {artist}' if artist else title).strip()[:160] or 'Unknown'
+        destination = output_folder / f'{key}-{name}.{output_format}'
+        # A recovered lease can briefly overlap the previous worker. Each
+        # attempt must own its staging files, including cleanup, while the
+        # durable key continues to identify only the completed destination.
+        work = output_folder / f'.job-{key}-{uuid.uuid4().hex}'
 
-        cmd_dl = self._yt_cmd(args, url)
-        
-        ret = subprocess.run(cmd_dl, capture_output=True, text=True, creationflags=creationflags)
-        if ret.returncode != 0:
-            raise Exception(f"Download failed: {ret.stderr}")
-        
-        # Find the downloaded file
-        out_ext = '.m4a' if output_format == 'm4a' else '.mp3'
-        candidate_path = output_path + out_ext
-        if not os.path.isfile(candidate_path):
-            # Try to find the file with any extension
-            for ext in ['.m4a', '.mp3', '.webm', '.opus']:
-                candidate = output_path + ext
-                if os.path.isfile(candidate):
-                    candidate_path = candidate
-                    break
-            else:
-                raise Exception(f"Downloaded file not found at {candidate_path}")
-        
-        # Read metadata from the downloaded file
-        title_meta = title
-        artist_meta = artist
-        album_meta = album
-        
+        def result():
+            return {'file_path': str(destination),
+                    'filename': destination.relative_to(Path(self.output_dir)).as_posix(),
+                    'title': title, 'artist': artist, 'album': album}
+
+        # A crash after atomic publication but before recording job completion
+        # must not download another copy of an already completed item.
+        if download_key and destination.is_file() and destination.stat().st_size > 0:
+            return result()
+        work.mkdir(exist_ok=True)
+        prefix = work / 'audio'
+        candidate = work / f'audio.{output_format}'
         try:
-            if candidate_path.endswith('.m4a'):
-                audio = MP4(candidate_path)
-                if not audio.tags:
-                    audio.add_tags()
-                audio.tags['\xa9nam'] = title_meta
-                if artist_meta:
-                    audio.tags['\xa9ART'] = artist_meta
-                if album_meta:
-                    audio.tags['\xa9alb'] = album_meta
+            args = ['-f', 'bestaudio[ext=m4a]/bestaudio', '--output', str(prefix) + '.%(ext)s',
+                    '--socket-timeout', '15', '--retries', '1', '--extractor-retries', '1',
+                    '--max-filesize', str(max_bytes), '--no-playlist']
+            if embed_thumbnail:
+                args += ['--embed-thumbnail', '--add-metadata']
+            args += (['--extract-audio', '--audio-format', 'mp3', '--audio-quality', '0']
+                     if output_format == 'mp3' else ['--remux-video', 'm4a'])
+            self._bounded_stream_process(args, url, str(prefix), max_bytes,
+                                         timeout=timeout, cancel_check=cancel_check, label='Audio')
+            if not candidate.is_file() or candidate.stat().st_size <= 0:
+                raise RuntimeError('The download did not produce a complete audio file')
+            if cancel_check and cancel_check():
+                raise DownloadCancelled('Download cancelled')
+            try:
+                if output_format == 'm4a':
+                    audio = MP4(str(candidate))
+                    if not audio.tags:
+                        audio.add_tags()
+                    audio.tags['\xa9nam'] = title
+                    if artist:
+                        audio.tags['\xa9ART'] = artist
+                    if album:
+                        audio.tags['\xa9alb'] = album
+                else:
+                    audio = EasyID3(str(candidate))
+                    audio['title'] = title
+                    if artist:
+                        audio['artist'] = artist
+                    if album:
+                        audio['album'] = album
                 audio.save()
-            else:  # MP3
-                audio = EasyID3(candidate_path)
-                audio['title'] = title_meta
-                if artist_meta:
-                    audio['artist'] = artist_meta
-                if album_meta:
-                    audio['album'] = album_meta
-                audio.save()
-        except Exception as e:
-            print(f"Warning: Could not write metadata: {e}")
-        
-        filename = os.path.relpath(candidate_path, self.output_dir).replace('\\', '/')
-        return {
-            'file_path': candidate_path,
-            'filename': filename,
-            'title': title_meta,
-            'artist': artist_meta,
-            'album': album_meta
-        }
+            except Exception:
+                pass  # Failed tag enrichment must not discard valid audio.
+            if cancel_check and cancel_check():
+                raise DownloadCancelled('Download cancelled')
+            # The child may exit between the last polling size check and its
+            # final write; embedded tags can also increase the completed size.
+            completed_bytes = candidate.stat().st_size
+            if completed_bytes <= 0:
+                raise RuntimeError('The download did not produce a complete audio file')
+            if completed_bytes > max_bytes:
+                raise RuntimeError('Audio download exceeds the file size limit')
+            os.replace(candidate, destination)
+            return result()
+        finally:
+            # This directory is created exclusively for this generated item ID.
+            # Resolve before recursive cleanup so no link can escape its owner.
+            if (work.exists() and not work.is_symlink() and
+                    work.resolve().parent == output_folder.resolve()):
+                shutil.rmtree(work)
     
     def get_streaming_url(self, url: str):
         """Get direct streaming URL from YouTube URL without downloading"""
@@ -431,7 +430,8 @@ class DownloadService:
         
         return output_path
 
-    def _bounded_stream_process(self, args, source, output_prefix, max_bytes, timeout=180):
+    def _bounded_stream_process(self, args, source, output_prefix, max_bytes, timeout=180,
+                                cancel_check=None, label='Streaming'):
         """Bound all temporary container/remux bytes and the whole process tree."""
         command = self._yt_cmd(args, source)
         flags = self._get_creationflags()
@@ -442,9 +442,15 @@ class DownloadService:
         process = None
         with tempfile.TemporaryFile() as log:
             try:
+                if cancel_check and cancel_check():
+                    raise DownloadCancelled('Download cancelled')
                 process = subprocess.Popen(command, stdout=log, stderr=log, creationflags=flags,
                                            start_new_session=platform.system() != 'Windows')
                 while True:
+                    if cancel_check and cancel_check():
+                        raise DownloadCancelled('Download cancelled')
+                    if os.fstat(log.fileno()).st_size > 1048576:
+                        raise RuntimeError(f'{label} download produced excessive diagnostic output')
                     size = 0
                     for path in prefix.parent.glob(prefix.name + '*'):
                         try:
@@ -453,9 +459,9 @@ class DownloadService:
                         except FileNotFoundError:
                             pass  # ffmpeg atomically moved a file between checks.
                     if size > max_bytes:
-                        raise RuntimeError("Streaming download exceeds the cache file limit")
+                        raise RuntimeError(f"{label} download exceeds the file size limit")
                     if time.monotonic() - started > timeout:
-                        raise RuntimeError("Streaming download timed out")
+                        raise RuntimeError(f"{label} download timed out")
                     if process.poll() is not None:
                         break
                     time.sleep(0.1)
@@ -465,12 +471,21 @@ class DownloadService:
                     raise RuntimeError("Failed to download audio: " + detail)
             finally:
                 if process is not None and process.poll() is None:
-                    if platform.system() == 'Windows':
-                        subprocess.run(['taskkill', '/PID', str(process.pid), '/T', '/F'],
-                                       capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW, timeout=10)
-                    else:
-                        os.killpg(process.pid, signal.SIGKILL)
-                    process.wait(timeout=10)
+                    try:
+                        if platform.system() == 'Windows':
+                            subprocess.run(['taskkill', '/PID', str(process.pid), '/T', '/F'],
+                                           capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW, timeout=10)
+                        else:
+                            os.killpg(process.pid, signal.SIGKILL)
+                    except (OSError, subprocess.SubprocessError):
+                        # The child may have exited between poll and tree-kill.
+                        # Preserve the original cancellation/provider failure.
+                        pass
+                    try:
+                        process.wait(timeout=10)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait(timeout=10)
     
     def get_download_progress(self, url: str):
         """Get download progress for a URL"""

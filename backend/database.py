@@ -922,6 +922,23 @@ class Database:
         conn.close()
         return self.get_playlist(user_id, playlist_id)
 
+    def attach_download_to_playlist(self, user_id, playlist_id, song_id, filename, file_path, original_url):
+        """Attach a finished job without replacing metadata or reviving removed songs."""
+        conn = self.get_connection()
+        try:
+            with conn:
+                cursor = conn.execute('''UPDATE playlist_songs SET filename=?, file_path=?
+                    WHERE playlist_id=? AND COALESCE(source_id,id)=? AND COALESCE(url,'')=?
+                    AND (COALESCE(filename,'')='' OR filename=?)
+                    AND EXISTS(SELECT 1 FROM playlists WHERE id=? AND user_id=?)''',
+                    (filename, file_path, playlist_id, song_id, original_url, filename, playlist_id, user_id))
+                if cursor.rowcount:
+                    conn.execute('UPDATE playlists SET updated_at=? WHERE id=? AND user_id=?',
+                                 (datetime.now().isoformat(), playlist_id, user_id))
+                return cursor.rowcount > 0
+        finally:
+            conn.close()
+
     def remove_song_from_playlist(self, user_id, playlist_id, song_id):
         conn = self.get_connection()
         cursor = conn.cursor()

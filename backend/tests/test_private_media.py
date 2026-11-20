@@ -221,8 +221,8 @@ class PrivateMediaTests(unittest.TestCase):
         self.api.csv_progress[(self.one["id"], "private.csv")] = {"status": "completed"}
         self.assertEqual(self.client.get("/csv/progress/private.csv", headers=self.h1).status_code, 200)
         self.assertEqual(self.client.get("/csv/progress/private.csv", headers=self.h2).status_code, 404)
-        self.api.download_progress["private-job"] = {"user_id": self.one["id"], "status": "completed"}
-        self.assertEqual(self.client.get("/downloads/progress/private-job", headers=self.h2).status_code, 404)
+        job = self.api.download_jobs.submit(self.one['id'], [{'title': 'Private song'}])
+        self.assertEqual(self.client.get(f"/downloads/progress/{job['download_id']}", headers=self.h2).status_code, 404)
         result = {"tracks": [{"title": "bad", "url": "http://127.0.0.1/private"}], "success_count": 1, "not_found": [], "total": 1}
         with patch.object(self.api.download_service, "convert_csv_to_playlist", return_value=result):
             self.assertEqual(self.client.post("/csv/convert/private.csv", headers=self.h1, json={}).status_code, 400)
@@ -400,7 +400,7 @@ class PrivateMediaTests(unittest.TestCase):
         process.poll.return_value = None
         process.wait.return_value = 1
         with patch.object(service, '_yt_cmd', return_value=['fixture']), patch.object(download_service.subprocess, 'Popen', return_value=process), patch.object(download_service.subprocess, 'run') as kill:
-            with self.assertRaisesRegex(RuntimeError, 'cache file limit'):
+            with self.assertRaisesRegex(RuntimeError, 'file size limit'):
                 service._bounded_stream_process([], self.source, prefix, 5)
             if download_service.platform.system() == 'Windows':
                 self.assertEqual(kill.call_args.args[0], ['taskkill', '/PID', '12345', '/T', '/F'])

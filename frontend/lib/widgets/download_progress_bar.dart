@@ -6,6 +6,8 @@ class DownloadProgressBar extends StatelessWidget {
   final int total;
   final String status;
   final double progress;
+  final String heading;
+  final VoidCallback? onShowJobs;
 
   const DownloadProgressBar({
     super.key,
@@ -14,13 +16,15 @@ class DownloadProgressBar extends StatelessWidget {
     required this.total,
     required this.status,
     required this.progress,
+    this.heading = 'Downloading...',
+    this.onShowJobs,
   });
 
   @override
   Widget build(BuildContext context) {
     final primaryColor = Theme.of(context).colorScheme.primary;
     final surfaceColor = Theme.of(context).colorScheme.surface;
-    
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
@@ -53,16 +57,22 @@ class DownloadProgressBar extends StatelessWidget {
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  'Downloading...',
+                  heading,
                   style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                    fontWeight: FontWeight.w600,
-                  ),
+                        fontWeight: FontWeight.w600,
+                      ),
                 ),
               ),
               Text(
                 '$processed/$total downloaded',
                 style: Theme.of(context).textTheme.bodySmall,
               ),
+              if (onShowJobs != null)
+                IconButton(
+                  tooltip: 'View server downloads',
+                  onPressed: onShowJobs,
+                  icon: const Icon(Icons.list_alt),
+                ),
             ],
           ),
           const SizedBox(height: 8),
@@ -80,8 +90,8 @@ class DownloadProgressBar extends StatelessWidget {
                 child: Text(
                   status.isNotEmpty ? status : 'Downloading...',
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Colors.grey[600],
-                  ),
+                        color: Colors.grey[600],
+                      ),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
@@ -90,8 +100,8 @@ class DownloadProgressBar extends StatelessWidget {
                 Text(
                   '$failed failed',
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Colors.orange,
-                  ),
+                        color: Colors.orange,
+                      ),
                 ),
             ],
           ),
@@ -100,4 +110,3 @@ class DownloadProgressBar extends StatelessWidget {
     );
   }
 }
-

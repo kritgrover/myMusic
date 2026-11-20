@@ -9,8 +9,14 @@ import 'media_exceptions.dart';
 class ApiService {
   final String baseUrl;
   final AuthHttpClient _client;
+  final Duration metadataTimeout;
+  final Duration jobRequestTimeout;
 
-  ApiService({String? baseUrl, AuthHttpClient? client})
+  ApiService(
+      {String? baseUrl,
+      AuthHttpClient? client,
+      this.metadataTimeout = const Duration(milliseconds: 1200),
+      this.jobRequestTimeout = const Duration(seconds: 8)})
       : baseUrl = baseUrl ?? AppConfig.apiBaseUrl,
         _client = client ?? AuthHttpClient.shared;
 
@@ -366,7 +372,7 @@ class ApiService {
         if (videoId.isNotEmpty) 'video_id': videoId,
         if (videoUrl.isNotEmpty) 'video_url': videoUrl,
       });
-      final response = await _client.get(uri);
+      final response = await _client.get(uri).timeout(metadataTimeout);
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         return {
@@ -472,9 +478,13 @@ class ApiService {
   }
 
   Future<DownloadProgress> getDownloadProgress(String downloadId) async {
+    final scope = sessionScope;
     try {
       final response = await _client
-          .get(Uri.parse('$baseUrl/downloads/progress/$downloadId'));
+          .get(Uri.parse(
+              '$baseUrl/downloads/progress/${Uri.encodeComponent(downloadId)}'))
+          .timeout(jobRequestTimeout);
+      if (scope != sessionScope) throw StateError('The account changed.');
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
@@ -486,6 +496,43 @@ class ApiService {
       throw Exception('Get download progress error: $e');
     }
   }
+
+  Future<List<DownloadProgress>> getDownloadJobs() async {
+    final scope = sessionScope;
+    final response = await _client
+        .get(Uri.parse('$baseUrl/downloads/jobs'))
+        .timeout(jobRequestTimeout);
+    if (scope != sessionScope) throw StateError('The account changed.');
+    if (response.statusCode != 200) {
+      throw StateError('Could not load server downloads.');
+    }
+    final data = jsonDecode(response.body);
+    if (data is! Map<String, dynamic> || data['jobs'] is! List) {
+      throw const FormatException('Invalid download jobs response.');
+    }
+    return (data['jobs'] as List)
+        .map((row) => DownloadProgress.fromJson(row as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<DownloadProgress> _updateDownloadJob(String id, String action) async {
+    final scope = sessionScope;
+    final response = await _client
+        .post(Uri.parse(
+            '$baseUrl/downloads/jobs/${Uri.encodeComponent(id)}/$action'))
+        .timeout(jobRequestTimeout);
+    if (scope != sessionScope) throw StateError('The account changed.');
+    if (response.statusCode != 200) {
+      throw StateError('Could not $action this download.');
+    }
+    return DownloadProgress.fromJson(
+        jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  Future<DownloadProgress> cancelDownloadJob(String id) =>
+      _updateDownloadJob(id, 'cancel');
+  Future<DownloadProgress> retryDownloadJob(String id) =>
+      _updateDownloadJob(id, 'retry');
 
   // CSV Upload and Conversion
   Future<CsvUploadResult> uploadCsv(String filePath) async {
@@ -1001,6 +1048,10 @@ class BatchDownloadRequest {
 }
 
 class DownloadProgress {
+  final String downloadId;
+  final String title;
+  final String state;
+  final bool canRetry;
   final int current;
   final int total;
   final String status;
@@ -1009,6 +1060,10 @@ class DownloadProgress {
   final List<Map<String, dynamic>> downloads;
 
   DownloadProgress({
+    this.downloadId = '',
+    this.title = '',
+    this.state = '',
+    this.canRetry = false,
     required this.current,
     required this.total,
     required this.status,
@@ -1019,6 +1074,10 @@ class DownloadProgress {
 
   factory DownloadProgress.fromJson(Map<String, dynamic> json) {
     return DownloadProgress(
+      downloadId: (json['download_id'] ?? json['id'] ?? '') as String,
+      title: json['title'] as String? ?? '',
+      state: json['state'] as String? ?? '',
+      canRetry: json['can_retry'] == true,
       current: json['current'] ?? 0,
       total: json['total'] ?? 0,
       status: json['status'] ?? '',
@@ -1028,7 +1087,12 @@ class DownloadProgress {
     );
   }
 
-  bool get isCompleted => status == 'completed';
+  bool get isCompleted => state == 'completed' || status == 'completed';
+  bool get isCancelled => state == 'cancelled' || status == 'cancelled';
+  bool get isCancelling =>
+      isCancelled && status.toLowerCase().startsWith('cancelling');
+  bool get isActive =>
+      isCancelling || (!isCompleted && !isCancelled && !hasError);
   bool get hasError => status.startsWith('error');
-  double get progress => total > 0 ? current / total : 0.0;
+  double get progress => total > 0 ? (current / total).clamp(0.0, 1.0) : 0.0;
 }

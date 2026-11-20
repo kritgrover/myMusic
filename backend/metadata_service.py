@@ -1,6 +1,11 @@
 import re
 import json
 import subprocess
+import asyncio
+import hashlib
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from database import db
 
 
@@ -206,9 +211,79 @@ def _score_spotify_match(spotify_result: dict, youtube_title: str, uploader: str
 
 
 class MetadataService:
-    def __init__(self, download_service=None, spotify_service=None):
+    def __init__(self, download_service=None, spotify_service=None, *,
+                 max_workers=2, response_timeout=0.75, work_timeout=12.0):
+        if max_workers < 1 or response_timeout <= 0 or work_timeout <= 0:
+            raise ValueError('Metadata worker limits and timeouts must be positive.')
         self._dl = download_service
         self._spotify = spotify_service
+        self._max_workers = max_workers
+        self._response_timeout = response_timeout
+        self._work_timeout = work_timeout
+        self._pool = None
+        self._pending = {}
+        self._lock = threading.Lock()
+        self._closed = False
+
+    @staticmethod
+    def fallback(title, uploader=''):
+        return {**_regex_parse(title, uploader), 'album': '', 'spotify_id': '',
+                'thumbnail': '', 'source': 'regex_parsed'}
+
+    @staticmethod
+    def _request_key(title, uploader='', video_id=None, video_url=None):
+        # Caller-supplied labels must not share a persistent cache entry with
+        # different labels for the same video. This also versions old guesses.
+        identity = json.dumps([video_id or '', video_url or '', title, uploader],
+                              ensure_ascii=False, separators=(',', ':'))
+        return 'metadata-v2:' + hashlib.sha256(identity.encode()).hexdigest()
+
+    async def resolve_async(self, title, uploader='', video_id=None, video_url=None):
+        """Bound request latency while at most two enrichment jobs run.
+
+        A timed-out/disconnected caller does not cancel shared work or free its
+        slot early. Completed enrichment may warm only its exact request cache.
+        There is no waiting-job queue: saturation immediately returns labels.
+        """
+        fallback = self.fallback(title, uploader)
+        key = self._request_key(title, uploader, video_id, video_url)
+        added = False
+        with self._lock:
+            if self._closed:
+                return fallback
+            future = self._pending.get(key)
+            if future is None:
+                if len(self._pending) >= self._max_workers:
+                    return fallback
+                if self._pool is None:
+                    self._pool = ThreadPoolExecutor(max_workers=self._max_workers,
+                                                    thread_name_prefix='music-metadata')
+                future = self._pool.submit(self.resolve, title, uploader, video_id, video_url)
+                self._pending[key] = future
+                added = True
+        if added:
+            def complete(done):
+                with self._lock:
+                    if self._pending.get(key) is done:
+                        self._pending.pop(key, None)
+            # Register outside the lock: already-finished futures call it inline.
+            future.add_done_callback(complete)
+        wrapped = asyncio.wrap_future(future)
+        # The caller may time out before a provider fails. Retrieve exceptions
+        # on the loop wrapper too, avoiding unhandled-future diagnostics.
+        wrapped.add_done_callback(lambda done: None if done.cancelled() else done.exception())
+        try:
+            return await asyncio.wait_for(asyncio.shield(wrapped), self._response_timeout)
+        except Exception:
+            return fallback
+
+    def close(self):
+        """Stop new enrichment; never block server shutdown on an external call."""
+        with self._lock:
+            self._closed = True
+            pool = self._pool
+        if pool is not None:
+            pool.shutdown(wait=False, cancel_futures=True)
 
     def resolve(self, title: str, uploader: str = "",
                 video_id: str = None, video_url: str = None) -> dict:
@@ -216,15 +291,17 @@ class MetadataService:
 
         Returns dict with keys: title, artist, album, spotify_id, thumbnail, source
         """
+        deadline = time.monotonic() + self._work_timeout
+        cache_key = self._request_key(title, uploader, video_id, video_url)
         if video_id:
-            cached = db.get_metadata_cache(video_id)
+            cached = db.get_metadata_cache(cache_key)
             if cached:
                 return cached
 
         # Layer 1: yt-dlp structured metadata
         ytdlp_meta = None
         if video_url and self._dl:
-            ytdlp_meta = self._extract_ytdlp_metadata(video_url)
+            ytdlp_meta = self._extract_ytdlp_metadata(video_url, deadline=deadline)
 
         if ytdlp_meta and ytdlp_meta.get("title") and ytdlp_meta.get("artist"):
             result = {
@@ -236,7 +313,7 @@ class MetadataService:
                 "source": "ytdlp_structured",
             }
             spotify_enriched = self._spotify_validate(
-                result["title"], result["artist"], title, uploader
+                result["title"], result["artist"], title, uploader, deadline=deadline
             )
             if spotify_enriched:
                 result["spotify_id"] = spotify_enriched.get("id", "")
@@ -246,7 +323,7 @@ class MetadataService:
                 result["source"] = "ytdlp_structured+spotify"
 
             if video_id:
-                db.set_metadata_cache(video_id, result)
+                db.set_metadata_cache(cache_key, result)
             return result
 
         # Layer 2: regex parsing
@@ -254,7 +331,7 @@ class MetadataService:
 
         # Layer 3: Spotify validation
         spotify_result = self._spotify_validate(
-            parsed["title"], parsed["artist"], title, uploader
+            parsed["title"], parsed["artist"], title, uploader, deadline=deadline
         )
 
         if spotify_result:
@@ -276,13 +353,16 @@ class MetadataService:
                 "source": "regex_parsed",
             }
 
-        if video_id:
-            db.set_metadata_cache(video_id, result)
+        if video_id and spotify_result:
+            db.set_metadata_cache(cache_key, result)
         return result
 
-    def _extract_ytdlp_metadata(self, video_url: str) -> dict | None:
+    def _extract_ytdlp_metadata(self, video_url: str, *, deadline=None) -> dict | None:
         """Extract structured track/artist metadata from a YouTube video via yt-dlp."""
         if not self._dl or not self._dl.yt_dlp_exe:
+            return None
+        remaining = deadline - time.monotonic() if deadline is not None else 8
+        if remaining <= 0:
             return None
 
         try:
@@ -293,7 +373,7 @@ class MetadataService:
             )
             ret = subprocess.run(
                 cmd, capture_output=True, text=True,
-                timeout=15, creationflags=creationflags,
+                timeout=min(8, remaining), creationflags=creationflags,
             )
             if ret.returncode != 0:
                 return None
@@ -312,7 +392,7 @@ class MetadataService:
             return None
 
     def _spotify_validate(self, parsed_title: str, parsed_artist: str,
-                          raw_yt_title: str, uploader: str) -> dict | None:
+                          raw_yt_title: str, uploader: str, *, deadline=None) -> dict | None:
         """Validate/correct parsed metadata against Spotify using multiple search strategies."""
         if not self._spotify or not self._spotify.sp:
             return None
@@ -321,13 +401,24 @@ class MetadataService:
 
         candidates = []
 
-        strategies = self._spotify.search_track_multi_strategy(
-            parsed_title, parsed_artist, cleaned_yt
-        )
-        for result in strategies:
+        queries = []
+        if parsed_title and parsed_artist:
+            queries.append(f'track:{parsed_title} artist:{parsed_artist}')
+        if cleaned_yt:
+            queries.append(cleaned_yt)
+        if parsed_title and parsed_artist and parsed_title != parsed_artist:
+            queries.append(f'track:{parsed_artist} artist:{parsed_title}')
+        for query in dict.fromkeys(queries):
+            if deadline is not None and time.monotonic() >= deadline:
+                break
+            # Each Spotify request is already bounded by its six-second client
+            # timeout. Do not start another provider call after the work budget.
+            result = self._spotify._search_spotify_raw(query)
             if result:
                 score = _score_spotify_match(result, raw_yt_title, uploader)
                 candidates.append((score, result))
+                if score >= 90:
+                    break
 
         if not candidates:
             return None

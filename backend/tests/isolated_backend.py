@@ -46,6 +46,8 @@ def isolated_backend():
                 try:
                     yield api, root
                 finally:
+                    api.download_jobs.shutdown()
+                    api.metadata_service.close()
                     for name in module_names:
                         sys.modules.pop(name, None)
                     sys.modules.update(saved_modules)

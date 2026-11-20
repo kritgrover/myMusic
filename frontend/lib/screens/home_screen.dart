@@ -9,7 +9,7 @@ import '../widgets/bottom_player.dart';
 import '../widgets/queue_panel.dart';
 import 'lyrics_screen.dart';
 import '../widgets/csv_progress_bar.dart';
-import '../widgets/download_progress_bar.dart';
+import '../widgets/server_download_panel.dart';
 import '../widgets/not_found_songs_dialog.dart';
 import '../widgets/unified_search_results.dart';
 import '../widgets/track_tile.dart';
@@ -22,6 +22,7 @@ import '../services/player_state_service.dart';
 import '../services/queue_service.dart';
 import '../services/lyrics_service.dart';
 import '../services/api_service.dart';
+import '../services/server_download_service.dart';
 import '../services/playlist_service.dart';
 import '../services/recently_played_service.dart';
 import '../models/queue_item.dart';
@@ -112,10 +113,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Timer? _csvProgressTimer;
   String? _csvFilename;
 
-  // Download progress tracking
-  DownloadProgress? _downloadProgress;
-  Timer? _downloadProgressTimer;
-  String? _downloadId;
+  late final ServerDownloadService _serverDownloads;
 
   // Pending dialog data
   List<Map<String, dynamic>>? _pendingNotFoundSongs;
@@ -180,6 +178,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
+    _serverDownloads = ServerDownloadService(api: _apiService)..start();
     WidgetsBinding.instance.addObserver(this);
     final offlineUserId = widget.authService.userId!;
     _offlineReady = Future<void>.microtask(() async {
@@ -479,13 +478,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         playerStateService: _playerStateService,
         queueService: _queueService,
         recentlyPlayedService: _recentlyPlayedService,
-        onDownloadStart: (downloadId) {
-          setState(() {
-            _downloadId = downloadId;
-            _downloadProgress = null;
-          });
-          _startDownloadProgressPolling(downloadId);
-        },
+        onDownloadStart: _serverDownloads.watch,
       ),
     ));
   }
@@ -752,13 +745,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         queueService: _queueService,
         recentlyPlayedService: _recentlyPlayedService,
         initialPlaylistId: playlistId,
-        onDownloadStart: (downloadId) {
-          setState(() {
-            _downloadId = downloadId;
-            _downloadProgress = null;
-          });
-          _startDownloadProgressPolling(downloadId);
-        },
+        onDownloadStart: _serverDownloads.watch,
       );
     } else if (_libraryTab == 1) {
       body = DownloadsScreen(
@@ -2507,47 +2494,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _csvProgressTimer = null;
   }
 
-  void _startDownloadProgressPolling(String downloadId) {
-    _downloadProgressTimer?.cancel();
-    _downloadProgressTimer =
-        Timer.periodic(const Duration(milliseconds: 500), (timer) async {
-      try {
-        final progress = await _apiService.getDownloadProgress(downloadId);
-        if (mounted) {
-          setState(() {
-            _downloadProgress = progress;
-          });
-          if (progress.isCompleted || progress.hasError) {
-            timer.cancel();
-            // Clear progress after a short delay
-            Future.delayed(const Duration(seconds: 2), () {
-              if (mounted) {
-                setState(() {
-                  _downloadProgress = null;
-                  _downloadId = null;
-                });
-              }
-            });
-          }
-        }
-      } catch (e) {
-        // Progress not available yet or download finished
-        timer.cancel();
-        if (mounted) {
-          setState(() {
-            _downloadProgress = null;
-            _downloadId = null;
-          });
-        }
-      }
-    });
-  }
-
-  void _stopDownloadProgressPolling() {
-    _downloadProgressTimer?.cancel();
-    _downloadProgressTimer = null;
-  }
-
   Future<void> _showNotFoundSongsDialog(
       List<Map<String, dynamic>> notFoundSongs, String? playlistId) async {
     if (!mounted || notFoundSongs.isEmpty) return;
@@ -2808,14 +2754,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       status: _csvProgress!.status,
                       progress: _csvProgress!.progress,
                     ),
-                  if (_downloadProgress != null && _downloadId != null)
-                    DownloadProgressBar(
-                      processed: _downloadProgress!.processed,
-                      failed: _downloadProgress!.failed,
-                      total: _downloadProgress!.total,
-                      status: _downloadProgress!.status,
-                      progress: _downloadProgress!.progress,
-                    ),
+                  ServerDownloadPanel(service: _serverDownloads),
                   // Persistent now-playing bar (full width). Listen to BOTH the player
                   // state and the queue so track changes (e.g. Next) refresh the bar's
                   // artwork/title even when only the queue's currentItem changed.
@@ -2901,7 +2840,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _playbackSession.dispose();
     _completionSubscription?.cancel();
     _csvProgressTimer?.cancel();
-    _downloadProgressTimer?.cancel();
+    _serverDownloads.dispose();
     _searchController.dispose();
     _searchFocusNode.dispose();
     _musicSearch.removeListener(_onSearchStateChanged);

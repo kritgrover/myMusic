@@ -72,8 +72,12 @@ class _Offline extends ChangeNotifier implements OfflineDownloadService {
 }
 
 class _Playlists extends PlaylistService {
+  int loads = 0;
   @override
-  Future<Playlist?> getPlaylist(String id) async => null;
+  Future<Playlist?> getPlaylist(String id) async {
+    loads++;
+    return null;
+  }
 }
 
 class _Api extends ApiService {
@@ -81,6 +85,7 @@ class _Api extends ApiService {
   final batches = <List<Map<String, dynamic>>>[];
   String? source = 'https://www.youtube.com/watch?v=abcdefghijk';
   String? failure;
+  int progressFailures = 0;
 
   @override
   Future<String?> resolveToYouTubeUrl(String? url, String title, String? artist,
@@ -104,18 +109,23 @@ class _Api extends ApiService {
   }
 
   @override
-  Future<DownloadProgress> getDownloadProgress(String id) async =>
-      DownloadProgress(
-          current: 1,
-          total: 1,
-          status: 'completed',
-          processed: failure == null ? 1 : 0,
-          failed: failure == null ? 0 : 1,
-          downloads: [
-            failure == null
-                ? {'success': true, 'filename': 'song.m4a'}
-                : {'success': false, 'error': failure}
-          ]);
+  Future<DownloadProgress> getDownloadProgress(String id) async {
+    if (progressFailures > 0) {
+      progressFailures--;
+      throw StateError('Server restarting');
+    }
+    return DownloadProgress(
+        current: 1,
+        total: 1,
+        status: 'completed',
+        processed: failure == null ? 1 : 0,
+        failed: failure == null ? 0 : 1,
+        downloads: [
+          failure == null
+              ? {'success': true, 'filename': 'song.m4a'}
+              : {'success': false, 'error': failure}
+        ]);
+  }
 
   @override
   Future<List<DownloadedFile>> listDownloads() async => [];
@@ -233,6 +243,8 @@ void main() {
     });
     expect(api.batches.single.single['url'], api.source);
     expect(api.batches.single.single['spotify_id'], _spotifyId);
+    expect(api.batches.single.single['playlist_id'], 'mix');
+    expect(api.batches.single.single['playlist_song_id'], _spotifyId);
     expect(offline.saved, isEmpty);
   });
 
@@ -246,6 +258,8 @@ void main() {
     await tester.pumpAndSettle();
     expect(api.batches.single.single['url'], api.source);
     expect(api.batches.single.single['spotify_id'], _spotifyId);
+    expect(api.batches.single.single['playlist_id'], 'mix');
+    expect(api.batches.single.single['playlist_song_id'], _spotifyId);
   });
 
   testWidgets('failed web job gives reason without exposing backend paths',
@@ -260,6 +274,24 @@ void main() {
             '0 downloaded, 1 failed. The server could not convert the audio. Please retry.'),
         findsOneWidget);
     expect(find.textContaining('private'), findsNothing);
+  });
+
+  testWidgets(
+      'web playlist reconnects after a lost poll and reloads completion',
+      (tester) async {
+    offline.isSupported = false;
+    api.progressFailures = 1;
+    await show(tester);
+    final initialLoads = playlists.loads;
+    await tester.tap(find.byTooltip('Download to server'));
+    await tester.pumpAndSettle();
+    expect(playlists.loads, initialLoads);
+    expect(find.text('Downloaded 1 track'), findsNothing);
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pumpAndSettle();
+    expect(playlists.loads, initialLoads + 1);
+    expect(find.text('Downloaded 1 track'), findsOneWidget);
+    expect(api.batches, hasLength(1));
   });
 
   testWidgets('native failed job shows actionable feedback on playlist',

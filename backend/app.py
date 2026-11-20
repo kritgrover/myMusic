@@ -2,8 +2,9 @@ from fastapi import FastAPI, HTTPException, Request, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse, Response
 from starlette.background import BackgroundTask
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import List, Optional, Dict
+from contextlib import asynccontextmanager
 import os
 import uuid
 import hashlib
@@ -15,6 +16,7 @@ from urllib.parse import quote, unquote
 from config import settings
 import httpx
 from download_service import DownloadService
+from download_jobs import DownloadJobManager
 from database import db
 from spotify_service import spotify_service, SpotifyCatalogError, SpotifyCapabilityError
 from search_routes import build_search_router
@@ -35,7 +37,18 @@ from mutagen.id3 import ID3, APIC
 from mutagen.mp4 import MP4Cover
 
 
-app = FastAPI(title="Music Download API")
+@asynccontextmanager
+async def lifespan(application):
+    download_jobs.cleanup()
+    download_jobs.start()
+    try:
+        yield
+    finally:
+        metadata_service.close()
+        await asyncio.to_thread(download_jobs.shutdown)
+
+
+app = FastAPI(title="Music Download API", lifespan=lifespan)
 
 # CORS middleware to allow Flutter app to connect
 # Configure allowed origins - more specific than wildcard for better security
@@ -78,35 +91,24 @@ db.migrate_download_ownership(
 # Global progress tracking for CSV conversions
 csv_progress: Dict[str, Dict] = {}
 
-# Global progress tracking for downloads
-download_progress: Dict[str, Dict] = {}
-
 # Maximum age for progress entries (1 hour in seconds)
 PROGRESS_MAX_AGE = 3600
 
 def cleanup_old_progress():
-    """Remove progress entries older than PROGRESS_MAX_AGE seconds"""
+    """Expire finished CSV progress, never an import that is still running."""
     import time
     current_time = time.time()
     
     # Cleanup csv_progress
     keys_to_remove = []
     for key, value in csv_progress.items():
-        created_at = value.get('created_at', 0)
-        if current_time - created_at > PROGRESS_MAX_AGE:
+        finished = value.get('status') == 'completed' or str(value.get('status', '')).startswith('error:')
+        finished_at = value.get('finished_at', value.get('created_at', current_time))
+        if finished and current_time - finished_at > PROGRESS_MAX_AGE:
             keys_to_remove.append(key)
     for key in keys_to_remove:
         del csv_progress[key]
     
-    # Cleanup download_progress
-    keys_to_remove = []
-    for key, value in download_progress.items():
-        created_at = value.get('created_at', 0)
-        if current_time - created_at > PROGRESS_MAX_AGE:
-            keys_to_remove.append(key)
-    for key in keys_to_remove:
-        del download_progress[key]
-
 
 class SearchRequest(BaseModel):
     query: str
@@ -605,16 +607,46 @@ def download_audio(request: DownloadRequest, http_request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class BatchDownloadItem(DownloadRequest):
+    playlist_id: Optional[str] = None
+    playlist_song_id: Optional[str] = None
+
+
 class BatchDownloadRequest(BaseModel):
-    downloads: List[DownloadRequest]
+    downloads: List[BatchDownloadItem] = Field(min_length=1, max_length=500)
+
+
+def _run_download_item(payload, user_id, is_cancelled):
+    user = db.get_user_by_id(user_id)
+    if not user or not user.get('is_active'):
+        raise ValueError('Account is unavailable')
+    result = download_service.download_audio(
+        **{key: payload[key] for key in ('url', 'title', 'artist', 'album', 'output_format', 'embed_thumbnail')},
+        owner_id=user_id, download_key=payload['download_key'], cancel_check=is_cancelled,
+    )
+    # Lease loss/shutdown may happen between the subprocess and publication.
+    # The stable file key makes this safely repeatable after a restart.
+    if is_cancelled():
+        raise RuntimeError('Download interrupted')
+    filename = _download_filename(result['filename'])
+    db.claim_download(user_id, filename)
+    if payload.get('playlist_id'):
+        db.attach_download_to_playlist(
+            user_id, payload['playlist_id'], payload['playlist_song_id'],
+            filename, result.get('file_path', ''), payload.get('playlist_original_url', ''),
+        )
+    return result
+
+
+download_jobs = DownloadJobManager(db, _run_download_item)
 
 
 @app.post("/downloads/batch")
 def start_batch_download(request: BatchDownloadRequest, http_request: Request):
-    """Start a batch download with progress tracking"""
-    import uuid
-    import time
+    """Persist validated work before acknowledging it to the client."""
     user = _require_current_user(http_request)
+    payloads = []
+    playlists = {}
     for entry in request.downloads:
         entry.url = _source_url(entry.url)
         chosen = db.get_source_preference(user['id'], recording_key({
@@ -625,73 +657,60 @@ def start_batch_download(request: BatchDownloadRequest, http_request: Request):
             entry.url = _source_url(chosen)
         if entry.output_format not in ("m4a", "mp3"):
             raise HTTPException(status_code=400, detail="Unsupported audio format")
-    download_id = str(uuid.uuid4())
-    
-    # Clean up old progress entries to prevent memory leaks
-    cleanup_old_progress()
-    
-    # Initialize progress tracking with timestamp
-    download_progress[download_id] = {
-        "user_id": user["id"],
-        "current": 0,
-        "total": len(request.downloads),
-        "status": "downloading",
-        "processed": 0,
-        "failed": 0,
-        "downloads": [],
-        "created_at": time.time()
-    }
-    
-    # Start downloads in background
-    def download_worker():
-        try:
-            for idx, download_req in enumerate(request.downloads):
-                try:
-                    result = download_service.download_audio(
-                        url=download_req.url,
-                        title=download_req.title,
-                        artist=download_req.artist,
-                        album=download_req.album,
-                        output_format=download_req.output_format,
-                        embed_thumbnail=download_req.embed_thumbnail,
-                        owner_id=user["id"],
-                    )
-                    db.claim_download(user["id"], _download_filename(result['filename']))
-                    download_progress[download_id]["processed"] += 1
-                    download_progress[download_id]["downloads"].append({
-                        "success": True,
-                        "filename": result['filename'],
-                        "title": result['title'],
-                        "artist": result['artist']
-                    })
-                except Exception as e:
-                    download_progress[download_id]["failed"] += 1
-                    download_progress[download_id]["downloads"].append({
-                        "success": False,
-                        "title": download_req.title,
-                        "error": str(e)
-                    })
-                
-                download_progress[download_id]["current"] = idx + 1
-                download_progress[download_id]["status"] = f"Downloading {download_req.title}..."
-            
-            download_progress[download_id]["status"] = "completed"
-        except Exception as e:
-            download_progress[download_id]["status"] = f"error: {str(e)}"
-    
-    import threading
-    thread = threading.Thread(target=download_worker, daemon=True)
-    thread.start()
-    
-    return {"download_id": download_id, "total": len(request.downloads)}
+        if bool(entry.playlist_id) != bool(entry.playlist_song_id):
+            raise HTTPException(status_code=400, detail="Playlist and song must be provided together")
+        payload = entry.model_dump()
+        if entry.playlist_id:
+            if entry.playlist_id not in playlists:
+                playlists[entry.playlist_id] = db.get_playlist(user['id'], entry.playlist_id)
+            playlist = playlists[entry.playlist_id]
+            song = next((song for song in playlist['songs'] if song['id'] == entry.playlist_song_id), None) if playlist else None
+            if not song:
+                raise HTTPException(status_code=404, detail="Playlist song not found")
+            payload['playlist_original_url'] = song.get('url') or ''
+        payload['download_key'] = uuid.uuid4().hex
+        payloads.append(payload)
+    download_jobs.cleanup()
+    try:
+        progress = download_jobs.submit(user['id'], payloads)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    download_jobs.start()
+    return {"download_id": progress['download_id'], "total": progress['total']}
+
+
+@app.get("/downloads/jobs")
+def list_download_jobs(request: Request):
+    download_jobs.cleanup()
+    return {"jobs": download_jobs.list(_require_current_user(request)['id'])}
 
 
 @app.get("/downloads/progress/{download_id}")
 def get_download_progress(download_id: str, request: Request):
-    """Get progress for a batch download"""
-    if download_id not in download_progress or download_progress[download_id].get("user_id") != _require_current_user(request)["id"]:
+    progress = download_jobs.get(_require_current_user(request)['id'], download_id)
+    if progress is None:
         raise HTTPException(status_code=404, detail="Download progress not found")
-    return download_progress[download_id]
+    return progress
+
+
+@app.post("/downloads/jobs/{download_id}/cancel")
+def cancel_download_job(download_id: str, request: Request):
+    progress = download_jobs.cancel(_require_current_user(request)['id'], download_id)
+    if progress is None:
+        raise HTTPException(status_code=404, detail="Download progress not found")
+    return progress
+
+
+@app.post("/downloads/jobs/{download_id}/retry")
+def retry_download_job(download_id: str, request: Request):
+    try:
+        progress = download_jobs.retry(_require_current_user(request)['id'], download_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    if progress is None:
+        raise HTTPException(status_code=404, detail="Download progress not found")
+    download_jobs.start()
+    return progress
 
 
 @app.get("/downloads")
@@ -993,7 +1012,7 @@ async def clean_metadata(title: str, uploader: str = "",
         video_id = actual_id
     elif video_id and not VIDEO_ID.fullmatch(video_id):
         raise HTTPException(status_code=400, detail="Invalid YouTube video ID")
-    return metadata_service.resolve(
+    return await metadata_service.resolve_async(
         title=title,
         uploader=uploader,
         video_id=video_id or None,
@@ -1279,6 +1298,7 @@ def convert_csv_file(filename: str, request: CsvConversionRequest, http_request:
         csv_progress[progress_key]["processed"] = result['success_count']
         csv_progress[progress_key]["not_found"] = len(result['not_found'])
         csv_progress[progress_key]["status"] = "completed"
+        csv_progress[progress_key]["finished_at"] = time.time()
         
         return {
             "success": True,
@@ -1299,6 +1319,7 @@ def convert_csv_file(filename: str, request: CsvConversionRequest, http_request:
         # Mark as error in progress
         if progress_key in csv_progress:
             csv_progress[progress_key]["status"] = f"error: {str(e)}"
+            csv_progress[progress_key]["finished_at"] = time.time()
         raise HTTPException(status_code=500, detail=str(e))
 
 

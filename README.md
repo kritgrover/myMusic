@@ -41,6 +41,7 @@ A full-stack application for searching YouTube, downloading music, playing audio
 │   ├── app.py                   # Main API server
 │   ├── spotify_service.py       # Spotify Web API integration
 │   ├── download_service.py      # YouTube download handling
+│   ├── download_jobs.py         # Persistent, account-owned server download queue
 │   ├── lyrics_service.py        # LRCLIB lyrics API integration
 │   ├── database.py              # SQLite accounts, playlists, library, history/cache
 │   ├── listening_history.py     # Cumulative listening event validation
@@ -59,7 +60,21 @@ A full-stack application for searching YouTube, downloading music, playing audio
 - ⬇️ **Audio Download**: Download audio from YouTube videos (M4A/MP3)
 - 🎵 **Media Player**: Built-in audio player with playback controls
 - 📥 **Downloads Management**: View and manage downloaded files
+- **Recoverable server downloads**: Batches survive app closure and backend
+  restarts. Home restores recent batches with progress, cancellation, and retry
+  for failed or cancelled songs; completed songs are retained. Playlist downloads
+  attach to their existing songs on the server, preserving metadata and order.
+- Server batches run at most two songs concurrently, with up to 500 songs per
+  batch and 20 active batches per account. Each file has a ten-minute processing
+  timeout and a 512 MiB temporary-file limit. Only completed files are published.
+  Recovery restarts unfinished songs; it does not promise byte-level resumption.
+  Finished batch history is retained for 24 hours; active batches do not expire.
+  An abrupt server crash can leave hidden staging folders on disk; they are
+  excluded from the library and never reused as completed downloads.
 - 🏷️ **Metadata**: Automatic metadata embedding (title, artist, album)
+- Slow metadata providers return basic parsed labels within 750 ms while a
+  separate two-worker pool finishes enrichment for later requests. Metadata
+  enrichment does not occupy the server's async playback request handler.
 - 🌐 **Streaming**: Stream tracks directly from YouTube without downloading
 
 ### Playlist Features
@@ -425,6 +440,11 @@ CLIENT_SECRET=your_client_secret
 |--------|----------|-------------|
 | POST | `/search` | Search YouTube for videos |
 | POST | `/download` | Download audio from YouTube URL |
+| POST | `/downloads/batch` | Queue a durable batch; optional per-song `playlist_id` and `playlist_song_id` attach completed files |
+| GET | `/downloads/jobs` | List the account's active and recent batches |
+| GET | `/downloads/progress/{download_id}` | Read a persisted batch and per-song results |
+| POST | `/downloads/jobs/{download_id}/cancel` | Cancel unfinished work, preserving completed songs |
+| POST | `/downloads/jobs/{download_id}/retry` | Retry only failed or cancelled songs |
 | POST | `/media/authorize` | Authorize an exact audio path for temporary playback |
 | GET | `/downloads` | List the current account's downloaded files |
 | GET/HEAD | `/downloads/{filename}` | Read owned audio, with range/seek support |
@@ -602,10 +622,10 @@ prefetching, while crossfade uses two decks. Short tracks shorten the fade to
 avoid overlapping their entire duration. Pause, seek, manual track changes and
 queue edits invalidate stale transition work.
 
-Download matching in playlist details is deliberately non-destructive: it links
-available files in the current view using exact, unambiguous metadata. It does
-not delete/re-add stored tracks. Persisting verified links through an atomic
-track-update endpoint remains future work.
+Download matching in playlist details links existing files in the current view
+using exact, unambiguous metadata. New server batch downloads persist verified
+file links directly against the original playlist song, without deleting and
+re-adding it. A song removed or changed while downloading is left alone.
 
 ### Backend Issues
 

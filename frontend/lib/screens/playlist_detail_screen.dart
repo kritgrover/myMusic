@@ -301,6 +301,8 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
       'artist': track.artist ?? '',
       'album': track.album ?? '',
       if (spotifyId != null) 'spotify_id': spotifyId,
+      'playlist_id': _playlist.id,
+      'playlist_song_id': track.id,
       'output_format': 'm4a',
       'embed_thumbnail': true,
     };
@@ -370,14 +372,20 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
         final progress = await _apiService.getDownloadProgress(downloadId);
         if (!mounted) return;
 
-        if (progress.isCompleted) {
+        if (progress.isCompleted ||
+            (progress.isCancelled && !progress.isActive)) {
           // Batch results preserve request order, including failed downloads.
           // Remember confirmed files locally without deleting playlist entries.
           for (int i = 0;
               i < progress.downloads.length && i < tracks.length;
               i++) {
             final downloadResult = progress.downloads[i];
-            final track = tracks[i];
+            // Older servers have ordered complete results; partial cancelled
+            // results may omit unfinished rows, so rely on server persistence.
+            final index = downloadResult['index'] as int? ??
+                (progress.isCompleted ? i : -1);
+            if (index < 0 || index >= tracks.length) continue;
+            final track = tracks[index];
             final filename = downloadResult['filename'];
             if (downloadResult['success'] == true &&
                 filename is String &&
@@ -385,7 +393,10 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
               _confirmedDownloads[track.id] = filename;
             }
           }
-          await _syncDownloadedFiles();
+          // The server persists each successful file against its original row,
+          // including when this screen or the app was closed during the job.
+          await _loadPlaylist();
+          if (mounted) await _syncDownloadedFiles();
 
           if (mounted) {
             final successCount = progress.processed;
@@ -398,9 +409,11 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
                 content: Text(
-                  failCount > 0
-                      ? '$successCount downloaded, $failCount failed. $reason'
-                      : 'Downloaded ${successCount} ${successCount == 1 ? 'track' : 'tracks'}',
+                  progress.isCancelled
+                      ? 'Download cancelled. $successCount downloaded.'
+                      : failCount > 0
+                          ? '$successCount downloaded, $failCount failed. $reason'
+                          : 'Downloaded $successCount ${successCount == 1 ? 'track' : 'tracks'}',
                 ),
                 backgroundColor: failCount > 0 ? Colors.orange : null,
                 behavior: SnackBarBehavior.floating,
@@ -425,11 +438,11 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
         }
 
         // Wait before polling again
-        await Future.delayed(const Duration(milliseconds: 500));
-      } catch (e) {
-        // If progress is not available, the download might have finished
-        await _loadPlaylist();
-        break;
+        await Future.delayed(const Duration(seconds: 2));
+      } catch (_) {
+        // A lost connection is not a completed download. Keep this playlist
+        // subscribed while the Home download panel reconnects to durable jobs.
+        await Future.delayed(const Duration(seconds: 2));
       }
     }
   }
