@@ -1,147 +1,340 @@
-import 'package:flutter/material.dart';
 import 'dart:async';
-import '../utils/responsive_utils.dart';
+import 'dart:math' as math;
+import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import '../services/audio_player_service.dart';
+import '../services/player_state_service.dart';
+import '../services/queue_service.dart';
+import '../services/saved_music_service.dart';
+import '../widgets/album_cover.dart';
+import '../widgets/playback_settings_sheet.dart';
+import '../widgets/save_track_button.dart';
 
-const Color neonBlue = Color(0xFF00D9FF);
-
+/// A view of the existing listening session. Closing it never stops playback.
 class PlayerScreen extends StatefulWidget {
-  const PlayerScreen({super.key});
+  final PlayerStateService player;
+  final QueueService queue;
+  final VoidCallback onQueue;
+  final VoidCallback onLyrics;
+  final VoidCallback? onDownload;
+  final VoidCallback? onAddToPlaylist;
+  final SavedMusicService? savedMusicService;
+  final VoidCallback? onClose;
+
+  const PlayerScreen({
+    super.key,
+    required this.player,
+    required this.queue,
+    required this.onQueue,
+    required this.onLyrics,
+    this.onDownload,
+    this.onAddToPlaylist,
+    this.savedMusicService,
+    this.onClose,
+  });
 
   @override
   State<PlayerScreen> createState() => _PlayerScreenState();
 }
 
 class _PlayerScreenState extends State<PlayerScreen> {
-  final AudioPlayerService _playerService = AudioPlayerService();
+  final List<StreamSubscription<dynamic>> _subscriptions = [];
+  double? _seekValue;
   Duration _position = Duration.zero;
   Duration _duration = Duration.zero;
-  bool _isPlaying = false;
-  StreamSubscription<Duration>? _positionSubscription;
-  StreamSubscription<Duration?>? _durationSubscription;
-  StreamSubscription<PlayerState>? _stateSubscription;
+  AudioPlayerService get _audio => widget.player.audioPlayer;
 
   @override
   void initState() {
     super.initState();
-    _positionSubscription = _playerService.positionStream.listen((position) {
-      setState(() {
-        _position = position;
-      });
-    });
-    _durationSubscription = _playerService.durationStream.listen((duration) {
-      setState(() {
-        _duration = duration ?? Duration.zero;
-      });
-    });
-    _stateSubscription = _playerService.stateStream.listen((state) {
-      setState(() {
-        _isPlaying = state == PlayerState.playing;
-      });
-    });
+    _position = _audio.position;
+    _duration = _audio.duration;
+    _subscriptions.addAll([
+      _audio.positionStream.listen((position) {
+        if (mounted) setState(() => _position = position);
+      }),
+      _audio.durationStream.listen((duration) {
+        if (mounted) {
+          setState(() {
+            _duration = duration ?? Duration.zero;
+            _seekValue = null;
+          });
+        }
+      }),
+      _audio.stateStream.listen((_) {
+        if (mounted) setState(() {});
+      }),
+    ]);
   }
 
   @override
   void dispose() {
-    _positionSubscription?.cancel();
-    _durationSubscription?.cancel();
-    _stateSubscription?.cancel();
-    _playerService.dispose();
+    for (final subscription in _subscriptions) {
+      subscription.cancel();
+    }
     super.dispose();
   }
 
-  String _formatDuration(Duration duration) {
-    String twoDigits(int n) => n.toString().padLeft(2, '0');
-    final minutes = twoDigits(duration.inMinutes.remainder(60));
-    final seconds = twoDigits(duration.inSeconds.remainder(60));
-    return '$minutes:$seconds';
+  Future<void> _run(Future<void> Function() action) async {
+    try {
+      await action();
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('Could not play this track. Try again.')));
+      }
+    }
   }
 
-  Future<void> _seekTo(Duration position) async {
-    await _playerService.seek(position);
+  String _time(Duration duration) {
+    final seconds = duration.inSeconds.clamp(0, 864000);
+    return '${seconds ~/ 60}:${(seconds % 60).toString().padLeft(2, '0')}';
+  }
+
+  void _openFromPlayer(VoidCallback action) {
+    _close();
+    action();
+  }
+
+  void _close() {
+    if (widget.onClose != null) {
+      widget.onClose!();
+    } else {
+      Navigator.of(context).pop();
+    }
+  }
+
+  Widget _progress() {
+    final maximum = math.max(_duration.inMilliseconds.toDouble(), 1.0);
+    final value =
+        (_seekValue ?? _position.inMilliseconds.toDouble()).clamp(0.0, maximum);
+    final enabled = _duration > Duration.zero && !widget.player.isPreparing;
+    return Column(children: [
+      Semantics(
+        label: 'Playback position',
+        child: Slider(
+          value: value,
+          max: maximum,
+          semanticFormatterCallback: (value) =>
+              _time(Duration(milliseconds: value.round())),
+          onChanged:
+              enabled ? (value) => setState(() => _seekValue = value) : null,
+          onChangeEnd: enabled
+              ? (value) {
+                  setState(() {
+                    _seekValue = null;
+                    _position = Duration(milliseconds: value.round());
+                  });
+                  _run(() => _audio.seek(_position));
+                }
+              : null,
+        ),
+      ),
+      Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+        Text(_time(Duration(milliseconds: value.round()))),
+        Text(_time(_duration)),
+      ]),
+    ]);
+  }
+
+  Widget _transport() {
+    final queue = widget.queue;
+    final hasTrack = widget.player.currentTrack != null;
+    final busy = widget.player.isPreparing || _audio.isBuffering;
+    return Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+      IconButton(
+        tooltip: queue.isShuffled ? 'Shuffle on' : 'Shuffle off',
+        isSelected: queue.isShuffled,
+        onPressed: queue.toggleShuffle,
+        icon: const Icon(Icons.shuffle),
+      ),
+      IconButton(
+        tooltip: 'Previous',
+        iconSize: 32,
+        onPressed: hasTrack
+            ? () => _run(() => queue.currentItem == null
+                ? _audio.seek(Duration.zero)
+                : queue.playPrevious(widget.player))
+            : null,
+        icon: const Icon(Icons.skip_previous_rounded),
+      ),
+      IconButton.filled(
+        tooltip: _audio.isPlaying ? 'Pause' : 'Play',
+        iconSize: 40,
+        padding: const EdgeInsets.all(12),
+        onPressed: hasTrack && !widget.player.isPreparing
+            ? () => _run(
+                _audio.isPlaying ? widget.player.pause : widget.player.resume)
+            : null,
+        icon: busy
+            ? const SizedBox(
+                width: 40,
+                height: 40,
+                child: CircularProgressIndicator(strokeWidth: 2))
+            : Icon(_audio.isPlaying
+                ? Icons.pause_rounded
+                : Icons.play_arrow_rounded),
+      ),
+      IconButton(
+        tooltip: 'Next',
+        iconSize: 32,
+        onPressed: hasTrack && queue.hasNext
+            ? () => _run(() => queue.playNext(widget.player))
+            : null,
+        icon: const Icon(Icons.skip_next_rounded),
+      ),
+      IconButton(
+        tooltip: switch (queue.loopMode) {
+          LoopMode.none => 'Repeat off',
+          LoopMode.queue => 'Repeat all',
+          LoopMode.single => 'Repeat one',
+        },
+        isSelected: queue.loopMode != LoopMode.none,
+        onPressed: queue.toggleLoopMode,
+        icon: Icon(queue.loopMode == LoopMode.single
+            ? Icons.repeat_one
+            : Icons.repeat),
+      ),
+    ]);
   }
 
   @override
-  Widget build(BuildContext context) {
-    final iconSize = ResponsiveUtils.responsiveLargeIconSize(context, base: 120);
-    final controlIconSize = ResponsiveUtils.responsiveValue<double>(context, compact: 40, medium: 48, expanded: 56);
-    final playIconSize = ResponsiveUtils.responsiveValue<double>(context, compact: 48, medium: 56, expanded: 64);
-    return Center(
-      child: ConstrainedBox(
-        constraints: BoxConstraints(
-          maxWidth: ResponsiveUtils.responsiveValue<double>(context, compact: 400, medium: 500, expanded: 600),
-        ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              Icons.music_note,
-              size: iconSize,
-              color: neonBlue,
-            ),
-            const SizedBox(height: 32),
-            Text(
-              _playerService.currentUrl ?? 'No track selected',
-              style: Theme.of(context).textTheme.titleLarge,
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 32),
-            Slider(
-              value: _duration.inMilliseconds > 0
-                  ? _position.inMilliseconds.toDouble()
-                  : 0.0,
-              max: _duration.inMilliseconds > 0
-                  ? _duration.inMilliseconds.toDouble()
-                  : 1.0,
-              onChanged: (value) {
-                _seekTo(Duration(milliseconds: value.toInt()));
-              },
-            ),
-          Padding(
-            padding: ResponsiveUtils.responsiveHorizontalPadding(context),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(_formatDuration(_position)),
-                Text(_formatDuration(_duration)),
+  Widget build(BuildContext context) => ListenableBuilder(
+        listenable: Listenable.merge([widget.player, widget.queue]),
+        builder: (context, _) {
+          final track = widget.player.currentTrack;
+          final queued = widget.queue.currentItem;
+          final artwork = queued?.title == track?.title
+              ? queued?.thumbnail ?? track?.thumbnail
+              : track?.thumbnail;
+          return Scaffold(
+            appBar: AppBar(
+              leading: IconButton(
+                tooltip: 'Close now playing',
+                onPressed: _close,
+                icon: const Icon(Icons.keyboard_arrow_down),
+              ),
+              title: const Text('Now playing',
+                  maxLines: 1, overflow: TextOverflow.ellipsis),
+              actions: [
+                IconButton(
+                  tooltip: 'Playback settings',
+                  onPressed: () => showModalBottomSheet<void>(
+                    context: context,
+                    isScrollControlled: true,
+                    useSafeArea: true,
+                    builder: (_) => SingleChildScrollView(
+                        child: PlaybackSettingsSheet(queue: widget.queue)),
+                  ),
+                  icon: const Icon(Icons.tune),
+                ),
               ],
             ),
-          ),
-          const SizedBox(height: 32),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              IconButton(
-                icon: const Icon(Icons.skip_previous),
-                iconSize: controlIconSize,
-                onPressed: () {
-                  // Previous track functionality
-                },
-              ),
-              IconButton(
-                icon: Icon(_isPlaying ? Icons.pause : Icons.play_arrow),
-                iconSize: playIconSize,
-                onPressed: () async {
-                  if (_isPlaying) {
-                    await _playerService.pause();
-                  } else {
-                    await _playerService.resume();
-                  }
-                },
-              ),
-              IconButton(
-                icon: const Icon(Icons.skip_next),
-                iconSize: controlIconSize,
-                onPressed: () {
-                  // Next track functionality
-                },
-              ),
-            ],
-          ),
-        ],
-        ),
-      ),
-    );
-  }
+            body: SafeArea(
+              top: false,
+              child: LayoutBuilder(builder: (context, constraints) {
+                final contentWidth = math.min(constraints.maxWidth, 520.0);
+                final coverSize = math.min(contentWidth - 48, 320.0);
+                return SingleChildScrollView(
+                  key: const ValueKey('now-playing-scroll'),
+                  padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
+                  child: Center(
+                    child: SizedBox(
+                      width: contentWidth - 48,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Center(
+                            child: AlbumCover(
+                              key: ValueKey(track?.id),
+                              title: track?.title,
+                              artist: track?.artist,
+                              filename: track?.filename,
+                              artworkUrl: artwork,
+                              size: coverSize,
+                            ),
+                          ),
+                          const SizedBox(height: 24),
+                          Row(children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                      track?.title ??
+                                          'Choose something to play',
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .headlineSmall),
+                                  const SizedBox(height: 8),
+                                  Text(track?.artist ?? 'Your music, your way',
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .bodyLarge),
+                                ],
+                              ),
+                            ),
+                            if (track != null)
+                              SaveTrackButton(
+                                  track: track,
+                                  service: widget.savedMusicService),
+                          ]),
+                          const SizedBox(height: 16),
+                          _progress(),
+                          const SizedBox(height: 12),
+                          _transport(),
+                          if (widget.player.playbackError != null) ...[
+                            const SizedBox(height: 16),
+                            const Text(
+                                'Playback interrupted. Tap Play to try again.',
+                                textAlign: TextAlign.center),
+                          ],
+                          const SizedBox(height: 24),
+                          Wrap(
+                            alignment: WrapAlignment.center,
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [
+                              OutlinedButton.icon(
+                                onPressed: () =>
+                                    _openFromPlayer(widget.onQueue),
+                                icon: const Icon(Icons.queue_music),
+                                label: const Text('Queue'),
+                              ),
+                              OutlinedButton.icon(
+                                onPressed: track == null
+                                    ? null
+                                    : () => _openFromPlayer(widget.onLyrics),
+                                icon: const Icon(Icons.lyrics_outlined),
+                                label: const Text('Lyrics'),
+                              ),
+                              if (widget.onAddToPlaylist != null)
+                                OutlinedButton.icon(
+                                  onPressed: track == null
+                                      ? null
+                                      : widget.onAddToPlaylist,
+                                  icon: const Icon(Icons.playlist_add),
+                                  label: const Text('Add to playlist'),
+                                ),
+                              if (widget.onDownload != null)
+                                OutlinedButton.icon(
+                                  onPressed:
+                                      track == null ? null : widget.onDownload,
+                                  icon: const Icon(Icons.download_outlined),
+                                  label: const Text(kIsWeb
+                                      ? 'Download'
+                                      : 'Save on this device'),
+                                ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                );
+              }),
+            ),
+          );
+        },
+      );
 }
-

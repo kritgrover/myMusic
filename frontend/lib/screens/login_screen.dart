@@ -4,8 +4,14 @@ import '../services/auth_service.dart';
 
 class LoginScreen extends StatefulWidget {
   final AuthService authService;
+  final String? serverAddress;
+  final VoidCallback? onChangeServer;
 
-  const LoginScreen({super.key, required this.authService});
+  const LoginScreen(
+      {super.key,
+      required this.authService,
+      this.serverAddress,
+      this.onChangeServer});
 
   @override
   State<LoginScreen> createState() => _LoginScreenState();
@@ -44,14 +50,18 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Center(
+      body: SafeArea(
+          child: Center(
+              child: SingleChildScrollView(
+        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 420),
           child: Card(
             margin: ResponsiveUtils.responsivePadding(context),
             child: Padding(
               padding: ResponsiveUtils.responsivePadding(context),
-              child: Form(
+              child: AutofillGroup(
+                  child: Form(
                 key: _formKey,
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
@@ -64,6 +74,10 @@ class _LoginScreenState extends State<LoginScreen> {
                     const SizedBox(height: 20),
                     TextFormField(
                       controller: _usernameController,
+                      autofillHints: const [AutofillHints.username],
+                      textInputAction: TextInputAction.next,
+                      autocorrect: false,
+                      enableSuggestions: false,
                       decoration: const InputDecoration(labelText: 'Username'),
                       validator: (value) {
                         if (value == null || value.trim().isEmpty) {
@@ -77,6 +91,8 @@ class _LoginScreenState extends State<LoginScreen> {
                       controller: _passwordController,
                       decoration: const InputDecoration(labelText: 'Password'),
                       obscureText: true,
+                      autofillHints: const [AutofillHints.password],
+                      textInputAction: TextInputAction.done,
                       validator: (value) {
                         if (value == null || value.isEmpty) {
                           return 'Password is required';
@@ -115,13 +131,31 @@ class _LoginScreenState extends State<LoginScreen> {
                         },
                       ),
                     ),
+                    if (widget.onChangeServer != null) ...[
+                      const SizedBox(height: 16),
+                      Text('Music server',
+                          style: Theme.of(context).textTheme.labelMedium),
+                      const SizedBox(height: 4),
+                      Text(widget.serverAddress ?? '', softWrap: true),
+                      ListenableBuilder(
+                        listenable: widget.authService,
+                        builder: (context, _) => TextButton.icon(
+                          onPressed:
+                              _isSubmitting || widget.authService.isLoading
+                                  ? null
+                                  : widget.onChangeServer,
+                          icon: const Icon(Icons.dns_outlined),
+                          label: const Text('Change server'),
+                        ),
+                      ),
+                    ],
                   ],
                 ),
-              ),
+              )),
             ),
           ),
         ),
-      ),
+      ))),
     );
   }
 

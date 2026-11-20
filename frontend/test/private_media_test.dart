@@ -79,7 +79,7 @@ class _Player extends Fake implements audio.AudioPlayer {
 }
 
 void main() {
-  const base = AppConfig.apiBaseUrl;
+  const base = AppConfig.defaultApiBaseUrl;
   const canonical = '$base/downloads/my%20song.m4a';
 
   test('media capability uses bearer POST and preserves encoded canonical path',

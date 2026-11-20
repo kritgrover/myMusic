@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
-import '../config.dart';
 import '../models/playlist.dart';
 import 'auth_http_client.dart';
 import 'api_service.dart';
@@ -53,7 +52,8 @@ class SavedMusicException implements Exception {
 class SavedMusicService extends ChangeNotifier {
   static final SavedMusicService shared = SavedMusicService();
   final AuthHttpClient _client;
-  final String baseUrl;
+  final String? _baseUrl;
+  String get baseUrl => _baseUrl ?? _client.baseUrl;
   final Map<SavedMusicKind, Map<String, Map<String, dynamic>>> _items = {
     for (final kind in SavedMusicKind.values) kind: {},
   };
@@ -68,7 +68,7 @@ class SavedMusicService extends ChangeNotifier {
 
   SavedMusicService({AuthHttpClient? client, String? baseUrl})
       : _client = client ?? AuthHttpClient.shared,
-        baseUrl = baseUrl ?? AppConfig.apiBaseUrl;
+        _baseUrl = baseUrl;
 
   String _ensureSession() {
     final session = _client.cacheScope;

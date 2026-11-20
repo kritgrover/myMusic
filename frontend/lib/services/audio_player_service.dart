@@ -25,6 +25,9 @@ class _PreparedNext {
 /// One logical player, independent of the physical deck playing its audio.
 /// Canonical references live here; capabilities exist only in loaded sources.
 class AudioPlayerService {
+  /// Set by the mobile media session after its shared interruption handler is
+  /// ready. A single handler must pause/duck both crossfade decks together.
+  static bool externalInterruptionHandling = false;
   final AudioPlayer _first;
   final AudioPlayer _second;
   late AudioPlayer _active;
@@ -61,6 +64,7 @@ class AudioPlayerService {
   Duration _fadeLength = Duration.zero;
   Completer<void>? _fadeFinished;
   double _volume = 1;
+  double _interruptionVolume = 1;
   bool _restored = false;
   Duration _restoredPosition = Duration.zero;
   Duration _restoredDuration = Duration.zero;
@@ -72,8 +76,10 @@ class AudioPlayerService {
       MediaUrlResolver? mediaUrlResolver,
       ScheduledAudioEngine? scheduledEngine,
       bool useScheduledEngine = true})
-      : _first = player ?? AudioPlayer(),
-        _second = preloadPlayer ?? AudioPlayer(),
+      : _first = player ??
+            AudioPlayer(handleInterruptions: !externalInterruptionHandling),
+        _second = preloadPlayer ??
+            AudioPlayer(handleInterruptions: !externalInterruptionHandling),
         _resolveMediaUrl = mediaUrlResolver ?? OfflineMediaResolver().resolve,
         _scheduled = scheduledEngine ??
             (useScheduledEngine ? createScheduledAudioEngine() : null) {
@@ -256,9 +262,18 @@ class AudioPlayerService {
   Future<void> setVolume(double value) async {
     _volume = value.isFinite ? value.clamp(0.0, 1.0) : 1.0;
     if (!_disposed) _volumes.add(_volume);
-    if (_usingScheduled) await _scheduled!.setVolume(_volume);
+    if (_usingScheduled) await _scheduled!.setVolume(_effectiveVolume);
     await _applyDeckVolumes();
   }
+
+  /// Duck the logical player without changing the user's saved volume.
+  Future<void> setInterruptionDucking(bool ducked) async {
+    _interruptionVolume = ducked ? 0.2 : 1;
+    if (_usingScheduled) await _scheduled!.setVolume(_effectiveVolume);
+    await _applyDeckVolumes();
+  }
+
+  double get _effectiveVolume => _volume * _interruptionVolume;
 
   double get _fadeFraction => _fadeClock == null || _fadeLength <= Duration.zero
       ? 1
@@ -268,9 +283,10 @@ class AudioPlayerService {
     if (_disposed) return;
     final outgoing = _outgoing;
     final fraction = _fadeFraction;
-    await _active.setVolume(_volume * (outgoing == null ? 1 : fraction));
+    await _active
+        .setVolume(_effectiveVolume * (outgoing == null ? 1 : fraction));
     if (!_disposed && outgoing != null) {
-      await outgoing.setVolume(_volume * (1 - fraction));
+      await outgoing.setVolume(_effectiveVolume * (1 - fraction));
     }
   }
 
@@ -342,7 +358,7 @@ class AudioPlayerService {
         if (_disposed || request != _playRequest) return;
         await _second.stop();
         if (_disposed || request != _playRequest) return;
-        await engine.setVolume(_volume);
+        await engine.setVolume(_effectiveVolume);
         return;
       } on ScheduledAudioFallbackException catch (error) {
         if (_disposed || request != _playRequest) return;
@@ -360,7 +376,9 @@ class AudioPlayerService {
     if (_disposed || request != _playRequest) return;
     _usingScheduled = false;
     await _loadNative(_active, playable, at);
-    if (!_disposed && request == _playRequest) await _active.setVolume(_volume);
+    if (!_disposed && request == _playRequest) {
+      await _active.setVolume(_effectiveVolume);
+    }
   }
 
   void _startPlayback() {
@@ -633,7 +651,7 @@ class AudioPlayerService {
       _transitionTimer = null;
     }
     if (!_disposed && outgoing != null) await outgoing.stop();
-    if (!_disposed) await _active.setVolume(_volume);
+    if (!_disposed) await _active.setVolume(_effectiveVolume);
     if (finished != null && !finished.isCompleted) finished.complete();
   }
 

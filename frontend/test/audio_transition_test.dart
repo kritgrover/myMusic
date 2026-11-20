@@ -241,10 +241,32 @@ class _Engine extends Fake implements ScheduledAudioEngine {
 }
 
 void main() {
-  const first = '${AppConfig.apiBaseUrl}/downloads/first.mp3';
-  const second = '${AppConfig.apiBaseUrl}/downloads/second.mp3';
-  const third = '${AppConfig.apiBaseUrl}/downloads/third.mp3';
+  final first = '${AppConfig.apiBaseUrl}/downloads/first.mp3';
+  final second = '${AppConfig.apiBaseUrl}/downloads/second.mp3';
+  final third = '${AppConfig.apiBaseUrl}/downloads/third.mp3';
   Future<void> settle() => Future<void>.delayed(Duration.zero);
+
+  test('interruption ducking preserves user volume through track changes',
+      () async {
+    final deck = _Deck();
+    final service = AudioPlayerService(
+        player: deck,
+        preloadPlayer: _Deck(),
+        mediaUrlResolver: (url) async => url);
+    addTearDown(service.dispose);
+    await service.playFromUrl(first);
+    await service.setVolume(0.8);
+    await service.setInterruptionDucking(true);
+    expect(service.volume, 0.8);
+    expect(deck.level, closeTo(0.16, 0.0001));
+    await service.playFromUrl(second);
+    expect(deck.level, closeTo(0.16, 0.0001));
+    await service.setVolume(0.5);
+    expect(deck.level, closeTo(0.1, 0.0001));
+    await service.setInterruptionDucking(false);
+    expect(service.volume, 0.5);
+    expect(deck.level, 0.5);
+  });
 
   test(
       'native gapless handoff is occurrence-based and never restarts the next source',

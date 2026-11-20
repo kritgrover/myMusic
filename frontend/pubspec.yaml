@@ -13,6 +13,8 @@ dependencies:
   crypto: ^3.0.6
   web: ^1.1.1
   just_audio: ^0.9.36
+  audio_service: ^0.18.18
+  audio_session: ^0.1.25
   # Windows/Linux playback backend for just_audio (no native impl otherwise)
   just_audio_media_kit: ^2.0.6
   media_kit_libs_windows_audio: ^1.0.4

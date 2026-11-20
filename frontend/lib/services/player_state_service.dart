@@ -64,6 +64,10 @@ class PlayerStateService extends ChangeNotifier {
   String? get currentTrackUrl => _audioPlayerService.currentUrl;
   String? get playbackError => _playbackError;
   bool get isPreparing => _isPreparing;
+
+  /// Changes whenever a playback intent supersedes an earlier operation.
+  /// System interruptions use this to avoid resuming after a manual pause.
+  int get playbackRevision => _playRequest;
   Future<void> flushListeningHistory() => _listening.flush();
 
   Future<void> finishListeningSession() async {
@@ -334,6 +338,8 @@ class PlayerStateService extends ChangeNotifier {
   }
 
   Future<void> pause() async {
+    ++_playRequest;
+    _isPreparing = false;
     await _audioPlayerService.pause();
     if (!_disposed) notifyListeners();
   }

@@ -155,8 +155,8 @@ class _Recommendations extends Fake implements RecommendationService {
 }
 
 void main() {
-  const canonical = '${AppConfig.apiBaseUrl}/downloads/fixture/tone.mp3';
-  const second = '${AppConfig.apiBaseUrl}/downloads/fixture/second.mp3';
+  const canonical = '${AppConfig.defaultApiBaseUrl}/downloads/fixture/tone.mp3';
+  const second = '${AppConfig.defaultApiBaseUrl}/downloads/fixture/second.mp3';
 
   group('paused audio restoration', () {
     test('restore is metadata only and discards an expired capability', () {
