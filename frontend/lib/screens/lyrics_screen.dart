@@ -318,7 +318,7 @@ class _LyricsScreenState extends State<LyricsScreen> {
 
           if (widget.lyricsService.error != null) {
             return Center(
-              child: Padding(
+              child: SingleChildScrollView(child: Padding(
                 padding: ResponsiveUtils.responsivePadding(context),
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
@@ -344,14 +344,14 @@ class _LyricsScreenState extends State<LyricsScreen> {
                     ),
                   ],
                 ),
-              ),
+              )),
             );
           }
 
           final lyrics = widget.lyricsService.currentLyrics;
           if (lyrics == null || !lyrics.hasLyrics) {
             return Center(
-              child: Padding(
+              child: SingleChildScrollView(child: Padding(
                 padding: ResponsiveUtils.responsivePadding(context),
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
@@ -380,7 +380,7 @@ class _LyricsScreenState extends State<LyricsScreen> {
                     ),
                   ],
                 ),
-              ),
+              )),
             );
           }
 
@@ -389,7 +389,13 @@ class _LyricsScreenState extends State<LyricsScreen> {
             _parseLyrics();
           }
 
-          return Column(
+          return LayoutBuilder(builder: (context, constraints) {
+            // Keep the words visible on short landscape screens. The full
+            // metadata remains available in Now playing.
+            if (constraints.maxHeight < 280) {
+              return _buildLyricsContent(context);
+            }
+            return Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               // Track info header with album art
@@ -418,6 +424,8 @@ class _LyricsScreenState extends State<LyricsScreen> {
                         children: [
                           Text(
                             lyrics.trackName,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
                             style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                                   fontWeight: FontWeight.bold,
                                 ),
@@ -425,6 +433,8 @@ class _LyricsScreenState extends State<LyricsScreen> {
                           const SizedBox(height: 4),
                           Text(
                             lyrics.artistName,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                             style: Theme.of(context).textTheme.titleMedium?.copyWith(
                                   color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
                                 ),
@@ -433,6 +443,8 @@ class _LyricsScreenState extends State<LyricsScreen> {
                             const SizedBox(height: 4),
                             Text(
                               lyrics.albumName!,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
                               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                                     color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
                                   ),
@@ -464,7 +476,8 @@ class _LyricsScreenState extends State<LyricsScreen> {
                 child: _buildLyricsContent(context),
               ),
             ],
-          );
+            );
+          });
         },
       );
   }
@@ -480,14 +493,14 @@ class _LyricsScreenState extends State<LyricsScreen> {
     }
 
     final baseFontSize = (Theme.of(context).textTheme.bodyLarge?.fontSize ?? 16) * 1.5;
-    final viewportHeight = MediaQuery.of(context).size.height;
-    final spacerHeight = viewportHeight * 0.4;
 
     // Spacer items at start and end so first/last lines can scroll to center
     const spacerCount = 2;
     final totalItemCount = spacerCount + itemCount;
 
-    return ScrollablePositionedList.builder(
+    return LayoutBuilder(builder: (context, constraints) {
+      final spacerHeight = constraints.maxHeight * 0.4;
+      return ScrollablePositionedList.builder(
       itemScrollController: _itemScrollController,
       itemPositionsListener: _itemPositionsListener,
       padding: ResponsiveUtils.responsiveHorizontalPadding(context),
@@ -592,7 +605,8 @@ class _LyricsScreenState extends State<LyricsScreen> {
           child: textWidget,
         );
       },
-    );
+      );
+    });
   }
 
   @override

@@ -21,6 +21,8 @@ class BottomPlayer extends StatefulWidget {
   final VoidCallback? onDownload;
   final VoidCallback? onAddToPlaylist;
   final SavedMusicService? savedMusicService;
+  final VoidCallback? onOpenPlayer;
+  final bool padBottom;
   const BottomPlayer(
       {super.key,
       required this.playerService,
@@ -32,7 +34,9 @@ class BottomPlayer extends StatefulWidget {
       this.onLyricsToggle,
       this.onDownload,
       this.onAddToPlaylist,
-      this.savedMusicService});
+      this.savedMusicService,
+      this.onOpenPlayer,
+      this.padBottom = true});
   @override
   State<BottomPlayer> createState() => _BottomPlayerState();
 }
@@ -288,7 +292,7 @@ class _BottomPlayerState extends State<BottomPlayer> {
     final item = widget.queueService?.currentItem;
     final title = item?.title ?? widget.currentTrackName;
     final artist = item?.artist ?? widget.currentTrackArtist;
-    return Row(children: [
+    final details = Row(children: [
       AlbumCover(
           key: ValueKey(item?.id ?? widget.playerService.currentUrl),
           filename: item?.filename,
@@ -321,6 +325,27 @@ class _BottomPlayerState extends State<BottomPlayer> {
                 overflow: TextOverflow.ellipsis,
                 style: Theme.of(context).textTheme.bodySmall),
           ])),
+    ]);
+    return Row(children: [
+      Expanded(
+        child: widget.onOpenPlayer != null && _hasTrack
+            ? Semantics(
+                button: true,
+                label: 'Open now playing',
+                child: Tooltip(
+                  message: 'Open now playing',
+                  child: InkWell(
+                    onTap: widget.onOpenPlayer,
+                    borderRadius: BorderRadius.circular(8),
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(minHeight: 48),
+                      child: details,
+                    ),
+                  ),
+                ),
+              )
+            : details,
+      ),
       if (showSave && _hasTrack && _savedTrack != null)
         SaveTrackButton(track: _savedTrack!, service: widget.savedMusicService),
     ]);
@@ -463,15 +488,25 @@ class _BottomPlayerState extends State<BottomPlayer> {
 
   @override
   Widget build(BuildContext context) {
+    // Search needs the available phone viewport while the keyboard is open.
+    if (MediaQuery.sizeOf(context).width < 600 &&
+        MediaQuery.viewInsetsOf(context).bottom > 0) {
+      return const SizedBox.shrink();
+    }
     final child = Material(
         color: const Color(0xFF121212),
-        child: SafeArea(top: false, child: LayoutBuilder(builder: _layout)));
+        child: SafeArea(
+            top: false,
+            bottom: widget.padBottom,
+            child: LayoutBuilder(builder: _layout)));
     if (widget.queueService == null) return child;
     return ListenableBuilder(
         listenable: widget.queueService!,
         builder: (context, _) => Material(
             color: const Color(0xFF121212),
-            child:
-                SafeArea(top: false, child: LayoutBuilder(builder: _layout))));
+            child: SafeArea(
+                top: false,
+                bottom: widget.padBottom,
+                child: LayoutBuilder(builder: _layout))));
   }
 }

@@ -8,13 +8,16 @@ class AlbumCoverService {
   factory AlbumCoverService() => _instance;
   AlbumCoverService._internal()
       : _apiService = ApiService(),
+        _followsServer = true,
         _client = AuthHttpClient.shared;
   AlbumCoverService.withClient(
       {required ApiService apiService, required AuthHttpClient client})
       : _apiService = apiService,
+        _followsServer = false,
         _client = client;
 
-  final ApiService _apiService;
+  ApiService _apiService;
+  final bool _followsServer;
   final AuthHttpClient _client;
   String? _sessionScope;
 
@@ -22,6 +25,7 @@ class AlbumCoverService {
     final scope = _client.cacheScope;
     if (_sessionScope != scope) {
       clear();
+      if (_followsServer) _apiService = ApiService(baseUrl: _client.baseUrl);
       _sessionScope = scope;
     }
     return scope;

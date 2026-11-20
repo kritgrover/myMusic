@@ -9,11 +9,12 @@ class AuthHttpClient {
   static final AuthHttpClient shared = AuthHttpClient();
 
   final http.Client _client;
-  final String baseUrl;
+  String _baseUrl;
+  String get baseUrl => _baseUrl;
 
   AuthHttpClient({http.Client? client, String? baseUrl})
       : _client = client ?? http.Client(),
-        baseUrl = baseUrl ?? AppConfig.apiBaseUrl;
+        _baseUrl = baseUrl ?? AppConfig.apiBaseUrl;
 
   AuthTokenProvider? _tokenProvider;
   UnauthorizedCallback? _unauthorizedCallback;
@@ -35,8 +36,11 @@ class AuthHttpClient {
   void configure({
     required AuthTokenProvider tokenProvider,
     required UnauthorizedCallback onUnauthorized,
+    String? baseUrl,
   }) {
     _sessionRevision++;
+    if (baseUrl != null) _baseUrl = baseUrl;
+    _lastToken = null;
     _tokenProvider = tokenProvider;
     _unauthorizedCallback = onUnauthorized;
   }

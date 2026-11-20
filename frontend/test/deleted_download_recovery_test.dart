@@ -165,7 +165,7 @@ void main() {
   const canonicalSource = 'https://www.youtube.com/watch?v=abcdefghijk';
   final stream =
       '${AppConfig.apiBaseUrl}/stream/${Uri.encodeComponent(canonicalSource)}';
-  const download = '${AppConfig.apiBaseUrl}/downloads/gone.mp3';
+  const download = '${AppConfig.defaultApiBaseUrl}/downloads/gone.mp3';
   late _Engine engine;
   late AudioPlayerService audio;
   late PlayerStateService player;

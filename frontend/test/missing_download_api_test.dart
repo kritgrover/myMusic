@@ -7,7 +7,7 @@ import 'package:music_downloader/services/auth_http_client.dart';
 import 'package:music_downloader/services/media_exceptions.dart';
 
 void main() {
-  const base = AppConfig.apiBaseUrl;
+  const base = AppConfig.defaultApiBaseUrl;
   const download = '$base/downloads/fixture/owned.mp3';
   for (final status in [404, 410]) {
     test('missing download HTTP $status has a recoverable safe type', () async {

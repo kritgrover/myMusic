@@ -95,7 +95,7 @@ void main() {
   test(
       'signed URLs, embedded media IDs and private image cache keys are never stored',
       () {
-    const url = '${AppConfig.apiBaseUrl}/downloads/song.m4a?media_token=secret';
+    const url = '${AppConfig.defaultApiBaseUrl}/downloads/song.m4a?media_token=secret';
     final item = QueueItem(
         id: 'video_$url',
         title: 'Song',

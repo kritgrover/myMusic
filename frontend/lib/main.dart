@@ -3,11 +3,14 @@ import 'dart:io' show Platform;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:just_audio_media_kit/just_audio_media_kit.dart';
+import 'config.dart';
 import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
 import 'services/auth_http_client.dart';
 import 'services/auth_service.dart';
 import 'services/offline_download_service.dart';
+import 'services/mobile_audio_handler.dart';
+import 'widgets/server_connection_dialog.dart';
 
 // Modern color palette for dedicated music listeners
 const Color primaryAccent = Color(0xFF6366F1); // Indigo
@@ -20,8 +23,9 @@ const Color textSecondary = Color(0xFFA3A3A3);
 const Color textTertiary = Color(0xFF737373);
 const Color dividerColor = Color(0xFF262626);
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await AppConfig.initialize();
   // just_audio has no native Windows/Linux backend; media_kit provides one
   // underneath the existing just_audio API (no audio-service code changes).
   // Guard with kIsWeb first: on web `Platform` (dart:io) is unavailable and
@@ -30,6 +34,7 @@ void main() {
     JustAudioMediaKit.prefetchPlaylist = true;
     JustAudioMediaKit.ensureInitialized(windows: true, linux: true);
   }
+  await initializeMobileAudio();
   runApp(const MyApp());
 }
 
@@ -41,18 +46,51 @@ class MyApp extends StatefulWidget {
 }
 
 class _MyAppState extends State<MyApp> {
-  final AuthService _authService = AuthService();
+  late AuthService _authService;
   int? _offlineUserId;
 
   @override
   void initState() {
     super.initState();
+    _initializeAuth();
+  }
+
+  void _initializeAuth() {
+    _authService = AuthService();
+    final auth = _authService;
     _authService.addListener(_onAuthChanged);
     AuthHttpClient.shared.configure(
-      tokenProvider: () => _authService.token,
-      onUnauthorized: _authService.handleUnauthorized,
+      baseUrl: AppConfig.apiBaseUrl,
+      tokenProvider: () => auth.token,
+      onUnauthorized: auth.handleUnauthorized,
     );
     _authService.initialize();
+  }
+
+  Future<void> _changeServer(BuildContext context) async {
+    if (_authService.isAuthenticated || _authService.isLoading) return;
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => ServerConnectionDialog(
+        currentServer: AppConfig.apiBaseUrl,
+        onConnected: (server) async {
+          if (_authService.isAuthenticated || _authService.isLoading) {
+            throw StateError('Finish signing out before changing servers.');
+          }
+          if (server == AppConfig.apiBaseUrl) return;
+          // Clear credentials at the old origin before changing any client.
+          await _authService.logout();
+          await AppConfig.saveServer(server);
+          if (!mounted) return;
+          _authService.removeListener(_onAuthChanged);
+          _authService.dispose();
+          OfflineDownloadService.shared.reset();
+          _offlineUserId = null;
+          setState(_initializeAuth);
+        },
+      ),
+    );
   }
 
   void _onAuthChanged() {
@@ -61,13 +99,15 @@ class _MyAppState extends State<MyApp> {
       // Invalidate the old account before a new HomeScreen can initialize.
       // A departing HomeScreen must never reset the next account's singleton.
       OfflineDownloadService.shared.reset();
-      _offlineUserId = userId;
+      setState(() => _offlineUserId = userId);
     }
   }
 
   @override
   void dispose() {
     _authService.removeListener(_onAuthChanged);
+    AuthHttpClient.shared
+        .configure(tokenProvider: () => null, onUnauthorized: () async {});
     _authService.dispose();
     OfflineDownloadService.shared.reset();
     super.dispose();
@@ -76,6 +116,8 @@ class _MyAppState extends State<MyApp> {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      // Dialogs and bottom sheets must not outlive the account-owned player.
+      key: ValueKey(_offlineUserId),
       title: 'myMusic',
       theme: ThemeData(
         useMaterial3: true,
@@ -335,7 +377,12 @@ class _MyAppState extends State<MyApp> {
             return HomeScreen(
                 key: ValueKey(_authService.userId), authService: _authService);
           }
-          return LoginScreen(authService: _authService);
+          return LoginScreen(
+            key: ValueKey(AppConfig.apiBaseUrl),
+            authService: _authService,
+            serverAddress: AppConfig.apiBaseUrl,
+            onChangeServer: () => _changeServer(context),
+          );
         },
       ),
     );

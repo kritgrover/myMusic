@@ -354,7 +354,7 @@ void main() {
 
     test('legacy media capabilities never persist into history IDs or URLs',
         () async {
-      const canonical = '${AppConfig.apiBaseUrl}/downloads/song.m4a';
+      const canonical = '${AppConfig.defaultApiBaseUrl}/downloads/song.m4a';
       await player.streamTrack('$canonical?media_token=expired',
           trackName: 'A', url: '$canonical?media_token=expired');
       await Future<void>.delayed(Duration.zero);
