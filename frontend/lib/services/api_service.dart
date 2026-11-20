@@ -635,11 +635,14 @@ class ApiService {
         if (album.isNotEmpty) 'album': album,
       });
 
-      final response = await _client.get(uri);
+      final response =
+          await _client.get(uri).timeout(const Duration(seconds: 12));
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
-        return data['artwork_url'] as String?;
+        if (data is! Map || data['low_confidence'] == true) return null;
+        final artwork = data['artwork_url'];
+        return artwork is String && artwork.isNotEmpty ? artwork : null;
       } else {
         return null;
       }

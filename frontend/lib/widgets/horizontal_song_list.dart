@@ -1,10 +1,10 @@
-import '../services/auth_http_client.dart';
 import 'package:flutter/material.dart';
 import '../models/playlist.dart';
 import 'save_track_button.dart';
 import '../utils/responsive_utils.dart';
 import '../services/api_service.dart'; // For VideoInfo
 import 'section_header.dart';
+import 'album_cover.dart';
 
 class HorizontalSongList extends StatelessWidget {
   final String title;
@@ -118,23 +118,14 @@ class _SongCardState extends State<_SongCard> {
                   child: Stack(
                     children: [
                       Positioned.fill(
-                        child: ClipRRect(
+                        child: AlbumCover(
+                          filename: widget.song.filename,
+                          title: widget.song.title,
+                          artist: widget.song.uploader,
+                          album: widget.song.album,
+                          artworkUrl: widget.song.thumbnail,
+                          size: widget.width,
                           borderRadius: BorderRadius.circular(12),
-                          child: Image.network(
-                            AuthHttpClient.shared
-                                .cacheScopedUrl(widget.song.thumbnail),
-                            headers: AuthHttpClient.shared
-                                .authHeadersForUrl(widget.song.thumbnail),
-                            fit: BoxFit.cover,
-                            errorBuilder: (context, error, stackTrace) {
-                              return Container(
-                                color: Theme.of(context)
-                                    .colorScheme
-                                    .surfaceVariant,
-                                child: const Icon(Icons.music_note, size: 40),
-                              );
-                            },
-                          ),
                         ),
                       ),
                       Positioned(

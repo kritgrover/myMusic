@@ -49,8 +49,8 @@ class SpotifyDiscographyTests(unittest.TestCase):
             'next' if kw['offset'] + kw['limit'] < len(albums) else None)
         result = self.service.get_artist_albums('artist', limit=20)
         self.assertEqual(len(result), 24)
-        self.assertEqual([call.kwargs['offset'] for call in self.service.sp.artist_albums.call_args_list], [0, 10, 20, 0])
-        self.assertTrue(all(call.kwargs['limit'] == 10 for call in self.service.sp.artist_albums.call_args_list))
+        self.assertEqual([call.kwargs['offset'] for call in self.service.sp.artist_albums.call_args_list], [0, 20, 0])
+        self.assertTrue(all(call.kwargs['limit'] == 20 for call in self.service.sp.artist_albums.call_args_list))
         self.assertTrue(all(call.kwargs['country'] == 'US' for call in self.service.sp.artist_albums.call_args_list))
         self.assertIn('compilation', self.service.sp.artist_albums.call_args_list[0].kwargs['album_type'])
         self.assertEqual(result[0]['id'], 'album-23')
@@ -128,7 +128,7 @@ class SpotifyDiscographyTests(unittest.TestCase):
 
 
     def test_unavailable_playlist_contents_are_not_reported_as_empty(self):
-        self.service.sp.playlist_tracks.side_effect = RuntimeError('private provider error')
+        self.service.sp._get.side_effect = RuntimeError('private provider error')
         with self.assertRaises(self.module.SpotifyCatalogError) as raised:
             self.service.get_playlist_tracks('playlist')
         self.assertNotIn('private provider error', str(raised.exception))
@@ -138,10 +138,10 @@ class SpotifyDiscographyTests(unittest.TestCase):
             self.service.get_playlist_tracks('playlist')
 
     def test_valid_empty_playlist_remains_distinct_from_invalid_response(self):
-        self.service.sp.playlist_tracks.return_value = {'items': []}
+        self.service.sp._get.return_value = {'items': []}
         self.assertEqual(self.service.get_playlist_tracks('playlist'), [])
         self.db.set_cache.assert_called_once()
-        self.service.sp.playlist_tracks.return_value = {}
+        self.service.sp._get.return_value = {}
         with self.assertRaises(self.module.SpotifyCatalogError):
             self.service.get_playlist_tracks('different-playlist')
 

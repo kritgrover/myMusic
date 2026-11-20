@@ -3,13 +3,21 @@ from spotipy.oauth2 import SpotifyClientCredentials
 from config import settings
 from database import db
 import time
+import json
+from datetime import datetime, timezone
+from urllib.parse import quote
 
 
 class SpotifyCatalogError(RuntimeError):
     """The catalog could not be loaded completely; callers should offer retry."""
 
 
+class SpotifyCapabilityError(SpotifyCatalogError):
+    """This connection cannot access a Spotify feature; retry is not a remedy."""
+
+
 class SpotifyService:
+
     def __init__(self):
         self.client_id = settings.SPOTIFY_CLIENT_ID
         self.client_secret = settings.SPOTIFY_CLIENT_SECRET
@@ -40,7 +48,85 @@ class SpotifyService:
     def _get_cache_key(self, prefix, *args):
         return f"{prefix}:{':'.join(str(arg) for arg in args)}"
 
-    def _catalog_pages(self, fetch_page, page_size, *, max_pages=500, deadline=None):
+    def catalog_status(self):
+        return {
+            'status': 'configured' if self.sp is not None else 'unconfigured',
+            'authorization': 'client_credentials',
+            'playlist_contents': 'restricted',
+            'message': (
+                'Spotify catalog search is configured. Playlist contents require Spotify user access '
+                'and may be unavailable with this connection.' if self.sp is not None else
+                'Spotify catalog search is not configured. Your saved music is still available.'
+            ),
+        }
+
+    @staticmethod
+
+    def _image(images):
+        return next((image.get('url') for image in images or []
+                     if isinstance(image, dict) and image.get('url')), None)
+
+    @staticmethod
+
+    def _credited_to(item, artist_id):
+        return any(artist.get('id') == artist_id for artist in item.get('artists') or []
+                   if isinstance(artist, dict))
+
+    def _search_items(self, query, kind, limit=10, *, market='US', deadline=None):
+        """Bounded discovery search, with the Development Mode page size of 10.
+
+        Discovery intentionally selects a small candidate pool, rather than
+        claiming to return every match. Album/discography reads use the stricter
+        complete pagination helper below.
+        """
+        wanted = min(50, max(1, int(limit)))
+        deadline = deadline if deadline is not None else time.monotonic() + 15
+        items, seen = [], set()
+        offset = 0
+        for _ in range(5):
+            if time.monotonic() >= deadline or len(items) >= wanted:
+                break
+            size = min(10, wanted - len(items))
+            response = self.sp.search(q=query, type=kind, limit=size, offset=offset, market=market)
+            page = response.get(kind + 's') if isinstance(response, dict) else None
+            if not isinstance(page, dict) or not isinstance(page.get('items'), list):
+                raise SpotifyCatalogError('The music catalog returned an invalid search response. Please retry.')
+            batch = page['items']
+            for item in batch:
+                if isinstance(item, dict) and item.get('id') and item['id'] not in seen:
+                    seen.add(item['id'])
+                    items.append(item)
+            offset += len(batch)
+            if (len(batch) < size or ('next' in page and not page['next'])
+                    or (isinstance(page.get('total'), int) and offset >= page['total'])):
+                break
+        return items[:wanted]
+
+    def _artist_tracks(self, artist_id, limit=10, *, deadline=None):
+        deadline = deadline if deadline is not None else time.monotonic() + 15
+        artist = self.get_artist(artist_id)
+        if not artist or not artist.get('name'):
+            return []
+        name = artist['name'].replace('"', '')
+        candidates = self._search_items(f'artist:"{name}"', 'track', min(30, limit * 2), deadline=deadline)
+        return [self._format_track(track) for track in candidates
+                if self._credited_to(track, artist_id)][:limit]
+
+    def _format_album(self, album, *, group=None):
+        artists = [a for a in album.get('artists') or [] if isinstance(a, dict)]
+        return {
+            'id': album.get('id'), 'name': album.get('name', ''),
+            'artist': artists[0].get('name', '') if artists else '',
+            'artist_id': artists[0].get('id') if artists else None,
+            'type': album.get('album_type', 'album'),
+            'group': group or album.get('album_type', 'album'),
+            'total_tracks': album.get('total_tracks'),
+            'release_date': album.get('release_date', ''),
+            'thumbnail': self._image(album.get('images')),
+            'url': (album.get('external_urls') or {}).get('spotify', ''),
+        }
+
+    def _catalog_pages(self, fetch_page, page_size, *, max_pages=500, deadline=None, allow_repeats=False):
         """Read every provider page or fail explicitly, never return a partial list.
 
         Request offsets ourselves instead of following arbitrary next URLs. The
@@ -60,8 +146,8 @@ class SpotifyService:
             if page.get('offset', offset) != offset:
                 raise SpotifyCatalogError('The catalog returned an unexpected page. Please retry.')
             batch = page['items']
-            signature = tuple(item.get('id') if isinstance(item, dict) else None for item in batch)
-            if batch and signature in page_signatures:
+            signature = json.dumps(batch, sort_keys=True, separators=(',', ':'))
+            if batch and signature in page_signatures and not allow_repeats:
                 raise SpotifyCatalogError('The catalog repeated a page. Please retry.')
             page_signatures.add(signature)
             items.extend(item for item in batch if isinstance(item, dict))
@@ -76,69 +162,31 @@ class SpotifyService:
         raise SpotifyCatalogError('The catalog has too many pages to load. Please retry.')
 
     def search_track(self, title, artist):
-        if not self.sp: return None
-        
-        cache_key = self._get_cache_key("search", title, artist)
+        if not self.sp:
+            return None
+        cache_key = self._get_cache_key('track_search_v3', title, artist)
         cached = db.get_cache(cache_key)
-        if cached: return cached
-
-        try:
-            # Search strictly by track and artist
-            q = f"track:{title} artist:{artist}"
-            results = self.sp.search(q=q, type='track', limit=1)
-            
-            items = results.get('tracks', {}).get('items', [])
-            if not items:
-                # Fallback to broader search
-                q = f"{title} {artist}"
-                results = self.sp.search(q=q, type='track', limit=1)
-                items = results.get('tracks', {}).get('items', [])
-            
-            if items:
-                track = items[0]
-                result = {
-                    'id': track['id'],
-                    'title': track['name'],  # Standardized: use 'title' everywhere
-                    'name': track['name'],   # Keep 'name' for backward compatibility
-                    'artist': track['artists'][0]['name'],
-                    'artist_id': track['artists'][0]['id'],
-                    'album': track['album']['name'],
-                    'thumbnail': track['album']['images'][0]['url'] if track['album']['images'] else None,
-                    'image': track['album']['images'][0]['url'] if track['album']['images'] else None,  # Backward compat
-                    'preview_url': track['preview_url'],
-                    'duration': track.get('duration_ms', 0) / 1000 if track.get('duration_ms') else 0  # Duration in seconds
-                }
-                db.set_cache(cache_key, result, ttl_seconds=86400*7) # Cache for 1 week
+        if cached:
+            return cached
+        for query in (f'track:{title} artist:{artist}', f'{title} {artist}'):
+            result = self._search_spotify_raw(query)
+            if result:
+                db.set_cache(cache_key, result, ttl_seconds=86400 * 7)
                 return result
-            
-            return None
-        except Exception as e:
-            print(f"Spotify search error: {e}")
-            return None
+        return None
 
     def _search_spotify_raw(self, query: str):
-        """Run a single Spotify search and return the formatted result or None."""
         if not self.sp:
             return None
         try:
-            results = self.sp.search(q=query, type='track', limit=1)
-            items = results.get('tracks', {}).get('items', [])
+            items = self._search_items(query, 'track', 1)
             if items:
-                track = items[0]
-                return {
-                    'id': track['id'],
-                    'title': track['name'],
-                    'name': track['name'],
-                    'artist': track['artists'][0]['name'],
-                    'artist_id': track['artists'][0]['id'],
-                    'album': track['album']['name'],
-                    'thumbnail': track['album']['images'][0]['url'] if track['album']['images'] else None,
-                    'image': track['album']['images'][0]['url'] if track['album']['images'] else None,
-                    'preview_url': track.get('preview_url'),
-                    'duration': track.get('duration_ms', 0) / 1000 if track.get('duration_ms') else 0,
-                }
-        except Exception as e:
-            print(f"Spotify raw search error for '{query}': {e}")
+                result = self._format_track(items[0])
+                result.update(name=result['title'], image=result['thumbnail'],
+                              preview_url=items[0].get('preview_url'))
+                return result
+        except Exception:
+            pass
         return None
 
     def search_track_multi_strategy(self, parsed_title: str, parsed_artist: str,
@@ -159,7 +207,7 @@ class SpotifyService:
                 seen_ids.add(result["id"])
                 results.append(result)
 
-        cache_key = self._get_cache_key("multi", parsed_title, parsed_artist, cleaned_yt_title)
+        cache_key = self._get_cache_key("multi_v3", parsed_title, parsed_artist, cleaned_yt_title)
         cached = db.get_cache(cache_key)
         if cached:
             return cached
@@ -186,123 +234,107 @@ class SpotifyService:
         return results
 
     def get_recommendations(self, seed_tracks=None, seed_artists=None, seed_genres=None, limit=20):
-        """Get recommendations based on seeds (uses related artists/search fallback since recommendations API deprecated)"""
-        if not self.sp: return []
-        
-        # Ensure we have some seeds
-        seeds_count = (len(seed_tracks) if seed_tracks else 0) + \
-                      (len(seed_artists) if seed_artists else 0) + \
-                      (len(seed_genres) if seed_genres else 0)
-        if seeds_count == 0: return []
-
-        cache_key = self._get_cache_key("recs_v2", seed_tracks, seed_artists, seed_genres, limit)
-        cached = db.get_cache(cache_key)
-        if cached: return cached
-
-        all_tracks = []
-        seen_track_ids = set()
-        
-        try:
-            # Strategy 1: If we have seed tracks, get related artists and their top tracks
-            if seed_tracks:
-                for track_id in seed_tracks[:3]:
-                    try:
-                        # Get track info to find artist
-                        track_info = self.sp.track(track_id)
-                        if track_info and track_info.get('artists'):
-                            artist_id = track_info['artists'][0]['id']
-                            
-                            # Get related artists
-                            related = self.sp.artist_related_artists(artist_id)
-                            for related_artist in related.get('artists', [])[:3]:
-                                # Get top tracks from related artist
-                                top_tracks = self.sp.artist_top_tracks(related_artist['id'], country='US')
-                                for track in top_tracks.get('tracks', [])[:3]:
-                                    if track['id'] not in seen_track_ids and len(all_tracks) < limit:
-                                        seen_track_ids.add(track['id'])
-                                        all_tracks.append(self._format_track(track))
-                    except Exception as e:
-                        print(f"Error getting related for track {track_id}: {e}")
-                        continue
-            
-            # Strategy 2: If we have genres, search for genre playlists
-            if seed_genres and len(all_tracks) < limit:
-                for genre in seed_genres[:2]:
-                    tracks_from_genre = self.get_genre_recommendations(genre, limit=10)
-                    for track in tracks_from_genre:
-                        if track['id'] not in seen_track_ids and len(all_tracks) < limit:
-                            seen_track_ids.add(track['id'])
-                            all_tracks.append(track)
-            
-            # Strategy 3: If we have seed artists, get their related artists' top tracks
-            if seed_artists and len(all_tracks) < limit:
-                for artist_id in seed_artists[:2]:
-                    try:
-                        related = self.sp.artist_related_artists(artist_id)
-                        for related_artist in related.get('artists', [])[:3]:
-                            top_tracks = self.sp.artist_top_tracks(related_artist['id'], country='US')
-                            for track in top_tracks.get('tracks', [])[:3]:
-                                if track['id'] not in seen_track_ids and len(all_tracks) < limit:
-                                    seen_track_ids.add(track['id'])
-                                    all_tracks.append(self._format_track(track))
-                    except Exception as e:
-                        print(f"Error getting related for artist {artist_id}: {e}")
-                        continue
-            
-            if all_tracks:
-                db.set_cache(cache_key, all_tracks, ttl_seconds=3600)  # Cache for 1 hour
-            
-            return all_tracks
-        except Exception as e:
-            print(f"Spotify recommendations error: {e}")
+        """Build a varied candidate pool using supported catalog search calls."""
+        if not self.sp:
             return []
-    
+        limit = min(50, max(1, int(limit)))
+        cache_key = self._get_cache_key('recs_search_v3', seed_tracks, seed_artists, seed_genres, limit)
+        cached = db.get_cache(cache_key)
+        if cached is not None:
+            return cached
+        deadline = time.monotonic() + 15
+        artist_ids = list(dict.fromkeys(seed_artists or []))[:2]
+        genres = list(dict.fromkeys(seed_genres or []))[:2]
+        candidates, seen = [], set(seed_tracks or [])
+
+        def add(track):
+            if track.get('id') and track['id'] not in seen:
+                seen.add(track['id'])
+                candidates.append(track)
+
+        # A track seed supplies an exact artist identity, never a same-name guess.
+        for track_id in (seed_tracks or [])[:2]:
+            if len(artist_ids) >= 2 or time.monotonic() >= deadline:
+                break
+            try:
+                track = self.sp.track(track_id)
+                for artist in track.get('artists') or []:
+                    if artist.get('id') and artist['id'] not in artist_ids:
+                        artist_ids.append(artist['id'])
+                        break
+            except Exception:
+                continue
+        if not genres:
+            for artist_id in artist_ids:
+                if time.monotonic() >= deadline:
+                    break
+                profile = self.get_artist(artist_id) or {}
+                genres.extend(g for g in profile.get('genres', []) if g not in genres)
+                if len(genres) >= 2:
+                    break
+        # Genre search contributes unfamiliar artists; artist search contributes
+        # other recordings from familiar artists. Ranking happens per listener.
+        for genre in genres[:2]:
+            if time.monotonic() >= deadline:
+                break
+            try:
+                term = str(genre).replace('"', '')
+                for track in self._search_items(f'genre:"{term}"', 'track', 10, deadline=deadline):
+                    add(self._format_track(track))
+            except Exception:
+                continue
+        for artist_id in artist_ids[:2]:
+            if time.monotonic() >= deadline:
+                break
+            try:
+                for track in self._artist_tracks(artist_id, limit=10, deadline=deadline):
+                    add(track)
+            except Exception:
+                continue
+        if candidates:
+            db.set_cache(cache_key, candidates[:limit], ttl_seconds=3600)
+        return candidates[:limit]
+
     def _format_track(self, track):
-        """Helper to format a Spotify track object into our standard format"""
+        """Keep canonical catalog identity and album artwork with every track."""
+        artists = [a for a in track.get('artists') or [] if isinstance(a, dict)]
+        album = track.get('album') or {}
+        track_id = track.get('id') or ''
         return {
-            'id': track['id'],
-            'title': track['name'],
-            'artist': track['artists'][0]['name'] if track.get('artists') else 'Unknown',
-            'artist_id': track['artists'][0].get('id') if track.get('artists') else None,
-            'album': track['album']['name'] if track.get('album') else '',
-            'album_id': track.get('album', {}).get('id'),
-            'thumbnail': track['album']['images'][0]['url'] if track.get('album', {}).get('images') else None,
-            'url': track['external_urls']['spotify'] if track.get('external_urls') else '',
-            'duration': track.get('duration_ms', 0) / 1000 if track.get('duration_ms') else 0
+            'id': track_id, 'spotify_id': track_id,
+            'title': track.get('name', ''),
+            'artist': artists[0].get('name', 'Unknown') if artists else 'Unknown',
+            'artist_id': artists[0].get('id') if artists else None,
+            'artist_ids': [a['id'] for a in artists if a.get('id')],
+            'album': album.get('name', ''), 'album_id': album.get('id'),
+            'thumbnail': self._image(album.get('images')),
+            'url': (track.get('external_urls') or {}).get('spotify') or
+                   (f'https://open.spotify.com/track/{track_id}' if track_id else ''),
+            'duration': (track.get('duration_ms') or 0) / 1000,
         }
 
     def get_artist_new_releases(self, artist_id, limit=5):
-        if not self.sp: return []
-        
-        cache_key = self._get_cache_key("new_releases", artist_id, limit)
-        cached = db.get_cache(cache_key)
-        if cached: return cached
-
-        try:
-            results = self.sp.artist_albums(
-                artist_id, 
-                album_type='album,single', 
-                limit=limit
-            )
-            
-            albums = []
-            for album in results.get('items', []):
-                albums.append({
-                    'id': album['id'],
-                    'name': album['name'],
-                    'artist': album['artists'][0]['name'],
-                    'type': album['album_type'],
-                    'release_date': album['release_date'],
-                    'thumbnail': album['images'][0]['url'] if album['images'] else None,
-                    'url': album['external_urls']['spotify']
-                })
-            
-            db.set_cache(cache_key, albums, ttl_seconds=86400) # Cache for 1 day
-            return albums
-        except Exception as e:
-            print(f"Spotify new releases error: {e}")
+        if not self.sp:
             return []
-    
+        limit = min(20, max(1, int(limit)))
+        cache_key = self._get_cache_key('artist_releases_verified_v2', artist_id, limit)
+        cached = db.get_cache(cache_key)
+        if cached is not None:
+            return cached
+        try:
+            # The artist endpoint supplies release relationships; verify IDs to
+            # exclude same-name artists and wrongly attributed compilations.
+            response = self.sp.artist_albums(artist_id, album_type='album,single',
+                                             limit=min(50, limit), country='US')
+            albums = [self._format_album(album) for album in response.get('items', [])
+                      if isinstance(album, dict) and album.get('id')
+                      and self._credited_to(album, artist_id)]
+            albums.sort(key=lambda item: item['release_date'], reverse=True)
+            db.set_cache(cache_key, albums[:limit], ttl_seconds=3600)
+            return albums[:limit]
+        except Exception:
+            return []
+
     def get_artist_genres(self, artist_id):
         """Get genres for an artist - used to track user's genre preferences"""
         if not self.sp: return []
@@ -321,85 +353,24 @@ class SpotifyService:
             return []
 
     def get_genre_recommendations(self, genre, limit=20):
-        """Get tracks for a genre using playlist search (recommendations API deprecated Nov 2024)"""
-        if not self.sp: return []
-        
-        # Normalize genre for Spotify (lowercase, hyphens)
-        normalized_genre = genre.lower().replace(' ', '-')
-        
-        cache_key = self._get_cache_key("genre_recs_v2", normalized_genre, limit)
+        """Find genre tracks directly; public playlist contents are restricted."""
+        if not self.sp:
+            return []
+        limit = min(50, max(1, int(limit)))
+        term = str(genre or '').strip().replace('"', '')
+        if not term:
+            return []
+        cache_key = self._get_cache_key('genre_tracks_search_v3', term.casefold(), limit)
         cached = db.get_cache(cache_key)
-        if cached: return cached
-
+        if cached is not None:
+            return cached
         try:
-            # Search for playlists matching the genre
-            # Try multiple search strategies for better coverage
-            search_queries = [
-                f"{genre} hits",
-                f"best of {genre}",
-                f"{genre} essentials",
-                f"{genre}",
-            ]
-            
-            all_tracks = []
-            seen_track_ids = set()
-            
-            for query in search_queries:
-                if len(all_tracks) >= limit:
-                    break
-                    
-                try:
-                    # Search for playlists
-                    results = self.sp.search(q=query, type='playlist', limit=3)
-                    playlists = results.get('playlists', {}).get('items', [])
-                    
-                    for playlist in playlists:
-                        if not playlist or len(all_tracks) >= limit:
-                            break
-                        
-                        # Get tracks from playlist
-                        try:
-                            playlist_tracks = self.sp.playlist_tracks(
-                                playlist['id'], 
-                                limit=min(20, limit - len(all_tracks))
-                            )
-                            
-                            for item in playlist_tracks.get('items', []):
-                                if len(all_tracks) >= limit:
-                                    break
-                                    
-                                track = item.get('track')
-                                if not track or not track.get('id'):
-                                    continue
-                                
-                                # Skip duplicates
-                                if track['id'] in seen_track_ids:
-                                    continue
-                                seen_track_ids.add(track['id'])
-                                
-                                all_tracks.append({
-                                    'id': track['id'],
-                                    'title': track['name'],
-                                    'artist': track['artists'][0]['name'] if track.get('artists') else 'Unknown',
-                                    'album': track['album']['name'] if track.get('album') else '',
-                                    'thumbnail': track['album']['images'][0]['url'] if track.get('album', {}).get('images') else None,
-                                    'url': track['external_urls']['spotify'] if track.get('external_urls') else '',
-                                    'duration': track.get('duration_ms', 0) / 1000 if track.get('duration_ms') else 0
-                                })
-                        except Exception as playlist_err:
-                            print(f"Error fetching playlist tracks: {playlist_err}")
-                            continue
-                            
-                except Exception as search_err:
-                    print(f"Error searching for '{query}': {search_err}")
-                    continue
-            
-            if all_tracks:
-                db.set_cache(cache_key, all_tracks, ttl_seconds=3600)  # Cache for 1 hour
-            
-            return all_tracks
-        except Exception as e:
-            print(f"Spotify genre recommendations error: {e}")
+            tracks = [self._format_track(track) for track in
+                      self._search_items(f'genre:"{term}"', 'track', limit)]
+            if tracks:
+                db.set_cache(cache_key, tracks, ttl_seconds=3600)
+            return tracks
+        except Exception:
             return []
 
     def get_available_genre_seeds(self):
@@ -468,101 +439,63 @@ class SpotifyService:
             raise SpotifyCatalogError('Could not load the album tracks. Please retry.') from e
 
     def get_new_releases(self, country='US', limit=20):
-        """Get new album releases from Spotify"""
-        if not self.sp: return []
-        
-        cache_key = self._get_cache_key("new_releases_browse", country, limit)
-        cached = db.get_cache(cache_key)
-        if cached: return cached
-
-        try:
-            results = self.sp.new_releases(country=country, limit=limit)
-            albums = []
-            for album in results.get('albums', {}).get('items', []):
-                albums.append({
-                    'id': album['id'],
-                    'name': album['name'],
-                    'artist': album['artists'][0]['name'],
-                    'type': album['album_type'],
-                    'release_date': album['release_date'],
-                    'thumbnail': album['images'][0]['url'] if album['images'] else None,
-                    'url': album['external_urls']['spotify']
-                })
-            
-            db.set_cache(cache_key, albums, ttl_seconds=3600)  # Cache for 1 hour
-            return albums
-        except Exception as e:
-            print(f"Error getting new releases: {e}")
-            return []
-
-    def get_genre_playlists(self, genre, limit=10):
-        """DEPRECATED: Use get_genre_recommendations instead for better results"""
-        if not self.sp: return []
-
-        cache_key = self._get_cache_key("genre_playlists", genre, limit)
-        cached = db.get_cache(cache_key)
-        if cached: return cached
-
-        try:
-            results = self.sp.search(q=f"genre:{genre}", type='playlist', limit=limit)
-            
-            playlists = []
-            for pl in results.get('playlists', {}).get('items', []):
-                if not pl: continue
-                playlists.append({
-                    'id': pl['id'],
-                    'name': pl['name'],
-                    'description': pl['description'],
-                    'thumbnail': pl['images'][0]['url'] if pl['images'] else None,
-                    'url': pl['external_urls']['spotify'],
-                    'owner': pl['owner']['display_name']
-                })
-            
-            db.set_cache(cache_key, playlists, ttl_seconds=86400*3) # Cache for 3 days
-            return playlists
-        except Exception as e:
-            print(f"Spotify genre playlists error: {e}")
-            return []
-
-    def get_playlist_tracks(self, playlist_id, limit=50):
+        """Recent album selections from search, without the removed browse API."""
         if not self.sp:
-            raise SpotifyCatalogError('Playlist tracks are unavailable with this catalog connection. Please retry.')
-
-        cache_key = self._get_cache_key("playlist_tracks_v2", playlist_id, limit)
+            return []
+        year = datetime.now(timezone.utc).year
+        cache_key = self._get_cache_key('recent_album_search_v2', country, year, limit)
         cached = db.get_cache(cache_key)
         if cached is not None:
             return cached
-
         try:
-            results = self.sp.playlist_tracks(playlist_id, limit=limit)
-            if not isinstance(results, dict) or not isinstance(results.get('items'), list):
-                raise SpotifyCatalogError('The playlist response was unavailable. Please retry.')
-            
+            albums = [self._format_album(album) for album in self._search_items(
+                f'year:{year - 1}-{year}', 'album', limit, market=country)]
+            albums.sort(key=lambda item: item['release_date'], reverse=True)
+            if albums:
+                db.set_cache(cache_key, albums, ttl_seconds=3600)
+            return albums
+        except Exception:
+            return []
+
+    def get_genre_playlists(self, genre, limit=10):
+        """Playlist metadata remains searchable even when contents are restricted."""
+        return self.get_curated_playlists([str(genre)], limit=limit)
+
+    def get_playlist_tracks(self, playlist_id, limit=50):
+        if not self.sp:
+            raise SpotifyCatalogError('Spotify catalog search is unavailable. Please retry.')
+        restricted = ('Spotify does not allow this catalog connection to read these playlist contents. '
+                      'Search for the songs or import a playlist CSV instead.')
+        cache_key = self._get_cache_key('playlist_items_complete_v3', playlist_id)
+        cached = db.get_cache(cache_key)
+        if cached is not None:
+            return cached
+        try:
+            def fetch(offset, size):
+                # Spotipy 2.x's playlist_items still targets the old /tracks URL.
+                # Its authenticated transport lets us use the current endpoint.
+                page = self.sp._get(f'playlists/{quote(str(playlist_id), safe="")}/items',
+                                    limit=size, offset=offset, market='US', additional_types='track')
+                if isinstance(page, dict) and 'items' not in page:
+                    raise SpotifyCapabilityError(restricted)
+                return page
+            # Playlists may intentionally repeat the same recordings, including
+            # across page boundaries. Offset/total/deadline guards still apply.
+            items = self._catalog_pages(fetch, min(50, max(1, int(limit))), allow_repeats=True)
             tracks = []
-            for item in results.get('items', []):
-                track = item.get('track')
-                if not track: continue
-                tracks.append({
-                    'id': track['id'],
-                    'title': track['name'],
-                    'artist': track['artists'][0]['name'],
-                    'album': track['album']['name'],
-                    'thumbnail': track['album']['images'][0]['url'] if track['album']['images'] else None,
-                    'url': track['external_urls']['spotify'],
-                    'duration': track.get('duration_ms', 0) / 1000 if track.get('duration_ms') else 0  # Duration in seconds
-                })
-            
-            db.set_cache(cache_key, tracks, ttl_seconds=3600) # Cache for 1 hour
+            for item in items:
+                track = item.get('item') or item.get('track')
+                if not isinstance(track, dict) or not track.get('id') or track.get('type', 'track') != 'track':
+                    continue
+                tracks.append(self._format_track(track))
+            db.set_cache(cache_key, tracks, ttl_seconds=3600)
             return tracks
         except SpotifyCatalogError:
             raise
-        except Exception as e:
-            print(f"Spotify playlist tracks error: {e}")
-            # Development-mode apps may receive playlist metadata but not its
-            # contents. Do not turn access restrictions or outages into a false
-            # empty-playlist response, or cache that failure.
-            raise SpotifyCatalogError('Playlist tracks are unavailable with this catalog connection. Please retry.') from e
-
+        except Exception as exc:
+            if getattr(exc, 'http_status', None) in (403, 404):
+                raise SpotifyCapabilityError(restricted) from None
+            raise SpotifyCatalogError('Could not load the playlist tracks. Please retry.') from None
     # ------------------------------------------------------------------
     # Discovery helpers (curated playlists, moods, artists, albums)
     # ------------------------------------------------------------------
@@ -577,7 +510,7 @@ class SpotifyService:
             'id': artist.get('id'),
             'name': artist.get('name', 'Unknown'),
             'thumbnail': images[0]['url'] if images else None,
-            'genres': artist.get('genres', []),
+            'genres': artist.get('genres') or [],
             'followers': followers.get('total'),
         }
 
@@ -683,126 +616,135 @@ class SpotifyService:
             return None
 
     def get_artist_top_tracks(self, artist_id, limit=10):
-        """Fetch an artist's top tracks (formatted for playback)."""
+        """Artist track selections; Spotify's removed popularity endpoint is unused."""
         if not self.sp:
             return []
-        cache_key = self._get_cache_key("artist_top", artist_id, limit)
+        cache_key = self._get_cache_key('artist_tracks_search_v2', artist_id, limit)
         cached = db.get_cache(cache_key)
-        if cached:
+        if cached is not None:
             return cached
         try:
-            results = self.sp.artist_top_tracks(artist_id, country='US')
-            tracks = [self._format_track(t) for t in results.get('tracks', [])[:limit]]
+            tracks = self._artist_tracks(artist_id, limit=limit)
             if tracks:
-                db.set_cache(cache_key, tracks, ttl_seconds=86400)  # Cache for 1 day
+                db.set_cache(cache_key, tracks, ttl_seconds=3600)
             return tracks
-        except Exception as e:
-            print(f"Error getting artist top tracks for {artist_id}: {e}")
+        except Exception:
             return []
 
-    def get_artist_albums(self, artist_id, limit=10, market='US'):
-        """Fetch all available releases (newest first); limit is the page size.
+    def _album_contains_artist(self, album_id, artist_id, market, deadline):
+        cache_key = self._get_cache_key('album_artist_credit_v1', album_id, artist_id, market)
+        cached = db.get_cache(cache_key)
+        if isinstance(cached, bool):
+            return cached
+        offset, seen_pages = 0, set()
+        for _ in range(500):
+            if time.monotonic() >= deadline:
+                raise SpotifyCatalogError('The catalog is taking too long. Please retry.')
+            page = self.sp.album_tracks(album_id, limit=50, offset=offset, market=market)
+            if (not isinstance(page, dict) or not isinstance(page.get('items'), list)
+                    or page.get('offset', offset) != offset):
+                raise SpotifyCatalogError('The catalog returned an invalid page. Please retry.')
+            items = page['items']
+            signature = json.dumps(items, sort_keys=True, separators=(',', ':'))
+            if items and signature in seen_pages:
+                raise SpotifyCatalogError('The catalog repeated a page. Please retry.')
+            seen_pages.add(signature)
+            if any(self._credited_to(track, artist_id) for track in items if isinstance(track, dict)):
+                # One exact track credit proves the appearance. Do not download
+                # the rest of a large compilation just to reconfirm it.
+                db.set_cache(cache_key, True, ttl_seconds=86400 * 7)
+                return True
+            offset += len(items)
+            if not page.get('next'):
+                if isinstance(page.get('total'), int) and offset < page['total']:
+                    raise SpotifyCatalogError('The catalog response was incomplete. Please retry.')
+                db.set_cache(cache_key, False, ttl_seconds=86400 * 7)
+                return False
+            if not items:
+                raise SpotifyCatalogError('The catalog response was incomplete. Please retry.')
+        raise SpotifyCatalogError('The catalog has too many pages to load. Please retry.')
 
-        Availability is limited to the configured provider's catalog and market,
-        not every recording ever released by an artist. Keep distinct release
-        IDs so deluxe, remastered, live, and regional editions are not conflated.
-        """
+    def get_artist_albums(self, artist_id, limit=10, market='US'):
+        """Complete release pages with exact artist credit and explicit appearances."""
         if not self.sp:
             raise SpotifyCatalogError('The music catalog is unavailable. Please retry.')
-        cache_key = self._get_cache_key("artist_discography_complete_v1", artist_id, market)
+        cache_key = self._get_cache_key('artist_discography_verified_v3', artist_id, market)
         cached = db.get_cache(cache_key)
         if cached is not None:
             return cached
         try:
             deadline = time.monotonic() + 45
-            # The album_group field was removed from development-mode responses
-            # in 2026. Query appearances separately so a guest release is never
-            # mislabeled as one of the artist's own albums.
             items = self._catalog_pages(
                 lambda offset, size: self.sp.artist_albums(
                     artist_id, album_type='album,single,compilation',
                     limit=size, offset=offset, country=market),
-                min(10, max(1, int(limit))),
-                deadline=deadline,
-            )
+                min(50, max(1, int(limit))), deadline=deadline)
             appearances = self._catalog_pages(
                 lambda offset, size: self.sp.artist_albums(
                     artist_id, album_type='appears_on',
                     limit=size, offset=offset, country=market),
-                min(10, max(1, int(limit))),
-                deadline=deadline,
-            )
-            items.extend({**album, 'album_group': 'appears_on'} for album in appearances)
-            albums = []
-            seen = set()
-            for album in items:
-                if not album.get('id') or album['id'] in seen:
+                min(50, max(1, int(limit))), deadline=deadline)
+            albums, seen = [], set()
+            for album, appearance in ([(item, False) for item in items] +
+                                      [(item, True) for item in appearances]):
+                album_id = album.get('id')
+                if not album_id or album_id in seen:
                     continue
-                seen.add(album['id'])
-                images = album.get('images') or []
-                albums.append({
-                    'id': album['id'],
-                    'name': album['name'],
-                    'artist': album['artists'][0]['name'] if album.get('artists') else '',
-                    'artist_id': album['artists'][0].get('id') if album.get('artists') else None,
-                    'type': album.get('album_type', 'album'),
-                    'group': album.get('album_group', album.get('album_type', 'album')),
-                    'total_tracks': album.get('total_tracks'),
-                    'release_date': album.get('release_date', ''),
-                    'thumbnail': images[0]['url'] if images else None,
-                    'url': album.get('external_urls', {}).get('spotify', ''),
-                })
-            albums.sort(key=lambda x: x['release_date'], reverse=True)
+                appearance = appearance or album.get('album_group') == 'appears_on'
+                if not self._credited_to(album, artist_id):
+                    # An album attributed to a different primary artist belongs
+                    # here only when this exact artist has a verified track credit.
+                    if not appearance or not self._album_contains_artist(
+                            album_id, artist_id, market, deadline):
+                        continue
+                seen.add(album_id)
+                group = 'appears_on' if appearance else album.get('album_type', 'album')
+                albums.append(self._format_album(album, group=group))
+            albums.sort(key=lambda item: item['release_date'], reverse=True)
             db.set_cache(cache_key, albums, ttl_seconds=3600)
             return albums
         except SpotifyCatalogError:
             raise
-        except Exception as e:
-            print(f"Error getting artist albums for {artist_id}: {e}")
-            raise SpotifyCatalogError('Could not load the discography. Please retry.') from e
+        except Exception:
+            raise SpotifyCatalogError('Could not load the discography. Please retry.') from None
 
     def get_related_artists(self, artist_id, limit=12):
-        """Fetch artists related to a given artist (formatted)."""
+        """Similar-genre artist selections using supported artist search."""
         if not self.sp:
             return []
-        cache_key = self._get_cache_key("related_artists", artist_id, limit)
+        cache_key = self._get_cache_key('similar_genre_artists_v2', artist_id, limit)
         cached = db.get_cache(cache_key)
-        if cached:
+        if cached is not None:
             return cached
-        try:
-            results = self.sp.artist_related_artists(artist_id)
-            artists = []
-            for a in results.get('artists', [])[:limit]:
-                formatted = self._format_artist(a)
-                if formatted and formatted['id']:
-                    artists.append(formatted)
-            if artists:
-                db.set_cache(cache_key, artists, ttl_seconds=86400)  # Cache for 1 day
-            return artists
-        except Exception as e:
-            print(f"Error getting related artists for {artist_id}: {e}")
-            return []
+        artist = self.get_artist(artist_id) or {}
+        artists, seen = [], {artist_id}
+        for genre in artist.get('genres', [])[:2]:
+            term = str(genre).replace('"', '')
+            for candidate in self.search_artists(f'genre:"{term}"', limit=min(10, limit)):
+                if candidate['id'] not in seen:
+                    seen.add(candidate['id'])
+                    artists.append(candidate)
+            if len(artists) >= limit:
+                break
+        if artists:
+            db.set_cache(cache_key, artists[:limit], ttl_seconds=3600)
+        return artists[:limit]
 
     def search_artists(self, query, limit=12):
-        """Search Spotify for artists by name/genre query (formatted)."""
+        """Artist search paginated within the Development Mode limit of ten."""
         if not self.sp:
             return []
-        cache_key = self._get_cache_key("search_artists", query, limit)
+        cache_key = self._get_cache_key('search_artists_paged_v2', query, limit)
         cached = db.get_cache(cache_key)
-        if cached:
+        if cached is not None:
             return cached
         try:
-            results = self.sp.search(q=query, type='artist', limit=limit)
-            artists = []
-            for a in results.get('artists', {}).get('items', []):
-                formatted = self._format_artist(a)
-                if formatted and formatted['id']:
-                    artists.append(formatted)
+            artists = [self._format_artist(artist) for artist in
+                       self._search_items(query, 'artist', limit)]
             if artists:
-                db.set_cache(cache_key, artists, ttl_seconds=86400)  # Cache for 1 day
+                db.set_cache(cache_key, artists, ttl_seconds=3600)
             return artists
-        except Exception as e:
-            print(f"Error searching artists for '{query}': {e}")
+        except Exception:
             return []
 
     def get_recommended_artists(self, seed_artist_ids=None, fallback_query=None, limit=12):

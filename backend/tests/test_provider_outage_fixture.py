@@ -2,7 +2,7 @@
 import shutil
 import unittest
 from fastapi.testclient import TestClient
-from demo_fixture import browser_fixture
+from demo_fixture import TRACKS, PRIVATE_TRACK, browser_fixture, catalogue_track
 
 
 @unittest.skipUnless(shutil.which('ffmpeg'), 'Synthetic media requires ffmpeg')
@@ -20,11 +20,27 @@ class ProviderOutageFixtureTests(unittest.TestCase):
             self.assertFalse(client.get('/__test/state', headers=demo).json()['provider_available'])
             response = client.get('/recommendations/for-you', headers=demo)
             self.assertEqual(response.status_code, 200)
-            self.assertEqual(len(response.json()), 5)
+            mixes = client.get('/recommendations/mixes', headers=demo)
+            self.assertEqual(mixes.status_code, 200)
+            rotation = next(mix['tracks'] for mix in mixes.json() if mix['id'] == 'mix_library')
+            discovery = response.json()
+            self.assertTrue(rotation)
+            self.assertTrue(discovery)
+            rotation_files = {track['filename'] for track in rotation}
+            discovery_files = {track['filename'] for track in discovery}
+            self.assertFalse(rotation_files & discovery_files)
+            self.assertEqual(rotation_files | discovery_files,
+                             {catalogue_track(track)['filename'] for track in TRACKS})
             self.assertNotIn('Other Private Tone', response.text)
-            track = response.json()[0]
-            signed = client.post('/media/authorize', json={'path': '/downloads/' + track['filename']}, headers=demo).json()['url']
-            self.assertEqual(client.get(signed, headers={'Range': 'bytes=0-127'}).status_code, 206)
+            self.assertNotIn('Other Private Tone', mixes.text)
+            for track in rotation + discovery:
+                path = '/downloads/' + track['filename']
+                authorized = client.post('/media/authorize', json={'path': path}, headers=demo)
+                self.assertEqual(authorized.status_code, 200)
+                self.assertEqual(client.get(authorized.json()['url'], headers={'Range': 'bytes=0-127'}).status_code, 206)
+                self.assertEqual(client.post('/media/authorize', json={'path': path}, headers=other).status_code, 404)
+            private_path = '/downloads/' + catalogue_track(PRIVATE_TRACK)['filename']
+            self.assertEqual(client.post('/media/authorize', json={'path': private_path}, headers=demo).status_code, 404)
             search = client.post('/search', json={'query': 'night drive'}, headers=demo)
             self.assertEqual(search.status_code, 200)
             self.assertEqual(search.json()[0]['title'], 'Night Drive')

@@ -86,7 +86,8 @@ void main() {
       await tester.pumpAndSettle();
       expect(catalog.related.isCompleted, isFalse);
       expect(find.text('Discography'), findsOneWidget);
-      expect(find.text('5 releases'), findsOneWidget);
+      expect(find.text('4 releases'), findsOneWidget);
+      expect(find.text('Guest release'), findsNothing);
       await tester.tap(find.widgetWithText(ChoiceChip, 'Albums'));
       await tester.pumpAndSettle();
       expect(find.text('2 releases'), findsOneWidget);
@@ -129,7 +130,7 @@ void main() {
     await tester.tap(find.text('Retry discography'));
     await tester.pumpAndSettle();
     expect(catalog.albumCalls, 2);
-    expect(find.text('5 releases'), findsOneWidget);
+    expect(find.text('4 releases'), findsOneWidget);
     expect(find.text('Retry discography'), findsNothing);
     expect(tester.takeException(), isNull);
   });

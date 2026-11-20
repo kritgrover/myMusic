@@ -8,6 +8,36 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   const spotifyId = '0123456789abcdefghijkl';
 
+  test(
+      'Jump Back In restores only six newest items and stays capped after plays',
+      () async {
+    SharedPreferences.setMockInitialValues({
+      'recently_played_cap': jsonEncode(List.generate(
+          8,
+          (index) => {
+                'type': 'song',
+                'id': 'song-$index',
+                'title': 'Song $index',
+                'playedAt': DateTime.utc(2026, 1, index + 1).toIso8601String(),
+              })),
+    });
+    final service = RecentlyPlayedService(userNamespace: 'cap');
+    addTearDown(service.dispose);
+    await Future<void>.delayed(Duration.zero);
+    expect(service.items.map((item) => item.id),
+        ['song-7', 'song-6', 'song-5', 'song-4', 'song-3', 'song-2']);
+    await service.addPlaylist(playlistId: 'playlist', title: 'Playlist');
+    await service.addSong(id: 'song-5', title: 'Song 5');
+    expect(service.items.map((item) => item.id),
+        ['song-5', 'playlist', 'song-7', 'song-6', 'song-4', 'song-3']);
+    final restored = RecentlyPlayedService(userNamespace: 'cap');
+    addTearDown(restored.dispose);
+    await Future<void>.delayed(Duration.zero);
+    expect(restored.items, hasLength(6));
+    expect(restored.items.map((item) => item.id).toSet(),
+        service.items.map((item) => item.id).toSet());
+  });
+
   test('recent recording identity round trips without changing old entries',
       () {
     final old = {

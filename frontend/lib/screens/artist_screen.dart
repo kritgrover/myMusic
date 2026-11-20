@@ -51,7 +51,7 @@ class _ArtistScreenState extends State<ArtistScreen> {
   bool _profileLoading = true;
   bool _albumsLoading = true;
   bool _albumsFailed = false;
-  String _releaseFilter = 'all';
+  String _releaseFilter = 'artist';
   bool _newestFirst = true;
 
   @override
@@ -121,8 +121,9 @@ class _ArtistScreenState extends State<ArtistScreen> {
 
   List<AlbumInfo> get _visibleAlbums {
     final albums = _albums
-        .where((album) =>
-            _releaseFilter == 'all' || album.releaseGroup == _releaseFilter)
+        .where((album) => _releaseFilter == 'artist'
+            ? album.releaseGroup != 'appears_on'
+            : album.releaseGroup == _releaseFilter)
         .toList();
     albums.sort((a, b) {
       final dateOrder = (a.releaseDate ?? '').compareTo(b.releaseDate ?? '');
@@ -217,7 +218,7 @@ class _ArtistScreenState extends State<ArtistScreen> {
                       compact: 12, medium: 20, expanded: 24),
                   bottom: 4,
                 ),
-                child: Text('Popular',
+                child: Text('Songs',
                     style: Theme.of(context)
                         .textTheme
                         .titleLarge
@@ -248,7 +249,7 @@ class _ArtistScreenState extends State<ArtistScreen> {
             if (_related.isNotEmpty) ...[
               const SizedBox(height: 8),
               HorizontalCardRow(
-                title: 'Fans also like',
+                title: 'Similar artists',
                 itemCount: _related.length,
                 itemWidth:
                     ResponsiveUtils.responsiveHorizontalCardWidth(context),
@@ -269,7 +270,7 @@ class _ArtistScreenState extends State<ArtistScreen> {
 
   Widget _buildDiscographyControls(BuildContext context) {
     const filters = {
-      'all': 'All releases',
+      'artist': 'Artist releases',
       'album': 'Albums',
       'single': 'Singles & EPs',
       'compilation': 'Compilations',

@@ -16,18 +16,19 @@ from config import settings
 import httpx
 from download_service import DownloadService
 from database import db
-from spotify_service import spotify_service, SpotifyCatalogError
+from spotify_service import spotify_service, SpotifyCatalogError, SpotifyCapabilityError
 from search_routes import build_search_router
 from unified_search import recording_key
 from lyrics_service import lyrics_service
-from metadata_service import MetadataService, _regex_parse as _enhanced_regex_parse
+from metadata_service import (MetadataService, _regex_parse as _enhanced_regex_parse,
+                              _clean_uploader, _strip_yt_noise, _is_record_label)
 from auth_utils import create_access_token, decode_access_token, create_media_token, decode_media_token
 from media_files import audio_file_response, validate_path_safety
 from source_security import youtube_url, search_query, streaming_target, VIDEO_ID
 from stream_cache import StreamCache
 from saved_library import normalize_item, validate_identity, clean_thumbnail
 from listening_history import validate_report
-from recommendation_ranking import ListeningPreferences, safe_track, available, normalized
+from recommendation_ranking import ListeningPreferences, safe_track, available, normalized, recommendation_identity, merge_tracks, same_recommendation_recording
 from mutagen.mp4 import MP4
 from mutagen.easyid3 import EasyID3
 from mutagen.id3 import ID3, APIC
@@ -860,14 +861,10 @@ def _normalize_for_comparison(text: str) -> str:
 
 def _album_cover_cache_key(title: str, artist: str, album: str) -> str:
     """Generate a stable cache key for album cover lookups."""
-    parts = []
-    if title:
-        parts.append(_normalize_for_comparison(title))
-    if artist:
-        parts.append(_normalize_for_comparison(artist))
-    if album:
-        parts.append(_normalize_for_comparison(album))
-    return "|".join(parts) if parts else "unknown"
+    import json
+    parts = [_normalize_for_comparison(value or '') for value in (title, artist, album)]
+    # Do not reuse covers accepted by the old title-only fuzzy matcher.
+    return "artwork-v3:" + json.dumps(parts, ensure_ascii=False, separators=(',', ':'))
 
 
 def _parse_youtube_metadata(title: str, uploader: str = "") -> dict:
@@ -1004,9 +1001,19 @@ async def clean_metadata(title: str, uploader: str = "",
     )
 
 
+def _artwork_metadata(title: str, artist: str) -> dict:
+    parsed = _enhanced_regex_parse(title, artist or '')
+    known_artist = _clean_uploader(artist or '')
+    # A dash in a canonical title (Song - Live) is not a new artist separator.
+    if (known_artist and not _is_record_label(artist) and
+            _normalize_for_comparison(parsed['artist']) != _normalize_for_comparison(known_artist)):
+        return {'title': _strip_yt_noise(title), 'artist': known_artist}
+    return parsed
+
+
 def _build_search_term(title: str, artist: str, album: str, simplified: bool = False) -> str:
     """Build search term for iTunes. If simplified=True, use shorter form for retry."""
-    parsed = _enhanced_regex_parse(title, artist or "")
+    parsed = _artwork_metadata(title, artist or "")
     clean_title, clean_artist = parsed["title"], parsed["artist"]
     
     if simplified:
@@ -1027,48 +1034,39 @@ def _build_search_term(title: str, artist: str, album: str, simplified: bool = F
 
 
 def _score_itunes_result(result: dict, title: str, artist: str, album: str) -> int:
-    """Score an iTunes result based on how well it matches the requested track.
-    
-    Higher score = better match. Max score is 100.
-    """
-    score = 0
-    
-    result_artist = _normalize_for_comparison(result.get("artistName", ""))
-    result_track = _normalize_for_comparison(result.get("trackName", ""))
-    result_album = _normalize_for_comparison(result.get("collectionName", ""))
-    
-    norm_title = _normalize_for_comparison(title)
-    norm_artist = _normalize_for_comparison(artist)
-    norm_album = _normalize_for_comparison(album)
-    
-    # Artist match (40 points max)
-    if norm_artist:
-        if result_artist == norm_artist:
-            score += 40  # Exact match
-        elif norm_artist in result_artist or result_artist in norm_artist:
-            score += 30  # Partial match
-        elif any(word in result_artist for word in norm_artist.split() if len(word) > 2):
-            score += 15  # Word match
-    
-    # Track name match (30 points max)
-    if norm_title:
-        if result_track == norm_title:
-            score += 30  # Exact match
-        elif norm_title in result_track or result_track in norm_title:
-            score += 20  # Partial match
-        elif any(word in result_track for word in norm_title.split() if len(word) > 2):
-            score += 10  # Word match
-    
-    # Album match (30 points max)
-    if norm_album:
-        if result_album == norm_album:
-            score += 30  # Exact match
-        elif norm_album in result_album or result_album in norm_album:
-            score += 20  # Partial match
-        elif any(word in result_album for word in norm_album.split() if len(word) > 2):
-            score += 10  # Word match
-    
-    return score
+    """Accept an identified recording, never a similarly named artist/song."""
+    import re
+
+    def normalize(value):
+        return ' '.join(_normalize_for_comparison(value).split())
+
+    def credits(value):
+        # Exact full names first, then explicit collaboration separators. Avoid
+        # substring matches such as Bad Omens / Bad Omens Tribute Band.
+        return {normalize(part) for part in re.split(
+            r'\s*(?:,|&|\bfeat\.?|\bfeaturing|\bwith)\s*', value or '', flags=re.I)
+                if normalize(part)}
+
+    def track_name(value):
+        # Featured credits do not change the recording title; live/remix/
+        # acoustic labels do and must remain part of its identity.
+        value = re.sub(r'\s*[\[(](?:feat\.?|featuring)\s+[^\])]+[\])]', '', value or '', flags=re.I)
+        return normalize(value)
+
+    expected_artist = normalize(artist)
+    actual_artist = normalize(result.get('artistName', ''))
+    if (not expected_artist or expected_artist in ('unknown', 'unknown artist')
+            or not actual_artist):
+        return 0
+    if expected_artist != actual_artist and credits(artist) != credits(result.get('artistName', '')):
+        # A known primary artist may be one of an explicitly credited pair.
+        if expected_artist not in credits(result.get('artistName', '')):
+            return 0
+    if not track_name(title) or track_name(title) != track_name(result.get('trackName', '')):
+        return 0
+    if album and normalize(album) != normalize(result.get('collectionName', '')):
+        return 0
+    return 100 if album else 70
 
 
 @app.get("/album-cover")
@@ -1090,7 +1088,7 @@ async def get_album_cover(title: str, artist: str = "", album: str = ""):
         }
     
     try:
-        parsed = _enhanced_regex_parse(title, artist or "")
+        parsed = _artwork_metadata(title, artist or "")
         clean_title, clean_artist = parsed["title"], parsed["artist"]
         clean_album = album or ""
 
@@ -1118,15 +1116,15 @@ async def get_album_cover(title: str, artist: str = "", album: str = ""):
         search_term = _build_search_term(title, artist or "", album or "", simplified=False)
         _, scored_results, best_score = await _do_search(search_term)
         
-        # Retry with simplified term if no results or no good match (score < 20)
-        if (not scored_results or best_score < 20):
+        # A broad retry may find the same recording but cannot relax identity.
+        if (not scored_results or best_score < 70):
             retry_term = _build_search_term(title, artist or "", album or "", simplified=True)
             if retry_term != search_term:
                 _, scored_results, best_score = await _do_search(retry_term)
         
         if scored_results:
             best_score, best_artwork_url, best_result = scored_results[0]
-            if best_score >= 20:
+            if best_score >= 70:
                 artwork_url = best_artwork_url.replace("100x100", "600x600")
                 db.set_album_cover_cache(cache_key, artwork_url, best_score)
                 return {
@@ -1135,13 +1133,9 @@ async def get_album_cover(title: str, artist: str = "", album: str = ""):
                     "matched_artist": best_result.get("artistName"),
                     "matched_track": best_result.get("trackName"),
                 }
-            # Low confidence fallback: return result but don't cache (wrong track likely)
-            artwork_url = scored_results[0][1].replace("100x100", "600x600")
-            return {
-                "artwork_url": artwork_url,
-                "match_score": best_score,
-                "low_confidence": True,
-            }
+            # Keeping the existing thumbnail is better than showing another
+            # artist's cover. Do not return a speculative artwork URL.
+            return {"artwork_url": None, "match_score": 0}
         
         db.set_album_cover_cache(cache_key, None, 0)
         return {"artwork_url": None}
@@ -1801,15 +1795,24 @@ def _recommendation_seeds(user_id, preferences):
     tracks, artists, genre_weights = [], [], {}
     for track in preferences.top_tracks(limit=3):
         spotify_id = track.get('spotify_id')
-        info = None
-        if not spotify_id:
-            info = available(spotify_service.search_track, track['title'], track.get('artist') or 'Unknown')
-            if isinstance(info, dict):
-                spotify_id = info.get('id')
-                artist_key = normalized(info.get('artist') or track.get('artist'))
-                if info.get('artist_id'):
-                    preferences.artist_metadata.setdefault(artist_key, {'name': info.get('artist') or track.get('artist')})
-                    preferences.artist_metadata[artist_key].update(id=info['artist_id'], thumbnail=info.get('thumbnail') or '')
+        # Reuse these three bounded seed lookups for artist identity and artwork;
+        # never launch a metadata request for every card in a shelf.
+        info = available(spotify_service.search_track, track['title'], track.get('artist') or 'Unknown')
+        if isinstance(info, dict) and (recommendation_identity(info) == recommendation_identity(track) or
+                                      spotify_id and spotify_id == info.get('id')):
+            artist_key = normalized(track.get('artist'))
+            known_artist_id = preferences.artist_metadata.get(artist_key, {}).get('id')
+            if known_artist_id and info.get('artist_id') and info['artist_id'] != known_artist_id:
+                info = None
+        else:
+            info = None
+        if info:
+            spotify_id = spotify_id or info.get('id')
+            if info.get('artist_id') and normalized(info.get('artist')) == artist_key:
+                preferences.artist_metadata.setdefault(artist_key, {'name': track.get('artist')})
+                # A song's album cover is not an artist portrait.
+                preferences.artist_metadata[artist_key]['id'] = info['artist_id']
+            preferences.catalog_tracks.append({**info, 'spotify_id': info.get('id') or ''})
         if spotify_id and spotify_id not in tracks:
             tracks.append(spotify_id)
     for artist in preferences.top_artists(limit=3):
@@ -1830,12 +1833,20 @@ def _recommendation_seeds(user_id, preferences):
 def _personalized_tracks(request, limit):
     user_id, library, preferences, local, clean = _recommendation_context(request)
     seeds = _recommendation_seeds(user_id, preferences)
-    candidates = available(spotify_service.get_recommendations, **seeds, limit=limit)
+    # Rotation uses saved/played songs. Discovery searches a wider catalog pool
+    # and prioritizes unheard recordings rather than re-ranking those favorites.
+    candidates = available(spotify_service.get_recommendations, **seeds, limit=max(40, limit * 2))
     if not candidates and not any(seeds.values()):
         # The track endpoints must never return album-shaped new-release rows.
         candidates = available(spotify_service.get_genre_recommendations, 'pop', limit=limit)
     candidates = [track for candidate in candidates if (track := clean(candidate)) is not None]
-    return preferences.rank(candidates + local, limit=limit)
+    enriched = [track for candidate in preferences.catalog_tracks if (track := clean(candidate)) is not None]
+    # Merge metadata before selecting so saved filenames/explicit YouTube sources
+    # survive while matching catalog artwork replaces video thumbnails.
+    merged = merge_tracks(local + enriched + candidates)
+    rotation = preferences.rotation(local)
+    return preferences.discover(merged, limit=limit, exclude=rotation,
+                                day_seed=f'{user_id}:{datetime.now(timezone.utc).date().isoformat()}')
 
 
 @app.get("/recommendations/daily")
@@ -1905,12 +1916,22 @@ def get_available_genres():
         print(f"Error getting available genres: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/catalog/status")
+def get_catalog_status():
+    """Configuration/capabilities only, without exposing secrets or probing providers."""
+    return spotify_service.catalog_status()
+
+
 @app.get("/recommendations/playlist/{playlist_id}")
 def get_spotify_playlist_tracks(playlist_id: str):
     """Get tracks from a Spotify playlist"""
     try:
         tracks = spotify_service.get_playlist_tracks(playlist_id)
         return tracks
+    except SpotifyCapabilityError:
+        raise HTTPException(status_code=403, detail=(
+            'Spotify does not allow this connection to read this playlist. '
+            'Songs, artists, and albums remain available.')) from None
     except SpotifyCatalogError:
         raise HTTPException(status_code=503, detail='Playlist tracks are temporarily unavailable. Please try again.') from None
     except Exception as e:
@@ -1939,15 +1960,23 @@ def get_made_for_you_mixes(request: Request):
     _recommendation_seeds(user_id, preferences)
     genres = db.get_cache(f'listening_genres:{user_id}') or ['pop', 'hip-hop', 'rock', 'electronic']
     mixes = []
+    enriched = [track for candidate in preferences.catalog_tracks if (track := clean(candidate)) is not None]
+    local = merge_tracks(local + [track for track in enriched
+                                 if any(same_recommendation_recording(track, item) for item in local)])
+    rotation = preferences.rotation(local)
+    if rotation:
+        mixes.append({'id': 'mix_library', 'title': 'Your Rotation', 'genre': 'library', 'tracks': rotation})
+    used = list(rotation)
     for genre in genres[:4]:
         tracks = [track for raw in available(spotify_service.get_genre_recommendations, genre, limit=15)
                   if (track := clean(raw)) is not None]
+        tracks = [track for track in tracks if not any(same_recommendation_recording(track, item) for item in used)]
         if tracks:
+            tracks = preferences.discover(tracks, limit=15,
+                                           day_seed=f'{user_id}:{datetime.now(timezone.utc).date().isoformat()}:{genre}')
             mixes.append({'id': f'mix_{genre.lower().replace(" ", "-")}', 'title': f'{genre.title()} Mix',
-                          'genre': genre, 'tracks': preferences.rank(tracks, limit=15)})
-    if not mixes and local:
-        mixes.append({'id': 'mix_library', 'title': 'Your Rotation', 'genre': 'library',
-                      'tracks': preferences.rank(local, limit=15)})
+                          'genre': genre, 'tracks': tracks})
+            used.extend(tracks)
     return mixes
 
 
@@ -1992,17 +2021,20 @@ def get_mood_playlists_endpoint(mood: str):
 def get_because_you_listened(request: Request):
     user_id, library, preferences, local, clean = _recommendation_context(request)
     _recommendation_seeds(user_id, preferences)
-    rows, seen = [], set()
+    enriched = [track for candidate in preferences.catalog_tracks if (track := clean(candidate)) is not None]
+    local = merge_tracks(local + [track for track in enriched
+                                 if any(same_recommendation_recording(track, item) for item in local)])
+    rows, seen = [], []
     for artist in preferences.top_artists(limit=3):
         artist_id, name = artist.get('id') or '', artist['name']
         raw = available(spotify_service.get_recommendations, seed_artists=[artist_id], limit=15) if artist_id else []
-        candidates = [track for candidate in raw if (track := clean(candidate)) is not None]
-        candidates.extend(track for track in local if normalized(track.get('artist')) == normalized(name))
+        artist_local = [track for track in local if normalized(track.get('artist')) == normalized(name)]
+        candidates = artist_local + [track for candidate in raw if (track := clean(candidate)) is not None]
         tracks = []
-        for track in preferences.rank(candidates, limit=15):
-            key = (normalized(track['title']), normalized(track['artist']))
-            if key not in seen:
-                seen.add(key)
+        for track in preferences.discover(candidates, limit=15,
+                day_seed=f'{user_id}:{datetime.now(timezone.utc).date().isoformat()}:{artist_id or name}'):
+            if not any(same_recommendation_recording(track, previous) for previous in seen):
+                seen.append(track)
                 tracks.append(track)
         if tracks:
             rows.append({'seed_artist_id': artist_id, 'seed_artist_name': name,

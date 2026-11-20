@@ -323,29 +323,32 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   VideoInfo _trackToVideo(PlaylistTrack t) => VideoInfo.fromPlaylistTrack(t);
 
+  int _recommendationGeneration = 0;
+  int _discoveryGeneration = 0;
+
   Future<void> _fetchRecommendations() async {
+    final generation = ++_recommendationGeneration;
     setState(() {
       _isLoadingRecommendations = true;
     });
 
     try {
-      final results = await Future.wait([
-        _recommendationService.getDailyMix(),
-        _recommendationService.getNewReleases(),
+      await Future.wait([
+        _recommendationService.getDailyMix().then((tracks) {
+          if (!mounted || generation != _recommendationGeneration) return;
+          setState(() {
+            _dailyMix = tracks.map(_trackToVideo).toList();
+            _isLoadingRecommendations = false;
+          });
+        }),
+        _recommendationService.getNewReleases().then((releases) {
+          if (!mounted || generation != _recommendationGeneration) return;
+          setState(() => _newReleases = releases);
+        }),
       ]);
-
-      if (mounted) {
-        final dailyMixTracks = results[0] as List<PlaylistTrack>;
-        final newReleases = results[1] as List<Map<String, dynamic>>;
-        setState(() {
-          _dailyMix = dailyMixTracks.map(_trackToVideo).toList();
-          _newReleases = newReleases;
-          _isLoadingRecommendations = false;
-        });
-      }
     } catch (e) {
       print('Error fetching recommendations: $e');
-      if (mounted) {
+      if (mounted && generation == _recommendationGeneration) {
         setState(() {
           _isLoadingRecommendations = false;
         });
@@ -355,27 +358,33 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   /// Fetch the richer discovery shelves independently so each renders as soon as
   /// it resolves and self-hides when empty (no single slow shelf blocks the page).
-  void _fetchDiscoveryShelves() {
-    _recommendationService.getMixes().then((v) {
-      if (mounted) setState(() => _mixes = v);
-    });
-    _recommendationService.getBecauseYouListened().then((v) {
-      if (mounted) setState(() => _becauseRows = v);
-    });
-    _recommendationService.getCuratedPlaylists().then((v) {
-      if (mounted) setState(() => _curated = v);
-    });
-    _recommendationService.getRecommendedArtists().then((v) {
-      if (mounted) setState(() => _recommendedArtists = v);
-    });
-    _recommendationService.getMoods().then((v) {
-      if (mounted) setState(() => _moods = v);
-    });
+  Future<void> _fetchDiscoveryShelves() async {
+    final generation = ++_discoveryGeneration;
+    void update(VoidCallback change) {
+      if (mounted && generation == _discoveryGeneration) setState(change);
+    }
+
+    await Future.wait([
+      _recommendationService.getMixes().then((v) => update(() => _mixes = v)),
+      _recommendationService
+          .getBecauseYouListened()
+          .then((v) => update(() => _becauseRows = v)),
+      _recommendationService
+          .getCuratedPlaylists()
+          .then((v) => update(() => _curated = v)),
+      _recommendationService
+          .getRecommendedArtists()
+          .then((v) => update(() => _recommendedArtists = v)),
+      _recommendationService.getMoods().then((v) => update(() => _moods = v)),
+    ]);
   }
 
   Future<void> _refreshHome() async {
-    _fetchDiscoveryShelves();
-    await Future.wait([_fetchRecommendations(), _loadSidebarPlaylists()]);
+    await Future.wait([
+      _fetchDiscoveryShelves(),
+      _fetchRecommendations(),
+      _loadSidebarPlaylists()
+    ]);
   }
 
   // Navigation helpers for the new shelves
@@ -873,6 +882,28 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             _buildGreetingHeader(),
+            ListenableBuilder(
+              listenable: _recommendationService,
+              builder: (context, _) {
+                final message = _recommendationService.discoveryMessage;
+                if (message == null) return const SizedBox.shrink();
+                return Padding(
+                  padding: ResponsiveUtils.responsivePadding(context),
+                  child: Wrap(
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    spacing: 12,
+                    children: [
+                      Text(message),
+                      TextButton.icon(
+                        onPressed: _refreshHome,
+                        icon: const Icon(Icons.refresh),
+                        label: const Text('Retry discovery'),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
             if (_sidebarPlaylists.isNotEmpty) _buildSavedPlaylistShelf(),
             if (!_isLoadingRecommendations &&
                 _dailyMix.isEmpty &&
@@ -2877,6 +2908,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _musicSearch.dispose();
     _recentlyPlayedService.removeListener(_onRecentlyPlayedChanged);
     _playerStateService.removeListener(_onTrackChanged);
+    _recommendationService.dispose();
     _queueService.dispose();
     _playerStateService.dispose();
     super.dispose();

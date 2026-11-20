@@ -73,6 +73,7 @@ class _SpotifyPlaylistScreenState extends State<SpotifyPlaylistScreen> {
   List<PlaylistTrack> _tracks = [];
   bool _isLoading = true;
   bool _loadFailed = false;
+  bool _accessRestricted = false;
   PlaylistSortOption _sortOption = PlaylistSortOption.defaultOrder;
 
   @override
@@ -87,6 +88,7 @@ class _SpotifyPlaylistScreenState extends State<SpotifyPlaylistScreen> {
     setState(() {
       _isLoading = true;
       _loadFailed = false;
+      _accessRestricted = false;
     });
     try {
       final tracks = widget.trackLoader != null
@@ -99,11 +101,12 @@ class _SpotifyPlaylistScreenState extends State<SpotifyPlaylistScreen> {
           _isLoading = false;
         });
       }
-    } catch (_) {
+    } catch (error) {
       if (mounted) {
         setState(() {
           _isLoading = false;
           _loadFailed = true;
+          _accessRestricted = error is CatalogAccessException;
         });
       }
     }
@@ -802,15 +805,18 @@ class _SpotifyPlaylistScreenState extends State<SpotifyPlaylistScreen> {
                 style: Theme.of(context).textTheme.titleLarge),
             const SizedBox(height: 8),
             Text(
-                widget.trackLoader == null
-                    ? 'This catalog connection could not load the tracks in “${widget.playlistName}”. The provider may limit access to playlist contents.'
-                    : 'Could not load the tracks in “${widget.playlistName}”. Please try again.',
+                _accessRestricted
+                    ? CatalogAccessException().message
+                    : widget.trackLoader == null
+                        ? 'This catalog connection could not load the tracks in “${widget.playlistName}”. The provider may limit access to playlist contents.'
+                        : 'Could not load the tracks in “${widget.playlistName}”. Please try again.',
                 textAlign: TextAlign.center),
             const SizedBox(height: 16),
-            OutlinedButton.icon(
-                onPressed: _loadTracks,
-                icon: const Icon(Icons.refresh),
-                label: const Text('Retry playlist')),
+            if (!_accessRestricted)
+              OutlinedButton.icon(
+                  onPressed: _loadTracks,
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Retry playlist')),
           ]),
         ),
       );

@@ -1,17 +1,40 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
 import '../config.dart';
 import '../models/playlist.dart';
 import '../models/discovery.dart';
 import 'auth_http_client.dart';
 
-class RecommendationService {
+class CatalogAccessException extends StateError {
+  CatalogAccessException()
+      : super('Spotify does not allow this connection to read this playlist. '
+            'You can still discover music through songs, artists, and albums.');
+}
+
+class RecommendationService extends ChangeNotifier {
   final String baseUrl;
   final AuthHttpClient _client;
   final Duration listeningReportTimeout;
+  final Duration requestTimeout;
+  final Map<String, String> _discoveryIssues = {};
+  final Map<String, int> _requests = {};
+  String? _issuesScope;
+  bool _disposed = false;
+  static const _homePaths = {
+    '/recommendations/daily',
+    '/recommendations/new-releases',
+    '/recommendations/mixes',
+    '/recommendations/because-you-listened',
+    '/recommendations/curated',
+    '/recommendations/artists',
+    '/recommendations/moods',
+  };
 
   RecommendationService(
       {String? baseUrl,
       AuthHttpClient? client,
+      this.requestTimeout = const Duration(seconds: 45),
       this.listeningReportTimeout = const Duration(seconds: 5)})
       : baseUrl = baseUrl ?? AppConfig.apiBaseUrl,
         _client = client ?? AuthHttpClient.shared {
@@ -19,6 +42,68 @@ class RecommendationService {
       throw ArgumentError.value(listeningReportTimeout,
           'listeningReportTimeout', 'Must be a positive duration.');
     }
+    if (requestTimeout <= Duration.zero) {
+      throw ArgumentError.value(
+          requestTimeout, 'requestTimeout', 'Must be a positive duration.');
+    }
+  }
+
+  String? get discoveryMessage =>
+      _issuesScope == sessionScope && _discoveryIssues.isNotEmpty
+          ? _discoveryIssues.values.first
+          : null;
+
+  Future<http.Response> _get(Uri uri, {Duration? timeout}) async {
+    final scope = sessionScope;
+    if (_issuesScope != scope) {
+      _issuesScope = scope;
+      _discoveryIssues.clear();
+      _requests.clear();
+    }
+    final path = uri.path;
+    final revision = (_requests[path] ?? 0) + 1;
+    _requests[path] = revision;
+    void update(String? issue) {
+      if (_disposed ||
+          scope != sessionScope ||
+          _issuesScope != scope ||
+          _requests[path] != revision ||
+          !_homePaths.contains(path)) {
+        return;
+      }
+      final previous = _discoveryIssues[path];
+      if (issue == null) {
+        _discoveryIssues.remove(path);
+      } else {
+        _discoveryIssues[path] = issue;
+      }
+      if (previous != issue) notifyListeners();
+    }
+
+    try {
+      final response =
+          await _client.get(uri).timeout(timeout ?? requestTimeout);
+      if (response.statusCode == 200 && _homePaths.contains(path)) {
+        final data = jsonDecode(response.body);
+        if (data is! List || data.any((row) => row is! Map<String, dynamic>)) {
+          throw const FormatException('Invalid discovery response.');
+        }
+      }
+      update(response.statusCode == 200
+          ? null
+          : 'Some discovery sections could not load. Your library is still available.');
+      return response;
+    } catch (_) {
+      update(
+          'Some discovery sections could not load. Your library is still available.');
+      rethrow;
+    }
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    super.dispose();
   }
 
   /// Non-secret identity used by the listening recorder to discard pending
@@ -82,7 +167,7 @@ class RecommendationService {
   Future<List<PlaylistTrack>> _getTracks(String path) async {
     final scope = sessionScope;
     try {
-      final response = await _client.get(Uri.parse('$baseUrl$path'));
+      final response = await _get(Uri.parse('$baseUrl$path'));
       if (scope != sessionScope || response.statusCode != 200) return [];
       final data = jsonDecode(response.body);
       if (data is! List) return [];
@@ -125,7 +210,7 @@ class RecommendationService {
     final scope = sessionScope;
     try {
       final response =
-          await _client.get(Uri.parse('$baseUrl/recommendations/new-releases'));
+          await _get(Uri.parse('$baseUrl/recommendations/new-releases'));
 
       if (scope == sessionScope && response.statusCode == 200) {
         return List<Map<String, dynamic>>.from(
@@ -151,8 +236,8 @@ class RecommendationService {
   Future<List<dynamic>> getGenrePlaylists(String genre) async {
     try {
       // Use the legacy playlists endpoint
-      final response = await _client
-          .get(Uri.parse('$baseUrl/recommendations/genre/$genre/playlists'));
+      final response = await _get(
+          Uri.parse('$baseUrl/recommendations/genre/$genre/playlists'));
 
       if (response.statusCode == 200) {
         return jsonDecode(response.body);
@@ -166,8 +251,7 @@ class RecommendationService {
 
   Future<List<String>> getAvailableGenres() async {
     try {
-      final response =
-          await _client.get(Uri.parse('$baseUrl/recommendations/genres'));
+      final response = await _get(Uri.parse('$baseUrl/recommendations/genres'));
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
@@ -182,7 +266,7 @@ class RecommendationService {
 
   Future<List<dynamic>> getBrowseNewReleases({String country = 'US'}) async {
     try {
-      final response = await _client.get(Uri.parse(
+      final response = await _get(Uri.parse(
           '$baseUrl/recommendations/browse/new-releases?country=$country'));
 
       if (response.statusCode == 200) {
@@ -197,10 +281,10 @@ class RecommendationService {
 
   Future<List<PlaylistTrack>> getAlbumTracks(String albumId) async {
     final scope = sessionScope;
-    final response = await _client
-        .get(Uri.parse(
-            '$baseUrl/recommendations/album/${Uri.encodeComponent(albumId)}/tracks'))
-        .timeout(const Duration(seconds: 55));
+    final response = await _get(
+        Uri.parse(
+            '$baseUrl/recommendations/album/${Uri.encodeComponent(albumId)}/tracks'),
+        timeout: const Duration(seconds: 55));
     if (scope != sessionScope) {
       throw StateError('The listening session changed.');
     }
@@ -224,8 +308,7 @@ class RecommendationService {
   Future<List<HomeMix>> getMixes() async {
     final scope = sessionScope;
     try {
-      final response =
-          await _client.get(Uri.parse('$baseUrl/recommendations/mixes'));
+      final response = await _get(Uri.parse('$baseUrl/recommendations/mixes'));
       if (scope == sessionScope && response.statusCode == 200) {
         final List<dynamic> data = jsonDecode(response.body);
         return data
@@ -242,7 +325,7 @@ class RecommendationService {
   Future<List<SpotifyPlaylistInfo>> getCuratedPlaylists() async {
     try {
       final response =
-          await _client.get(Uri.parse('$baseUrl/recommendations/curated'));
+          await _get(Uri.parse('$baseUrl/recommendations/curated'));
       if (response.statusCode == 200) {
         final List<dynamic> data = jsonDecode(response.body);
         return data
@@ -258,8 +341,7 @@ class RecommendationService {
 
   Future<List<MoodCategory>> getMoods() async {
     try {
-      final response =
-          await _client.get(Uri.parse('$baseUrl/recommendations/moods'));
+      final response = await _get(Uri.parse('$baseUrl/recommendations/moods'));
       if (response.statusCode == 200) {
         final List<dynamic> data = jsonDecode(response.body);
         return data
@@ -275,7 +357,7 @@ class RecommendationService {
 
   Future<List<SpotifyPlaylistInfo>> getMoodPlaylists(String mood) async {
     try {
-      final response = await _client.get(
+      final response = await _get(
         Uri.parse(
             '$baseUrl/recommendations/mood/${Uri.encodeComponent(mood)}/playlists'),
       );
@@ -295,8 +377,8 @@ class RecommendationService {
   Future<List<BecauseRow>> getBecauseYouListened() async {
     final scope = sessionScope;
     try {
-      final response = await _client
-          .get(Uri.parse('$baseUrl/recommendations/because-you-listened'));
+      final response = await _get(
+          Uri.parse('$baseUrl/recommendations/because-you-listened'));
       if (scope == sessionScope && response.statusCode == 200) {
         final List<dynamic> data = jsonDecode(response.body);
         return data
@@ -315,7 +397,7 @@ class RecommendationService {
     final scope = sessionScope;
     try {
       final response =
-          await _client.get(Uri.parse('$baseUrl/recommendations/artists'));
+          await _get(Uri.parse('$baseUrl/recommendations/artists'));
       if (scope == sessionScope && response.statusCode == 200) {
         final List<dynamic> data = jsonDecode(response.body);
         return data
@@ -337,8 +419,8 @@ class RecommendationService {
   Future<AlbumInfo?> getAlbum(String albumId) async {
     final scope = sessionScope;
     try {
-      final response = await _client
-          .get(Uri.parse('$baseUrl/album/${Uri.encodeComponent(albumId)}'))
+      final response = await _get(
+              Uri.parse('$baseUrl/album/${Uri.encodeComponent(albumId)}'))
           .timeout(const Duration(seconds: 12));
       if (scope == sessionScope && response.statusCode == 200) {
         return AlbumInfo.fromJson(
@@ -354,8 +436,8 @@ class RecommendationService {
   Future<ArtistInfo?> getArtist(String artistId) async {
     final scope = sessionScope;
     try {
-      final response = await _client
-          .get(Uri.parse('$baseUrl/artist/${Uri.encodeComponent(artistId)}'))
+      final response = await _get(
+              Uri.parse('$baseUrl/artist/${Uri.encodeComponent(artistId)}'))
           .timeout(const Duration(seconds: 12));
       if (scope == sessionScope && response.statusCode == 200) {
         return ArtistInfo.fromJson(
@@ -374,10 +456,9 @@ class RecommendationService {
 
   Future<List<AlbumInfo>> getArtistAlbums(String artistId) async {
     final scope = sessionScope;
-    final response = await _client
-        .get(Uri.parse(
-            '$baseUrl/artist/${Uri.encodeComponent(artistId)}/albums'))
-        .timeout(const Duration(seconds: 55));
+    final response = await _get(
+        Uri.parse('$baseUrl/artist/${Uri.encodeComponent(artistId)}/albums'),
+        timeout: const Duration(seconds: 55));
     if (scope != sessionScope) {
       throw StateError('The listening session changed.');
     }
@@ -396,8 +477,7 @@ class RecommendationService {
   Future<List<ArtistInfo>> getRelatedArtists(String artistId) async {
     final scope = sessionScope;
     try {
-      final response = await _client
-          .get(Uri.parse(
+      final response = await _get(Uri.parse(
               '$baseUrl/artist/${Uri.encodeComponent(artistId)}/related'))
           .timeout(const Duration(seconds: 12));
       if (scope == sessionScope && response.statusCode == 200) {
@@ -416,14 +496,14 @@ class RecommendationService {
   Future<List<PlaylistTrack>> getSpotifyPlaylistTracks(
       String playlistId) async {
     final scope = sessionScope;
-    final response = await _client
-        .get(Uri.parse(
+    final response = await _get(Uri.parse(
             '$baseUrl/recommendations/playlist/${Uri.encodeComponent(playlistId)}'))
         .timeout(const Duration(seconds: 12));
     if (scope != sessionScope) {
       throw StateError('The listening session changed.');
     }
     if (response.statusCode != 200) {
+      if (response.statusCode == 403) throw CatalogAccessException();
       throw StateError('Could not load the playlist tracks. Please retry.');
     }
     final data = jsonDecode(response.body);

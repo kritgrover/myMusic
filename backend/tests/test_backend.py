@@ -34,6 +34,24 @@ class BackendRegressionTests(unittest.TestCase):
     def test_health(self):
         self.assertEqual(self.client.get("/").json()["status"], "running")
 
+    def test_catalog_access_restriction_is_distinct_from_provider_outage(self):
+        for error, expected in [(self.api.SpotifyCapabilityError('private provider detail'), 403),
+                                (self.api.SpotifyCatalogError('private provider detail'), 503)]:
+            with self.subTest(status=expected), patch.object(
+                    self.api.spotify_service, 'get_playlist_tracks', side_effect=error):
+                response = self.client.get('/recommendations/playlist/example')
+                self.assertEqual(response.status_code, expected)
+                self.assertNotIn('private provider detail', response.text)
+
+    def test_catalog_status_reports_capabilities_without_live_provider_requests(self):
+        with patch.object(self.api.spotify_service, 'sp', None):
+            response = self.client.get('/catalog/status')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['status'], 'unconfigured')
+        self.assertEqual(response.json()['authorization'], 'client_credentials')
+        self.assertEqual(response.json()['playlist_contents'], 'restricted')
+        self.assertNotIn('secret', response.text)
+
     def test_restart_preserves_artwork_and_ignores_expired_entries(self):
         from database import Database
 

@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'api_service.dart';
 import 'auth_http_client.dart';
 
@@ -9,15 +11,20 @@ class AlbumCoverService {
   AlbumCoverService._internal()
       : _apiService = ApiService(),
         _followsServer = true,
+        _requestTimeout = const Duration(seconds: 12),
         _client = AuthHttpClient.shared;
   AlbumCoverService.withClient(
-      {required ApiService apiService, required AuthHttpClient client})
+      {required ApiService apiService,
+      required AuthHttpClient client,
+      Duration requestTimeout = const Duration(seconds: 12)})
       : _apiService = apiService,
         _followsServer = false,
+        _requestTimeout = requestTimeout,
         _client = client;
 
   ApiService _apiService;
   final bool _followsServer;
+  final Duration _requestTimeout;
   final AuthHttpClient _client;
   String? _sessionScope;
 
@@ -33,6 +40,7 @@ class AlbumCoverService {
 
   /// In-memory cache: key -> artwork URL (empty string = no artwork found)
   final Map<String, String> _cache = {};
+  final Map<String, DateTime> _missingUntil = {};
 
   /// In-flight fetches: key -> Future that will resolve to artwork URL
   final Map<String, Future<String?>> _pending = {};
@@ -47,14 +55,19 @@ class AlbumCoverService {
     if (filename != null && filename.isNotEmpty) {
       return 'file:$filename';
     }
-    final parts = <String>[];
-    if (title != null && title.isNotEmpty) parts.add(title);
-    if (artist != null && artist.isNotEmpty) parts.add(artist);
-    if (album != null && album.isNotEmpty) parts.add(album);
-    return parts.isEmpty ? 'unknown' : parts.join('|');
+    return jsonEncode([title ?? '', artist ?? '', album ?? '']);
   }
 
-  /// Resolve artwork URL. Checks: existing URL -> cache -> in-flight -> file artwork -> iTunes API.
+  /// YouTube video frames are useful fallbacks, not verified album covers.
+  static bool isVideoThumbnail(String? url) {
+    final host = Uri.tryParse(url ?? '')?.host.toLowerCase() ?? '';
+    return host == 'ytimg.com' ||
+        host.endsWith('.ytimg.com') ||
+        host == 'img.youtube.com';
+  }
+
+  /// Resolve artwork while retaining a video thumbnail if no matching cover is
+  /// available. Only the resolved cover is cached, never a caller's fallback.
   Future<String?> resolveArtwork({
     String? filename,
     String? title,
@@ -63,36 +76,52 @@ class AlbumCoverService {
     String? existingUrl,
   }) async {
     final session = _ensureSession();
-    if (existingUrl != null && existingUrl.isNotEmpty) {
+    if (existingUrl != null &&
+        existingUrl.isNotEmpty &&
+        !isVideoThumbnail(existingUrl)) {
       return existingUrl;
     }
+    final fallback = existingUrl?.isNotEmpty == true ? existingUrl : null;
 
-    final cacheKey = generateKey(
-      filename: filename,
-      title: title,
-      artist: artist,
-      album: album,
-    );
+    final preferCatalog = isVideoThumbnail(existingUrl) &&
+        filename != null &&
+        filename.isNotEmpty;
+    final cacheKey = preferCatalog
+        ? jsonEncode(['catalog-first', filename, title, artist, album])
+        : generateKey(
+            filename: filename,
+            title: title,
+            artist: artist,
+            album: album,
+          );
 
     // Check cache
     if (_cache.containsKey(cacheKey)) {
       final cached = _cache[cacheKey]!;
-      return cached.isEmpty ? null : cached;
+      if (cached.isNotEmpty && !_missingUntil.containsKey(cacheKey)) {
+        return cached;
+      }
+      if (_missingUntil[cacheKey]?.isAfter(DateTime.now()) ?? false) {
+        return cached.isEmpty ? fallback : cached;
+      }
+      _cache.remove(cacheKey);
+      _missingUntil.remove(cacheKey);
     }
 
     // Check in-flight: reuse existing fetch
     if (_pending.containsKey(cacheKey)) {
-      return _pending[cacheKey];
+      final result = await _pending[cacheKey];
+      return _client.cacheScope == session ? result ?? fallback : null;
     }
 
     // Start new fetch
-    final future =
-        _doResolve(session, cacheKey, filename, title, artist, album);
+    final future = _doResolve(
+        session, cacheKey, filename, title, artist, album, preferCatalog);
     _pending[cacheKey] = future;
 
     try {
       final result = await future;
-      return result;
+      return _client.cacheScope == session ? result ?? fallback : null;
     } finally {
       if (_client.cacheScope == session) _pending.remove(cacheKey);
     }
@@ -105,15 +134,38 @@ class AlbumCoverService {
     String? title,
     String? artist,
     String? album,
+    bool preferCatalog,
   ) async {
     try {
       String? artworkUrl;
+      var matchedCatalog = false;
 
-      // Priority 1: File artwork
-      if (filename != null && filename.isNotEmpty) {
+      Future<String?> catalogArtwork() => _apiService
+          .fetchAlbumCover(
+            title: title!,
+            artist: artist ?? '',
+            album: album ?? '',
+          )
+          .timeout(_requestTimeout);
+
+      // A downloaded file may have the same video frame embedded. When that
+      // provenance is known, verify the album cover before trying file artwork.
+      if (preferCatalog && title != null && title.isNotEmpty) {
+        try {
+          artworkUrl = await catalogArtwork();
+          matchedCatalog = artworkUrl != null;
+        } catch (_) {
+          // Embedded artwork remains a useful fallback during an outage.
+        }
+      }
+      if (_client.cacheScope != session) return null;
+
+      if (artworkUrl == null && filename != null && filename.isNotEmpty) {
         try {
           final fileArtworkUrl = _apiService.getFileArtworkUrl(filename);
-          final response = await _client.get(Uri.parse(fileArtworkUrl));
+          final response = await _client
+              .get(Uri.parse(fileArtworkUrl))
+              .timeout(_requestTimeout);
           if (_client.cacheScope != session) return null;
           if (response.statusCode == 200) {
             artworkUrl = fileArtworkUrl;
@@ -122,21 +174,27 @@ class AlbumCoverService {
           // Continue to iTunes
         }
       }
+      if (_client.cacheScope != session) return null;
 
-      // Priority 2: iTunes API
-      if (artworkUrl == null && title != null && title.isNotEmpty) {
-        artworkUrl = await _apiService.fetchAlbumCover(
-          title: title,
-          artist: artist ?? '',
-          album: album ?? '',
-        );
+      if (!preferCatalog &&
+          artworkUrl == null &&
+          title != null &&
+          title.isNotEmpty) {
+        artworkUrl = await catalogArtwork();
       }
 
       if (_client.cacheScope != session) return null;
       _cache[cacheKey] = artworkUrl ?? '';
+      if (artworkUrl == null || (preferCatalog && !matchedCatalog)) {
+        // Do not let a temporary embedded fallback permanently suppress a
+        // later successful metadata lookup.
+        _missingUntil[cacheKey] =
+            DateTime.now().add(const Duration(minutes: 1));
+      }
       return artworkUrl;
     } catch (e) {
-      if (_client.cacheScope == session) _cache[cacheKey] = '';
+      // Transient failures should be retried on the next lookup, not cached as
+      // proof that this recording has no album cover.
       return null;
     }
   }
@@ -157,6 +215,7 @@ class AlbumCoverService {
 
   void clear() {
     _cache.clear();
+    _missingUntil.clear();
     _pending.clear();
   }
 

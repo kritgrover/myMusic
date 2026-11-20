@@ -169,6 +169,75 @@ void main() {
     expect(authorizations, ['Bearer account-a', 'Bearer account-b']);
   });
 
+  test('discovery timeout has a retryable state that clears on success',
+      () async {
+    final pending = Completer<http.Response>();
+    var calls = 0;
+    final client = AuthHttpClient(
+        baseUrl: base,
+        client: MockClient((_) {
+          calls++;
+          return calls == 1
+              ? pending.future
+              : Future.value(http.Response('[]', 200));
+        }));
+    final service = RecommendationService(
+        baseUrl: base,
+        client: client,
+        requestTimeout: const Duration(milliseconds: 10));
+    addTearDown(service.dispose);
+    expect(await service.getDailyMix(), isEmpty);
+    expect(service.discoveryMessage, contains('could not load'));
+    expect(await service.getDailyMix(), isEmpty);
+    expect(service.discoveryMessage, isNull);
+    pending.complete(http.Response('[]', 503));
+    await pumpEventQueue();
+    expect(service.discoveryMessage, isNull);
+    expect(calls, 2);
+  });
+
+  test('restricted playlist access is distinct from a temporary outage',
+      () async {
+    final service = serviceFor((_) async => http.Response(
+        '{"detail":"private provider response must not appear"}', 403));
+    await expectLater(service.getSpotifyPlaylistTracks('playlist'),
+        throwsA(isA<CatalogAccessException>()));
+    final unavailable = serviceFor((_) async => http.Response('{}', 503));
+    await expectLater(
+        unavailable.getSpotifyPlaylistTracks('playlist'),
+        throwsA(
+            allOf(isA<StateError>(), isNot(isA<CatalogAccessException>()))));
+  });
+
+  test('album detail errors do not leave an unrefreshable Home warning',
+      () async {
+    final service = serviceFor((_) async => http.Response('{}', 503));
+    await expectLater(
+        service.getAlbumTracks('album'), throwsA(isA<StateError>()));
+    expect(service.discoveryMessage, isNull);
+  });
+
+  test('malformed successful discovery response is unavailable, not empty',
+      () async {
+    final service =
+        serviceFor((_) async => http.Response('{"unexpected":true}', 200));
+    expect(await service.getDailyMix(), isEmpty);
+    expect(service.discoveryMessage, contains('could not load'));
+  });
+
+  test('old account failure cannot set the new account discovery message',
+      () async {
+    String token = 'account-a';
+    final response = Completer<http.Response>();
+    final service =
+        serviceFor((_) => response.future, tokenProvider: () => token);
+    final pending = service.getDailyMix();
+    token = 'account-b';
+    response.complete(http.Response('{}', 503));
+    expect(await pending, isEmpty);
+    expect(service.discoveryMessage, isNull);
+  });
+
   final getters =
       <String, Future<List<PlaylistTrack>> Function(RecommendationService)>{
     'daily': (service) => service.getDailyMix(),

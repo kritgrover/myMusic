@@ -5,13 +5,14 @@ import '../services/offline_download_service.dart';
 import 'offline_artwork.dart';
 
 /// Widget that fetches and displays album covers for tracks
-/// Tries: 1) Pre-resolved URL, 2) Embedded artwork from file, 3) iTunes API, 4) Placeholder
+/// Prefers album artwork; video thumbnails remain visible during a cover lookup.
 class AlbumCover extends StatefulWidget {
   final String? filename; // For downloaded files
   final String? title;
   final String? artist;
   final String? album;
   final String? artworkUrl; // Pre-resolved artwork URL (takes priority)
+  final AlbumCoverService? service;
   final double size;
   final Color? backgroundColor;
   final Color? iconColor;
@@ -26,6 +27,7 @@ class AlbumCover extends StatefulWidget {
     this.artist,
     this.album,
     this.artworkUrl,
+    this.service,
     this.size = 40,
     this.backgroundColor,
     this.iconColor,
@@ -38,7 +40,7 @@ class AlbumCover extends StatefulWidget {
 }
 
 class _AlbumCoverState extends State<AlbumCover> {
-  final AlbumCoverService _service = AlbumCoverService();
+  AlbumCoverService get _service => widget.service ?? AlbumCoverService();
   String? _artworkUrl;
   bool _isLoading = true;
   bool _hasError = false;
@@ -57,7 +59,8 @@ class _AlbumCoverState extends State<AlbumCover> {
         oldWidget.title != widget.title ||
         oldWidget.artist != widget.artist ||
         oldWidget.album != widget.album ||
-        oldWidget.artworkUrl != widget.artworkUrl) {
+        oldWidget.artworkUrl != widget.artworkUrl ||
+        oldWidget.service != widget.service) {
       _loadAlbumCover();
     }
   }
@@ -75,14 +78,14 @@ class _AlbumCoverState extends State<AlbumCover> {
       return;
     }
     final session = AuthHttpClient.shared.cacheScope;
-    final needsFetch = widget.artworkUrl == null || widget.artworkUrl!.isEmpty;
-    if (needsFetch) {
-      setState(() {
-        _isLoading = true;
-        _hasError = false;
-        _artworkUrl = null;
-      });
-    }
+    final initialArtwork =
+        widget.artworkUrl?.isNotEmpty == true ? widget.artworkUrl : null;
+    setState(() {
+      _isLoading = initialArtwork == null;
+      _hasError = false;
+      // Reset immediately on track changes, even when its lookup is pending.
+      _artworkUrl = initialArtwork;
+    });
 
     final artworkUrl = await _service.resolveArtwork(
       filename: widget.filename,

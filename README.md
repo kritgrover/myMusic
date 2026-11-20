@@ -99,6 +99,15 @@ A full-stack application for searching YouTube, downloading music, playing audio
 
 ### Spotify Integration & Recommendations
 - 🎯 **Songs for You**: Personalized recommendations based on your listening history
+- **Your Rotation** keeps familiar saved and played songs together. **Songs for You**
+  favors unheard music, varies its ordering each day, and spreads selections across
+  artists. The two sections avoid repeating recordings when alternatives exist;
+  small collections still have a playable fallback when Spotify is unavailable.
+- **Jump Back In** keeps the six most recent songs/playlists, including after restart.
+- Artist pages default to **Artist releases**. **Appears on** separately lists guest
+  appearances verified against the artist's Spotify ID and track credits.
+- Home song cards prefer album artwork. YouTube thumbnails stay visible while a
+  matching cover loads, and remain the fallback if no verified cover is found.
 - Qualified listening time, repeat plays, likes and followed artists influence ranking; intentional early skips reduce preference
 - Owned downloads and playlist or liked tracks remain available in personalized shelves when catalogue providers fail
 - 🎸 **Genre Browsing**: Explore music by genre (Pop, Rock, Hip Hop, Electronic, Jazz, Classical, Indie, Metal, and many more)
@@ -166,6 +175,13 @@ pip install -r requirements.txt
      with HTTP 403; video search and your local library remain available. See
      [Spotify's development-mode requirements](https://developer.spotify.com/documentation/web-api/concepts/quota-modes).
    - Create a new application
+   - Discovery uses supported catalog searches and artist releases rather than
+     removed recommendation/top-track/new-release endpoints. Search pages contain
+     at most ten results. Public playlist metadata may be searchable even when
+     Spotify restricts its contents; the app explains that restriction separately
+     from a temporary connection failure. This app uses Client Credentials, not
+     Spotify user sign-in. See the
+     [Development Mode migration guide](https://developer.spotify.com/documentation/web-api/tutorials/february-2026-migration-guide).
    - Copy your Client ID and Client Secret
    - Create a `.env` file in the `backend/` directory:
    ```env
@@ -442,6 +458,7 @@ CLIENT_SECRET=your_client_secret
 | GET | `/history/recent` | Current account's recent events (`limit` 1–100) |
 | GET | `/analytics/recap` | Qualified plays and measured minutes over 7 or 30 days |
 | GET | `/recommendations/daily` | Get personalized daily mix |
+| GET | `/catalog/status` | Get catalog configuration and access capabilities (not a live health check) |
 | GET | `/recommendations/for-you` | Get personalized recommendations |
 | GET | `/recommendations/genre/{genre}` | Get tracks for a specific genre |
 | GET | `/recommendations/genres` | Get list of available genres |

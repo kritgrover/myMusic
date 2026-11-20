@@ -179,3 +179,176 @@ class RecommendationRankingTests(unittest.TestCase):
         self.assertNotIn('skip-id', str(seeds))
         recap = self.client.get('/analytics/recap', headers=self.headers).json()
         self.assertEqual(recap['top_genres'], ['electronic'])
+
+    def test_rotation_and_discovery_partition_local_fallback_without_padding_duplicates(self):
+        preferences = self.preferences_class([], {'tracks': [
+            {'title': f'Song {i}', 'artist': f'Artist {i % 3}'} for i in range(8)]})
+        local = list(preferences.track_metadata.values())
+        rotation = preferences.rotation(local)
+        discovery = preferences.discover(local, exclude=rotation, day_seed='listener:2026-11-20')
+        self.assertEqual(len(rotation), 4)
+        self.assertEqual(len(discovery), 4)
+        self.assertFalse({t['title'] for t in rotation} & {t['title'] for t in discovery})
+        self.assertEqual({t['title'] for t in rotation + discovery}, {t['title'] for t in local})
+
+    def test_discovery_prefers_unheard_music_and_varies_stably_by_day_with_artist_diversity(self):
+        preferences = self.preferences_class([self.row('Recently played', artist='Favorite')], {})
+        candidates = [{'title': 'Recently played', 'artist': 'Favorite'}]
+        candidates += [{'title': f'Unheard {i}', 'artist': 'Favorite' if i < 5 else f'Artist {i}'}
+                       for i in range(12)]
+        first = preferences.discover(candidates, limit=10, day_seed='listener:day1')
+        repeated = preferences.discover(list(reversed(candidates)), limit=10, day_seed='listener:day1')
+        tomorrow = preferences.discover(candidates, limit=10, day_seed='listener:day2')
+        self.assertEqual(first, repeated)
+        self.assertNotEqual(first, tomorrow)
+        self.assertTrue(all(track['title'] != 'Recently played' for track in first[:6]))
+        self.assertLessEqual(sum(track['artist'] == 'Favorite' for track in first[:6]), 3)
+
+    def test_catalog_artwork_replaces_video_thumbnail_without_replacing_saved_source(self):
+        preferences = self.preferences_class([], {})
+        local = {'id': 'saved', 'title': 'Song', 'artist': 'Artist', 'filename': 'own.mp3',
+                 'url': 'https://www.youtube.com/watch?v=testFixture',
+                 'thumbnail': 'https://i.ytimg.com/vi/testFixture/hqdefault.jpg'}
+        catalog = {'id': 'catalog', 'spotify_id': 'catalog', 'title': 'Song', 'artist': 'Artist',
+                   'album': 'Album', 'album_id': 'album', 'thumbnail': 'https://i.scdn.co/image/album',
+                   'url': 'https://open.spotify.com/track/catalog', 'recording_type': 'original'}
+        track = preferences.rank([local, catalog])[0]
+        self.assertEqual(track['thumbnail'], catalog['thumbnail'])
+        self.assertEqual(track['album'], 'Album')
+        self.assertEqual(track['spotify_id'], 'catalog')
+        self.assertEqual(track['filename'], 'own.mp3')
+        self.assertEqual(track['url'], local['url'])
+
+    def test_recording_variants_and_album_artwork_stay_separate(self):
+        preferences = self.preferences_class([], {})
+        studio = {'title': 'Song', 'artist': 'Artist', 'album': 'Album',
+                  'recording_type': 'original', 'thumbnail': 'https://example.test/original.jpg'}
+        live = {**studio, 'album': 'Live at Wembley', 'recording_type': 'live',
+                'thumbnail': 'https://i.scdn.co/image/live', 'spotify_id': 'live-id'}
+        self.assertEqual(len(preferences.rank([studio, live])), 2)
+        different_album = {**studio, 'album': 'Different edition', 'spotify_id': 'different',
+                           'thumbnail': 'https://i.scdn.co/image/other'}
+        merged = preferences.rank([studio, different_album])[0]
+        self.assertEqual(merged['thumbnail'], studio['thumbnail'])
+        self.assertNotIn('spotify_id', merged)
+
+    def test_discovery_does_not_treat_an_early_skip_as_an_unheard_recommendation(self):
+        preferences = self.preferences_class([self.row('Skipped', listened=1, reason='skipped')], {})
+        candidates = [{'title': title, 'artist': 'Artist'} for title in ('Skipped', 'New song')]
+        self.assertEqual(preferences.discover(candidates, day_seed='today')[0]['title'], 'New song')
+
+    def test_same_name_different_artists_keep_recordings_and_artwork_separate(self):
+        preferences = self.preferences_class([], {})
+        local = {'title': 'Song', 'artist': 'Same Name', 'artist_id': 'artist-A',
+                 'filename': 'own.mp3', 'thumbnail': 'https://i.ytimg.com/vi/testFixture/hqdefault.jpg'}
+        unrelated = {'title': 'Song', 'artist': 'Same Name', 'artist_id': 'artist-B',
+                     'spotify_id': 'recording-B', 'thumbnail': 'https://i.scdn.co/image/artist-B'}
+        merged = preferences.rank([local, unrelated])
+        self.assertEqual(len(merged), 2)
+        owned = next(track for track in merged if track.get('filename'))
+        self.assertEqual(owned['artist_id'], 'artist-A')
+        self.assertEqual(owned['thumbnail'], local['thumbnail'])
+        self.assertNotIn('spotify_id', owned)
+        discovery = preferences.discover(merged, exclude=[local], day_seed='today')
+        self.assertEqual([track['spotify_id'] for track in discovery], ['recording-B'])
+
+    def test_unknown_artist_metadata_only_enriches_when_catalog_identity_is_unambiguous(self):
+        preferences = self.preferences_class([], {})
+        local = {'title': 'Song', 'artist': 'Same Name', 'filename': 'own.mp3',
+                 'thumbnail': 'https://i.ytimg.com/vi/testFixture/hqdefault.jpg'}
+        first = {'title': 'Song', 'artist': 'Same Name', 'artist_id': 'artist-A',
+                 'spotify_id': 'recording-A', 'thumbnail': 'https://i.scdn.co/image/artist-A'}
+        second = {**first, 'artist_id': 'artist-B', 'spotify_id': 'recording-B',
+                  'thumbnail': 'https://i.scdn.co/image/artist-B'}
+        unambiguous = preferences.rank([local, first])
+        self.assertEqual(len(unambiguous), 1)
+        self.assertEqual(unambiguous[0]['artist_id'], 'artist-A')
+        self.assertEqual(unambiguous[0]['thumbnail'], first['thumbnail'])
+        ambiguous = preferences.rank([local, first, second])
+        self.assertEqual(len(ambiguous), 3)
+        owned = next(track for track in ambiguous if track.get('filename'))
+        self.assertNotIn('artist_id', owned)
+        self.assertNotIn('spotify_id', owned)
+        self.assertEqual(owned['thumbnail'], local['thumbnail'])
+
+    def test_shared_spotify_id_deduplicates_different_artist_display_credits(self):
+        preferences = self.preferences_class([], {})
+        local = {'title': 'V.A.N', 'artist': 'Bad Omens, Poppy', 'spotify_id': 'van-recording',
+                 'filename': 'van.mp3', 'url': 'https://www.youtube.com/watch?v=testFixture',
+                 'thumbnail': 'https://i.ytimg.com/vi/testFixture/hqdefault.jpg'}
+        catalog = {'title': 'V.A.N', 'artist': 'Bad Omens', 'artist_id': 'bad-omens',
+                   'spotify_id': 'van-recording', 'thumbnail': 'https://i.scdn.co/image/van'}
+        merged = preferences.rank([local, catalog])
+        self.assertEqual(len(merged), 1)
+        self.assertEqual(merged[0]['filename'], 'van.mp3')
+        self.assertEqual(merged[0]['url'], local['url'])
+        self.assertEqual(merged[0]['thumbnail'], catalog['thumbnail'])
+        new_song = {'title': 'A new song', 'artist': 'Bad Omens', 'spotify_id': 'new-recording'}
+        discovery = preferences.discover([catalog, new_song], exclude=[local], day_seed='today')
+        self.assertEqual([track['spotify_id'] for track in discovery], ['new-recording'])
+
+    def test_home_rotation_and_songs_for_you_have_distinct_tracks_with_catalog_available(self):
+        for index in range(6):
+            response = self.client.put(f'/library/tracks/liked-{index}', headers=self.headers,
+                json={'title': f'Liked {index}', 'artist': f'Artist {index % 2}'})
+            self.assertEqual(response.status_code, 200)
+        catalog = [{'id': f'catalog-{i}', 'title': f'New {i}', 'artist': f'Artist {i % 4}',
+                    'thumbnail': f'https://i.scdn.co/image/{i}'} for i in range(12)]
+        with patch.object(self.api.spotify_service, 'search_track', return_value=None), \
+             patch.object(self.api.spotify_service, 'get_recommendations', return_value=catalog), \
+             patch.object(self.api.spotify_service, 'get_genre_recommendations', return_value=catalog):
+            mixes = self.client.get('/recommendations/mixes', headers=self.headers).json()
+            songs = self.client.get('/recommendations/daily', headers=self.headers).json()
+        rotation = next(mix for mix in mixes if mix['id'] == 'mix_library')['tracks']
+        self.assertFalse({t['title'] for t in rotation} & {t['title'] for t in songs})
+        self.assertTrue(all(track['title'].startswith('New ') for track in songs[:6]))
+        genre_titles = [track['title'] for mix in mixes if mix['id'] != 'mix_library' for track in mix['tracks']]
+        self.assertEqual(len(genre_titles), len(set(genre_titles)))
+
+    def test_offline_home_shelves_split_a_small_collection_and_keep_account_boundaries(self):
+        for index in range(6):
+            self.client.put(f'/library/tracks/local-{index}', headers=self.headers,
+                json={'title': f'Local {index}', 'artist': 'Artist'})
+        self.client.put('/library/tracks/private', headers=self.other_headers,
+                        json={'title': 'Private other track', 'artist': 'Artist'})
+        with self.provider_down():
+            rotation = self.client.get('/recommendations/mixes', headers=self.headers).json()[0]['tracks']
+            discovery = self.client.get('/recommendations/daily', headers=self.headers).json()
+        self.assertEqual(len(rotation), 3)
+        self.assertEqual(len(discovery), 3)
+        self.assertFalse({t['title'] for t in rotation} & {t['title'] for t in discovery})
+        self.assertTrue(all(t['title'].startswith('Local ') for t in rotation + discovery))
+
+    def test_because_shelf_reuses_matching_seed_artwork_and_preserves_playable_filename(self):
+        (self.root / 'downloads' / 'own.mp3').write_bytes(b'audio')
+        self.api.db.claim_download(self.user['id'], 'own.mp3')
+        self.client.put('/library/tracks/local-song', headers=self.headers,
+            json={'title': 'Song', 'artist': 'Bad Omens', 'filename': 'own.mp3',
+                  'url': 'https://www.youtube.com/watch?v=testFixture',
+                  'thumbnail': 'https://i.ytimg.com/vi/testFixture/hqdefault.jpg'})
+        catalog = {'id': 'track-id', 'title': 'Song', 'artist': 'Bad Omens', 'artist_id': 'bad-omens',
+                   'album': 'Album', 'thumbnail': 'https://i.scdn.co/image/album'}
+        with patch.object(self.api.spotify_service, 'search_track', return_value=catalog) as lookup, \
+             patch.object(self.api.spotify_service, 'get_artist_genres', return_value=[]), \
+             patch.object(self.api.spotify_service, 'get_recommendations', return_value=[]):
+            response = self.client.get('/recommendations/because-you-listened', headers=self.headers)
+        self.assertEqual(response.status_code, 200)
+        row = response.json()[0]
+        self.assertEqual(row['seed_artist_id'], 'bad-omens')
+        self.assertEqual(row['tracks'][0]['thumbnail'], catalog['thumbnail'])
+        self.assertEqual(row['tracks'][0]['filename'], 'own.mp3')
+        self.assertEqual(lookup.call_count, 1)
+
+    def test_unrelated_broad_search_result_never_becomes_a_recommendation_seed(self):
+        self.client.put('/library/tracks/local-song', headers=self.headers,
+                        json={'title': 'Song', 'artist': 'Bad Omens'})
+        unrelated = {'id': 'wrong-track', 'title': 'Song', 'artist': 'Unrelated Artist',
+                     'artist_id': 'wrong-artist', 'thumbnail': 'https://i.scdn.co/image/wrong'}
+        with patch.object(self.api.spotify_service, 'search_track', return_value=unrelated), \
+             patch.object(self.api.spotify_service, 'get_recommendations', return_value=[]) as provider, \
+             patch.object(self.api.spotify_service, 'get_genre_recommendations', return_value=[]):
+            response = self.client.get('/recommendations/daily', headers=self.headers)
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(provider.call_args.kwargs['seed_tracks'])
+        self.assertIsNone(provider.call_args.kwargs['seed_artists'])
+        self.assertNotIn('wrong', response.text)
