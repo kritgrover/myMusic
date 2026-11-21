@@ -68,7 +68,8 @@ class TrackPlaybackHelper {
         track.artist,
         album: track.album,
         duration: track.duration,
-        spotifyId: ApiService.spotifyTrackId(track.url, id: track.id),
+        spotifyId: track.spotifyId ??
+            ApiService.spotifyTrackId(track.url, id: track.id),
       );
 
   /// Play a single track immediately (replaces the queue with just this track).
@@ -82,14 +83,7 @@ class TrackPlaybackHelper {
       }
       if (track.filename.isNotEmpty) {
         queueService.clearQueue();
-        await queueService.addAndPlay(
-            QueueItem.fromDownloadedFile(
-              filename: track.filename,
-              title: track.title,
-              artist: track.artist,
-              album: track.album,
-            ),
-            playerStateService);
+        await queueService.addAndPlay(_queueItem(track), playerStateService);
         return;
       }
       final yt = await _resolve(track);
@@ -108,7 +102,8 @@ class TrackPlaybackHelper {
         artist: track.artist ?? result.artist,
         album: track.album,
         duration: track.duration,
-        spotifyId: ApiService.spotifyTrackId(track.url, id: track.id),
+        spotifyId: track.spotifyId ??
+            ApiService.spotifyTrackId(track.url, id: track.id),
         url: result.streamingUrl,
         originalUrl: yt,
         thumbnail: track.thumbnail,
@@ -126,12 +121,7 @@ class TrackPlaybackHelper {
     try {
       final items = tracks
           .map((t) => t.filename.isNotEmpty
-              ? QueueItem.fromDownloadedFile(
-                  filename: t.filename,
-                  title: t.title,
-                  artist: t.artist,
-                  album: t.album,
-                )
+              ? _queueItem(t)
               : QueueItem.fromPlaylistTrackLazy(
                   trackId: t.id,
                   title: t.title,
@@ -140,6 +130,7 @@ class TrackPlaybackHelper {
                   album: t.album,
                   thumbnail: t.thumbnail,
                   duration: t.duration,
+                  spotifyId: t.spotifyId,
                 ))
           .toList();
       queueService.clearQueue();
@@ -164,12 +155,7 @@ class TrackPlaybackHelper {
         return;
       }
       if (track.filename.isNotEmpty) {
-        queueService.addToQueue(QueueItem.fromDownloadedFile(
-          filename: track.filename,
-          title: track.title,
-          artist: track.artist,
-          album: track.album,
-        ));
+        queueService.addToQueue(_queueItem(track));
         if (showSnackbar && context.mounted) {
           _info(context, 'Added "${track.title}" to queue');
         }
@@ -191,7 +177,8 @@ class TrackPlaybackHelper {
         artist: track.artist ?? result.artist,
         album: track.album,
         duration: track.duration,
-        spotifyId: ApiService.spotifyTrackId(track.url, id: track.id),
+        spotifyId: track.spotifyId ??
+            ApiService.spotifyTrackId(track.url, id: track.id),
         url: result.streamingUrl,
         originalUrl: yt,
         thumbnail: track.thumbnail,
@@ -246,7 +233,8 @@ class TrackPlaybackHelper {
         album: track.album ?? '',
         outputFormat: 'm4a',
         embedThumbnail: true,
-        spotifyId: ApiService.spotifyTrackId(track.url, id: track.id),
+        spotifyId: track.spotifyId ??
+            ApiService.spotifyTrackId(track.url, id: track.id),
       );
       if (context.mounted) {
         Navigator.of(context, rootNavigator: true).pop();
@@ -266,10 +254,11 @@ class TrackPlaybackHelper {
         artist: track.artist,
         album: track.album,
         filename: track.filename.isEmpty ? null : track.filename,
-        originalUrl: track.url,
+        originalUrl: track.url?.isNotEmpty == true ? track.url : null,
         thumbnail: track.thumbnail,
         duration: track.duration,
-        spotifyId: ApiService.spotifyTrackId(track.url, id: track.id),
+        spotifyId: track.spotifyId ??
+            ApiService.spotifyTrackId(track.url, id: track.id),
       );
 
   Future<void> addToPlaylist(BuildContext context, PlaylistTrack track) async {
@@ -281,6 +270,7 @@ class TrackPlaybackHelper {
       }
       final playlistTrack = PlaylistTrack(
         id: track.id,
+        spotifyId: track.spotifyId,
         title: track.title,
         artist: track.artist,
         album: track.album,

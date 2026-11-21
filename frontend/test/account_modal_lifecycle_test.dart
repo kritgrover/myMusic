@@ -36,6 +36,71 @@ void main() {
         .setMockMethodCallHandler(sessionMethods, null);
   });
 
+  testWidgets('home saves discovery choices and refreshes its recommendations',
+      (tester) async {
+    var preferences = <String, dynamic>{
+      'mode': 'balanced',
+      'autoplay': false,
+      'onboarding_completed': false,
+      'seed_artists': <dynamic>[],
+    };
+    var recommendationLoads = 0;
+    await http.runWithClient(() async {
+      await tester.pumpWidget(const app.MyApp());
+      await tester.pumpAndSettle();
+      expect(find.text('Make it yours'), findsOneWidget);
+      expect(find.text('Choose artists'), findsOneWidget);
+      final before = recommendationLoads;
+      await tester.tap(find.widgetWithText(ChoiceChip, 'Discover'));
+      await tester.pumpAndSettle();
+      expect(preferences['mode'], 'discover');
+      expect(recommendationLoads, greaterThan(before));
+      expect(
+          tester
+              .widget<ChoiceChip>(find.widgetWithText(ChoiceChip, 'Discover'))
+              .selected,
+          isTrue);
+      await tester.tap(find.byType(SwitchListTile));
+      await tester.pumpAndSettle();
+      expect(preferences['autoplay'], isTrue);
+      expect(preferences['mode'], 'discover');
+      await tester.tap(find.text('Choose artists'));
+      await tester.pumpAndSettle();
+      expect(find.byType(AlertDialog), findsOneWidget);
+      final auth =
+          tester.widget<HomeScreen>(find.byType(HomeScreen)).authService;
+      await auth.logout();
+      await tester.pumpAndSettle();
+      expect(find.byType(LoginScreen), findsOneWidget);
+      expect(find.byType(AlertDialog), findsNothing);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+      await tester.pumpAndSettle();
+    },
+        () => MockClient((request) async {
+              if (request.url.path == '/auth/me') {
+                return http.Response(
+                    '{"id":1,"username":"Listener","tagline":""}', 200);
+              }
+              if (request.url.path == '/discovery/preferences') {
+                if (request.method == 'PATCH') {
+                  preferences = {
+                    ...preferences,
+                    ...jsonDecode(request.body) as Map<String, dynamic>
+                  };
+                }
+                return http.Response(jsonEncode(preferences), 200);
+              }
+              if (request.url.path == '/discovery/feedback') {
+                return http.Response('{"feedback":[]}', 200);
+              }
+              if (request.url.path == '/recommendations/daily') {
+                recommendationLoads++;
+              }
+              return http.Response('{"detail":"Offline fixture"}', 503);
+            }));
+  });
+
   for (final invalidated in [false, true]) {
     testWidgets(
         'account playback sheet is removed after ${invalidated ? 'auth invalidation' : 'logout'}',

@@ -37,6 +37,14 @@ class Database:
         ''')
         self._ensure_column(cursor, "users", "tagline", "TEXT")
 
+        cursor.execute('''CREATE TABLE IF NOT EXISTS discovery_preferences (
+            user_id INTEGER PRIMARY KEY, data TEXT NOT NULL,
+            FOREIGN KEY(user_id) REFERENCES users(id))''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS discovery_feedback (
+            id TEXT PRIMARY KEY, user_id INTEGER NOT NULL, track_key TEXT NOT NULL,
+            track TEXT NOT NULL, created_at TEXT NOT NULL,
+            UNIQUE(user_id, track_key), FOREIGN KEY(user_id) REFERENCES users(id))''')
+
         # History table
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS history (
@@ -1166,6 +1174,46 @@ class Database:
             cursor.execute('UPDATE playlists SET updated_at = ? WHERE id = ?', (now, playlist_id))
         conn.commit()
         conn.close()
+
+    def get_discovery_preferences(self, user_id):
+        from discovery_preferences import default_preferences
+        with closing(self.get_connection()) as conn:
+            row = conn.execute('SELECT data FROM discovery_preferences WHERE user_id=?', (user_id,)).fetchone()
+            return {**default_preferences(), **(json.loads(row['data']) if row else {})}
+
+    def update_discovery_preferences(self, user_id, changes):
+        from discovery_preferences import default_preferences
+        with closing(self.get_connection()) as conn, conn:
+            conn.execute('BEGIN IMMEDIATE')
+            row = conn.execute('SELECT data FROM discovery_preferences WHERE user_id=?', (user_id,)).fetchone()
+            result = {**default_preferences(), **(json.loads(row['data']) if row else {}), **changes}
+            conn.execute('INSERT INTO discovery_preferences(user_id,data) VALUES(?,?) '
+                         'ON CONFLICT(user_id) DO UPDATE SET data=excluded.data', (user_id, json.dumps(result)))
+            return result
+
+    def get_discovery_feedback(self, user_id):
+        with closing(self.get_connection()) as conn:
+            return [{'feedback_id': row['id'], 'track': json.loads(row['track'])} for row in
+                    conn.execute('SELECT id,track FROM discovery_feedback WHERE user_id=? ORDER BY created_at DESC,id', (user_id,))]
+
+    def add_discovery_feedback(self, user_id, key, track):
+        with closing(self.get_connection()) as conn, conn:
+            conn.execute('BEGIN IMMEDIATE')
+            existing = conn.execute('SELECT id FROM discovery_feedback WHERE user_id=? AND track_key=?', (user_id, key)).fetchone()
+            if existing:
+                return existing['id']
+            count = conn.execute('SELECT COUNT(*) FROM discovery_feedback WHERE user_id=?', (user_id,)).fetchone()[0]
+            if count >= 5000:
+                raise ValueError('Remove an earlier discovery preference before adding another.')
+            identity = uuid.uuid4().hex
+            conn.execute('INSERT INTO discovery_feedback(id,user_id,track_key,track,created_at) VALUES(?,?,?,?,?)',
+                         (identity, user_id, key, json.dumps(track), datetime.now(timezone.utc).isoformat()))
+            return identity
+
+    def delete_discovery_feedback(self, user_id, identity):
+        with closing(self.get_connection()) as conn, conn:
+            cursor = conn.execute('DELETE FROM discovery_feedback WHERE id=? AND user_id=?', (identity, user_id))
+            return cursor.rowcount > 0
 
 db = Database()
 

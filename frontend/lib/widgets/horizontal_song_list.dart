@@ -5,6 +5,7 @@ import '../utils/responsive_utils.dart';
 import '../services/api_service.dart'; // For VideoInfo
 import 'section_header.dart';
 import 'album_cover.dart';
+import 'discovery_actions.dart';
 
 class HorizontalSongList extends StatelessWidget {
   final String title;
@@ -30,12 +31,18 @@ class HorizontalSongList extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (songs.isEmpty) return const SizedBox.shrink();
+    final visibleSongs = songs
+        .where((song) =>
+            !recommendationHidden(context, PlaylistTrack.fromVideoInfo(song)))
+        .toList();
+    if (visibleSongs.isEmpty) return const SizedBox.shrink();
 
-    final displayedSongs =
-        songs.length > maxItems ? songs.sublist(0, maxItems) : songs;
-    final showAll =
-        (onShowAll != null && songs.length > maxItems) ? onShowAll : null;
+    final displayedSongs = visibleSongs.length > maxItems
+        ? visibleSongs.sublist(0, maxItems)
+        : visibleSongs;
+    final showAll = (onShowAll != null && visibleSongs.length > maxItems)
+        ? onShowAll
+        : null;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -205,6 +212,8 @@ class _SongCardState extends State<_SongCard> {
                           style: IconButton.styleFrom(
                               tapTargetSize: MaterialTapTargetSize.shrinkWrap),
                         ),
+                      DiscoveryTrackMenu(
+                          track: PlaylistTrack.fromVideoInfo(widget.song)),
                     ],
                   ),
                 ),

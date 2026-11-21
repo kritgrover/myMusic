@@ -37,6 +37,7 @@ List<PlaylistTrack> matchPlaylistDownloads(
       url: track.url,
       thumbnail: track.thumbnail,
       duration: track.duration,
+      spotifyId: track.spotifyId,
     );
   }).toList();
 }

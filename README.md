@@ -334,6 +334,34 @@ be owned. Signed media links and credential-bearing metadata are rejected.
 
 ### Listening history and recommendation ranking
 
+Home's **Make it yours** controls save per account. **Familiar** favors known
+music, **Balanced** mixes unfamiliar and familiar songs, and **Discover** gives
+unheard songs priority. Recent listening is down-ranked over 2, 7, or 14 days
+respectively; artist variety increases toward Discover. Sparse libraries can
+still show repeat artists when alternatives are unavailable. **Your Rotation**
+remains a familiar shelf, distinct from the discovery selections.
+
+New listeners can choose up to five artists, or skip and return later. These
+choices seed discovery without changing followed artists. The selected artists
+rotate through the catalog's seed slots over successive days. Artist search needs
+the Spotify catalog; local library recommendations remain available when the
+catalog cannot be reached.
+
+Song menus include **Less like this**, which excludes that recording from
+recommendations and gently reduces the artist's ranking. It leaves saved music
+and playlists intact. Undo immediately from the confirmation, or later from
+**Hidden recommendations** on Home. Feedback and discovery settings persist
+on the server and are isolated by account.
+
+**Start song radio** builds a queue beginning with the selected song and up to
+20 related tracks. Failed or empty lookups preserve the current queue. Enable
+**Keep the music going** to append suggestions after the queue naturally ends;
+this setting is off by default and repeat modes take precedence. Manual Next
+does not trigger it. Queue changes, account changes, or cancelling playback
+invalidate pending radio work. Radio excludes the seed, current queue and recent
+radio selections; a full queue is left intact. During a catalog outage, radio
+can use other songs by the seed artist already in the account's library.
+
 The player measures elapsed time while audio is playing and ready, excluding
 paused/buffering time and seek jumps. It reports cumulative progress every five
 seconds and on pause or track completion/change. Each playback occurrence has
@@ -505,6 +533,11 @@ CLIENT_SECRET=your_client_secret
 | GET | `/recommendations/genre/{genre}` | Get tracks for a specific genre |
 | GET | `/recommendations/genres` | Get list of available genres |
 | GET | `/recommendations/browse/new-releases` | Get new album releases |
+| GET/PATCH | `/discovery/preferences` | Read or partially update account discovery choices |
+| GET | `/discovery/artists?q=...` | Search artists for discovery setup |
+| GET/POST | `/discovery/feedback` | List hidden recordings or save `less_like_this` feedback |
+| DELETE | `/discovery/feedback/{feedback_id}` | Undo the account's feedback |
+| POST | `/discovery/radio` | Find related tracks for a seed, excluding up to 100 tracks |
 
 ### Lyrics Endpoints
 | Method | Endpoint | Description |

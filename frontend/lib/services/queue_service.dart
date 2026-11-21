@@ -32,11 +32,14 @@ class QueueService extends ChangeNotifier {
   _QueueEntry? _currentEntry;
   _QueueEntry? _lastPlayedEntry;
   PlayerStateService? _pendingPlayer;
+  bool Function()? _pendingPlaybackGuard;
+  int? _pendingPlaybackRevision;
   LoopMode _loopMode = LoopMode.none;
   bool _isShuffled = false;
   bool _isTransitioning = false;
   bool _disposed = false;
   int _playRequest = 0;
+  int _revision = 0;
   PlayerStateService? _connectedPlayer;
   Future<String?> Function(QueueItem)? _connectedLoader;
   StreamSubscription<Object>? _handoffSubscription;
@@ -65,6 +68,40 @@ class QueueService extends ChangeNotifier {
   bool get isShuffled => _isShuffled;
   bool get isTransitioning => _isTransitioning;
   Duration get crossfadeDuration => _crossfadeDuration;
+
+  /// Includes queue edits and playback intents, even Next at the queue's end.
+  /// Async recommendation work must not overwrite a newer listener action.
+  int get revision => _revision;
+
+  @override
+  void notifyListeners() {
+    _revision++;
+    super.notifyListeners();
+  }
+
+  bool ownsCurrentPlayback(PlayerStateService player) =>
+      _playingCurrent(player);
+
+  /// Cancels only the caller's guarded transition. A newer queue selection or
+  /// direct player intent owns its own preparation and must remain untouched.
+  void cancelGuardedPlayback(bool Function() guard) {
+    if (_disposed ||
+        !_isTransitioning ||
+        !identical(guard, _pendingPlaybackGuard)) {
+      return;
+    }
+    final player = _pendingPlayer;
+    if (player != null && player.playbackRevision == _pendingPlaybackRevision) {
+      player.cancelPendingPlayback();
+    }
+    ++_playRequest;
+    _pendingPlayer = null;
+    _pendingPlaybackGuard = null;
+    _pendingPlaybackRevision = null;
+    _isTransitioning = false;
+    _currentEntry = _queue.contains(_lastPlayedEntry) ? _lastPlayedEntry : null;
+    notifyListeners();
+  }
 
   // Scheduled audio can cross its clock boundary between UI frames. Commit
   // that transition before an edit invalidates the token or reuses an index.
@@ -429,6 +466,8 @@ class QueueService extends ChangeNotifier {
         .toList();
     _pendingPlayer?.cancelPendingPlayback();
     _pendingPlayer = null;
+    _pendingPlaybackGuard = null;
+    _pendingPlaybackRevision = null;
     ++_playRequest;
     _isTransitioning = false;
     _queue
@@ -494,6 +533,8 @@ class QueueService extends ChangeNotifier {
     _synchronizePlayback();
     _pendingPlayer?.cancelPendingPlayback();
     _pendingPlayer = null;
+    _pendingPlaybackGuard = null;
+    _pendingPlaybackRevision = null;
     ++_playRequest;
     _isTransitioning = false;
     _queue.clear();
@@ -582,6 +623,7 @@ class QueueService extends ChangeNotifier {
     Future<String?> Function(QueueItem)? loadStreamingUrl,
     bool isAutomatic = false,
   }) async {
+    if (!isAutomatic) _revision++;
     _synchronizePlayback();
     if (_isTransitioning) return;
     if (isAutomatic &&
@@ -599,6 +641,7 @@ class QueueService extends ChangeNotifier {
     PlayerStateService playerService, {
     Future<String?> Function(QueueItem)? loadStreamingUrl,
   }) async {
+    _revision++;
     _synchronizePlayback();
     if (_isTransitioning) return;
     if (currentItem != null &&
@@ -619,30 +662,52 @@ class QueueService extends ChangeNotifier {
     int index,
     PlayerStateService playerService, {
     Future<String?> Function(QueueItem)? loadStreamingUrl,
+    bool Function()? canStartPlayback,
   }) async {
     _synchronizePlayback();
     if (index < 0 || index >= _queue.length) return;
     await _playEntry(_queue[index], playerService,
-        loadStreamingUrl: loadStreamingUrl);
+        loadStreamingUrl: loadStreamingUrl, canStartPlayback: canStartPlayback);
   }
 
   Future<void> _playEntry(
     _QueueEntry entry,
     PlayerStateService playerService, {
     Future<String?> Function(QueueItem)? loadStreamingUrl,
+    bool Function()? canStartPlayback,
   }) async {
     _pendingPlayer?.cancelPendingPlayback();
     _pendingPlayer = playerService;
+    _pendingPlaybackGuard = canStartPlayback;
     final request = ++_playRequest;
     _isTransitioning = true;
     _currentEntry = entry;
     notifyListeners();
+    final queueRevision = _revision;
+    var playbackRevision =
+        canStartPlayback == null ? null : playerService.playbackRevision;
+    _pendingPlaybackRevision = playbackRevision;
+    bool canContinue() {
+      if (_disposed || request != _playRequest || !_queue.contains(entry)) {
+        return false;
+      }
+      if (canStartPlayback == null ||
+          (canStartPlayback() &&
+              _revision == queueRevision &&
+              playerService.playbackRevision == playbackRevision)) {
+        return true;
+      }
+      // A cancelled radio lookup must not leave its pending song selected.
+      _currentEntry =
+          _queue.contains(_lastPlayedEntry) ? _lastPlayedEntry : null;
+      return false;
+    }
+
     try {
+      if (!canContinue()) return;
       if (_localTrackResolver != null) {
         final local = await _localTrackResolver!(entry.item);
-        if (_disposed || request != _playRequest || !_queue.contains(entry)) {
-          return;
-        }
+        if (!canContinue()) return;
         if (local != null) entry.item = local;
       }
       final loader = loadStreamingUrl ?? entry.loader ?? _connectedLoader;
@@ -653,12 +718,10 @@ class QueueService extends ChangeNotifier {
           loader != null) {
         streamingUrl = await loader(entry.item);
       }
-      if (_disposed || request != _playRequest || !_queue.contains(entry)) {
-        return;
-      }
+      if (!canContinue()) return;
       if (streamingUrl != null && streamingUrl.isNotEmpty) {
         entry.item = entry.item.copyWithStreamingUrl(streamingUrl);
-        await playerService.streamTrack(
+        final playback = playerService.streamTrack(
           streamingUrl,
           trackName: entry.item.title,
           trackArtist: entry.item.artist,
@@ -668,9 +731,14 @@ class QueueService extends ChangeNotifier {
           url: entry.item.originalUrl,
           skipRecentlyPlayed: entry.skipRecentlyPlayed,
         );
+        if (canStartPlayback != null) {
+          playbackRevision = playerService.playbackRevision;
+          _pendingPlaybackRevision = playbackRevision;
+        }
+        await playback;
       } else if (entry.item.filename != null &&
           entry.item.filename!.isNotEmpty) {
-        await playerService.playTrack(
+        final playback = playerService.playTrack(
           entry.item.filename!,
           trackName: entry.item.title,
           trackArtist: entry.item.artist,
@@ -680,10 +748,16 @@ class QueueService extends ChangeNotifier {
           url: entry.item.originalUrl,
           skipRecentlyPlayed: entry.skipRecentlyPlayed,
         );
+        if (canStartPlayback != null) {
+          playbackRevision = playerService.playbackRevision;
+          _pendingPlaybackRevision = playbackRevision;
+        }
+        await playback;
       } else {
         throw StateError(
             'Could not find audio for "${entry.item.displayTitle}". Try another track.');
       }
+      if (canStartPlayback != null && !canContinue()) return;
       if (!_disposed && request == _playRequest) {
         if (_connectedPlayer == null) _refreshRecoveredDownload(playerService);
         _lastPlayedEntry = entry;
@@ -693,7 +767,7 @@ class QueueService extends ChangeNotifier {
         }
       }
     } catch (_) {
-      if (_disposed || request != _playRequest) return;
+      if (!canContinue()) return;
       _currentEntry =
           _queue.contains(_lastPlayedEntry) ? _lastPlayedEntry : null;
       rethrow;
@@ -701,6 +775,8 @@ class QueueService extends ChangeNotifier {
       if (!_disposed && request == _playRequest) {
         _isTransitioning = false;
         _pendingPlayer = null;
+        _pendingPlaybackGuard = null;
+        _pendingPlaybackRevision = null;
         notifyListeners();
       }
     }
@@ -761,8 +837,11 @@ class QueueService extends ChangeNotifier {
     removeListener(_syncScheduledNext);
     _pendingPlayer?.cancelPendingPlayback();
     _pendingPlayer = null;
+    _pendingPlaybackGuard = null;
+    _pendingPlaybackRevision = null;
     _disposed = true;
     ++_playRequest;
+    ++_revision;
     super.dispose();
   }
 }

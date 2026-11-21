@@ -29,6 +29,10 @@ import '../services/recently_played_service.dart';
 import '../models/queue_item.dart';
 import '../models/playlist.dart';
 import '../services/recommendation_service.dart';
+import '../services/discovery_service.dart';
+import '../services/song_radio_service.dart';
+import '../widgets/discovery_actions.dart';
+import '../widgets/discovery_controls.dart';
 import '../services/auth_service.dart';
 import '../services/unified_search_controller.dart';
 import '../services/auth_http_client.dart';
@@ -100,6 +104,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   late final RecentlyPlayedService _recentlyPlayedService;
   late final PlayerStateService _playerStateService;
   late final PlaybackSessionService _playbackSession;
+  late final DiscoveryService _discoveryService;
+  late final SongRadioService _songRadio;
   late final Future<void> _offlineReady;
   final QueueService _queueService = QueueService(
       localTrackResolver: OfflineDownloadService.shared.localQueueItemFor);
@@ -215,6 +221,21 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         player: _playerStateService);
     _queueService.connectPlayback(_playerStateService,
         loadStreamingUrl: _loadStreamingUrlForAlbumItem);
+    _discoveryService = DiscoveryService();
+    _songRadio = SongRadioService(
+      queue: _queueService,
+      player: _playerStateService,
+      fetchRadio: (seed, exclude) async =>
+          (await _discoveryService.radio(seed, exclude: exclude))
+              .tracks
+              .where((track) => !_discoveryService.isHidden(track))
+              .toList(),
+      loadStreamingUrl: _loadStreamingUrlForAlbumItem,
+      isSessionCurrent: () => _discoveryService.isCurrent,
+      requestTimeout: const Duration(seconds: 40),
+    );
+    _discoveryService.addListener(_onDiscoveryChanged);
+    unawaited(_discoveryService.load());
     MobileAudioHandler.instance?.attach(_playerStateService, _queueService,
         loadStreamingUrl: _loadStreamingUrlForAlbumItem);
     unawaited(_restorePlaybackSession());
@@ -240,6 +261,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               );
             }
           });
+        } else {
+          unawaited(_continueWithRadio());
         }
       }
     });
@@ -389,6 +412,67 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       _fetchRecommendations(),
       _loadSidebarPlaylists()
     ]);
+  }
+
+  void _onDiscoveryChanged() {
+    _songRadio.setAutoplayEnabled(_discoveryService.preferences.autoplay);
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _startSongRadio(QueueItem seed) async {
+    final started = await _songRadio.startRadio(seed);
+    if (!mounted || !_discoveryService.isCurrent) return;
+    final message = started
+        ? 'Playing radio from ${seed.title ?? 'this song'}'
+        : _songRadio.message;
+    if (message != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(message)),
+      );
+    }
+  }
+
+  Future<void> _continueWithRadio() async {
+    await _songRadio.onQueueCompleted();
+    if (!mounted || !_discoveryService.isCurrent) return;
+    final message = _songRadio.message;
+    if (message != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(message)),
+      );
+    }
+  }
+
+  Future<void> _lessLikeThis(QueueItem track) async {
+    try {
+      final feedbackId = await _discoveryService.lessLikeThis(track);
+      if (!mounted || !_discoveryService.isCurrent) return;
+      unawaited(_refreshHome());
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: const Text('We’ll recommend fewer songs like this.'),
+        action: SnackBarAction(
+          label: 'Undo',
+          onPressed: () => unawaited(_undoDiscoveryFeedback(feedbackId)),
+        ),
+      ));
+    } catch (_) {
+      if (!mounted || !_discoveryService.isCurrent) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Could not save your feedback. Please try again.'),
+      ));
+    }
+  }
+
+  Future<void> _undoDiscoveryFeedback(String feedbackId) async {
+    try {
+      await _discoveryService.undoFeedback(feedbackId);
+      if (mounted && _discoveryService.isCurrent) await _refreshHome();
+    } catch (_) {
+      if (!mounted || !_discoveryService.isCurrent) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Could not undo your feedback. Please try again.'),
+      ));
+    }
   }
 
   // Navigation helpers for the new shelves
@@ -874,6 +958,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             _buildGreetingHeader(),
+            DiscoveryControls(
+              service: _discoveryService,
+              onChanged: _refreshHome,
+            ),
             ListenableBuilder(
               listenable: _recommendationService,
               builder: (context, _) {
@@ -1535,7 +1623,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 album: track.album,
                 thumbnail: track.thumbnail,
                 duration: track.duration,
-                spotifyId: ApiService.spotifyTrackId(track.url),
+                spotifyId:
+                    track.spotifyId ?? ApiService.spotifyTrackId(track.url),
               ))
           .toList();
 
@@ -2103,6 +2192,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           title: video.title,
           artist: video.uploader,
           album: video.album,
+          spotifyId: video.spotifyId ??
+              ApiService.spotifyTrackId(video.url, id: video.id),
+          duration: video.duration,
           filename: video.filename,
           originalUrl: video.url.isEmpty ? null : video.url,
           thumbnail: video.thumbnail);
@@ -2118,6 +2210,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         title: video.title,
         artist: video.uploader,
         album: video.album,
+        spotifyId: video.spotifyId ??
+            ApiService.spotifyTrackId(video.url, id: video.id),
+        duration: video.duration,
         url: result.streamingUrl,
         originalUrl: resolved.url,
         thumbnail: video.thumbnail);
@@ -2296,11 +2391,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         video.uploader,
         album: video.album,
         duration: video.duration,
-        spotifyId: ApiService.spotifyTrackId(video.url),
+        spotifyId: video.spotifyId ??
+            ApiService.spotifyTrackId(video.url, id: video.id),
       );
       if (youtubeUrl == null || youtubeUrl.isEmpty) return null;
       return VideoInfo(
         id: video.id,
+        spotifyId: video.spotifyId,
         title: video.title,
         uploader: video.uploader,
         duration: video.duration,
@@ -2607,207 +2704,223 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final wideQueue = MediaQuery.sizeOf(context).width >= 1100;
     final interceptBack = _showNowPlaying || _showLyrics || _showQueuePanel;
 
-    return CallbackShortcuts(
-      bindings: {
-        const SingleActivator(LogicalKeyboardKey.keyK, control: true): () {
-          _onSearchTap();
-          _searchFocusNode.requestFocus();
+    return DiscoveryActionScope(
+      onStartRadio: (track) => unawaited(_startSongRadio(track)),
+      onLessLikeThis: (track) => unawaited(_lessLikeThis(track)),
+      isHidden: (track) => _discoveryService.isHidden(track),
+      child: CallbackShortcuts(
+        bindings: {
+          const SingleActivator(LogicalKeyboardKey.keyK, control: true): () {
+            _onSearchTap();
+            _searchFocusNode.requestFocus();
+          },
+          const SingleActivator(LogicalKeyboardKey.keyK, meta: true): () {
+            _onSearchTap();
+            _searchFocusNode.requestFocus();
+          },
         },
-        const SingleActivator(LogicalKeyboardKey.keyK, meta: true): () {
-          _onSearchTap();
-          _searchFocusNode.requestFocus();
-        },
-      },
-      child: PopScope<Object?>(
-        canPop: !interceptBack,
-        onPopInvokedWithResult: (didPop, _) {
-          if (didPop || !interceptBack) return;
-          setState(() {
-            if (_showNowPlaying) {
-              _showNowPlaying = false;
-            } else {
-              _showLyrics = false;
-              _showQueuePanel = false;
-            }
-          });
-        },
-        child: Stack(fit: StackFit.expand, children: [
-          Scaffold(
-            body: SafeArea(
-              bottom: false,
-              child: Column(
-                children: [
-                  Expanded(
-                    child: Row(
-                      children: [
-                        // Persistent sidebar (medium/expanded only)
-                        if (!compact)
-                          SizedBox(
-                            width: expandedSidebar ? 220 : 72,
-                            child: AppSidebar(
-                              selectedIndex: _currentIndex,
-                              onSelect: _onNavDestinationSelected,
-                              expanded: expandedSidebar,
-                              playlists: _sidebarPlaylists,
-                              onOpenPlaylist: _openLibraryPlaylist,
-                              onCreate: _showCreateOrImportMenu,
-                              onLikedSongs: _openLikedSongs,
-                            ),
-                          ),
-                        // Top bar + current destination
-                        Expanded(
-                          child: Column(
-                            children: [
-                              AppTopBar(
-                                searchController: _searchController,
-                                searchFocusNode: _searchFocusNode,
-                                onSearchTap: _onSearchTap,
-                                onSearchSubmitted: _onSearchSubmitted,
-                                onSearchChanged: _onSearchChanged,
-                                username: widget.authService.username,
-                                onProfile: _openProfile,
-                                onFriends: _openFriends,
-                                onLogout: () async {
-                                  MobileAudioHandler.instance
-                                      ?.detach(_playerStateService);
-                                  _playerStateService.cancelPendingPlayback();
-                                  await _playerStateService
-                                      .finishListeningSession();
-                                  await _playbackSession.flush();
-                                  await widget.authService.logout();
-                                },
+        child: PopScope<Object?>(
+          canPop: !interceptBack,
+          onPopInvokedWithResult: (didPop, _) {
+            if (didPop || !interceptBack) return;
+            setState(() {
+              if (_showNowPlaying) {
+                _showNowPlaying = false;
+              } else {
+                _showLyrics = false;
+                _showQueuePanel = false;
+              }
+            });
+          },
+          child: Stack(fit: StackFit.expand, children: [
+            Scaffold(
+              body: SafeArea(
+                bottom: false,
+                child: Column(
+                  children: [
+                    Expanded(
+                      child: Row(
+                        children: [
+                          // Persistent sidebar (medium/expanded only)
+                          if (!compact)
+                            SizedBox(
+                              width: expandedSidebar ? 220 : 72,
+                              child: AppSidebar(
+                                selectedIndex: _currentIndex,
+                                onSelect: _onNavDestinationSelected,
+                                expanded: expandedSidebar,
+                                playlists: _sidebarPlaylists,
+                                onOpenPlaylist: _openLibraryPlaylist,
+                                onCreate: _showCreateOrImportMenu,
+                                onLikedSongs: _openLikedSongs,
                               ),
-                              Expanded(
-                                // Nested routes block earlier semantics inside their
-                                // container. Keep the persistent search/sidebar outside
-                                // that boundary so screen readers can still reach them.
-                                child: Semantics(
-                                  container: true,
-                                  explicitChildNodes: true,
-                                  child: Stack(
-                                    children: [
-                                      // Nested navigator for the content pane. Its root page
-                                      // is the current destination (opaque + interactive, and
-                                      // rebuilt each frame via the pages API); secondary
-                                      // screens are pushed on top imperatively via _open*.
-                                      Positioned.fill(
-                                        child: NavigatorPopHandler<Object?>(
-                                          onPopWithResult: (result) {
-                                            final navigator =
-                                                _contentNavigatorKey
-                                                    .currentState;
-                                            if (!interceptBack &&
-                                                navigator?.canPop() == true) {
-                                              navigator!.pop(result);
-                                            }
-                                          },
-                                          child: Navigator(
-                                            key: _contentNavigatorKey,
-                                            observers: [_contentNavObserver],
-                                            pages: [
-                                              MaterialPage(
-                                                key: const ValueKey(
-                                                    'content-root'),
-                                                child: _buildCurrentScreen(),
-                                              ),
-                                            ],
-                                            onPopPage: (route, result) =>
-                                                route.didPop(result),
+                            ),
+                          // Top bar + current destination
+                          Expanded(
+                            child: Column(
+                              children: [
+                                AppTopBar(
+                                  searchController: _searchController,
+                                  searchFocusNode: _searchFocusNode,
+                                  onSearchTap: _onSearchTap,
+                                  onSearchSubmitted: _onSearchSubmitted,
+                                  onSearchChanged: _onSearchChanged,
+                                  username: widget.authService.username,
+                                  onProfile: _openProfile,
+                                  onFriends: _openFriends,
+                                  onLogout: () async {
+                                    _songRadio.cancelPending();
+                                    MobileAudioHandler.instance
+                                        ?.detach(_playerStateService);
+                                    _playerStateService.cancelPendingPlayback();
+                                    await _playerStateService
+                                        .finishListeningSession();
+                                    await _playbackSession.flush();
+                                    await widget.authService.logout();
+                                  },
+                                ),
+                                Expanded(
+                                  // Nested routes block earlier semantics inside their
+                                  // container. Keep the persistent search/sidebar outside
+                                  // that boundary so screen readers can still reach them.
+                                  child: Semantics(
+                                    container: true,
+                                    explicitChildNodes: true,
+                                    child: Stack(
+                                      children: [
+                                        // Nested navigator for the content pane. Its root page
+                                        // is the current destination (opaque + interactive, and
+                                        // rebuilt each frame via the pages API); secondary
+                                        // screens are pushed on top imperatively via _open*.
+                                        Positioned.fill(
+                                          child: NavigatorPopHandler<Object?>(
+                                            onPopWithResult: (result) {
+                                              final navigator =
+                                                  _contentNavigatorKey
+                                                      .currentState;
+                                              if (!interceptBack &&
+                                                  navigator?.canPop() == true) {
+                                                navigator!.pop(result);
+                                              }
+                                            },
+                                            child: Navigator(
+                                              key: _contentNavigatorKey,
+                                              observers: [_contentNavObserver],
+                                              pages: [
+                                                MaterialPage(
+                                                  key: const ValueKey(
+                                                      'content-root'),
+                                                  child: _buildCurrentScreen(),
+                                                ),
+                                              ],
+                                              onPopPage: (route, result) =>
+                                                  route.didPop(result),
+                                            ),
                                           ),
                                         ),
-                                      ),
-                                      // Lyrics overlay (above content + pushed screens).
-                                      if (_showLyrics &&
-                                          !compact &&
-                                          _playerStateService
-                                                  .currentTrackName !=
-                                              null)
-                                        Positioned.fill(
-                                            child: _buildLyricsOverlay()),
-                                      if (_showQueuePanel && !wideQueue) ...[
-                                        Positioned.fill(
-                                            child: ModalBarrier(
-                                          color: Colors.black54,
-                                          dismissible: true,
-                                          onDismiss: () => setState(
-                                              () => _showQueuePanel = false),
-                                        )),
-                                        Positioned.fill(
-                                            child: Align(
-                                          alignment: Alignment.centerRight,
-                                          child: _buildQueuePanel(),
-                                        )),
+                                        // Lyrics overlay (above content + pushed screens).
+                                        if (_showLyrics &&
+                                            !compact &&
+                                            _playerStateService
+                                                    .currentTrackName !=
+                                                null)
+                                          Positioned.fill(
+                                              child: _buildLyricsOverlay()),
+                                        if (_showQueuePanel && !wideQueue) ...[
+                                          Positioned.fill(
+                                              child: ModalBarrier(
+                                            color: Colors.black54,
+                                            dismissible: true,
+                                            onDismiss: () => setState(
+                                                () => _showQueuePanel = false),
+                                          )),
+                                          Positioned.fill(
+                                              child: Align(
+                                            alignment: Alignment.centerRight,
+                                            child: _buildQueuePanel(),
+                                          )),
+                                        ],
                                       ],
-                                    ],
+                                    ),
                                   ),
                                 ),
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
-                        ),
-                        // Queue panel (right side, above the player)
-                        if (_showQueuePanel && wideQueue) _buildQueuePanel(),
-                      ],
+                          // Queue panel (right side, above the player)
+                          if (_showQueuePanel && wideQueue) _buildQueuePanel(),
+                        ],
+                      ),
                     ),
-                  ),
-                  // CSV / download progress bars (full width, above the player)
-                  if (_csvProgress != null && _csvFilename != null)
-                    CsvProgressBar(
-                      processed: _csvProgress!.processed,
-                      notFound: _csvProgress!.notFound,
-                      total: _csvProgress!.total,
-                      status: _csvProgress!.status,
-                      progress: _csvProgress!.progress,
+                    // CSV / download progress bars (full width, above the player)
+                    if (_csvProgress != null && _csvFilename != null)
+                      CsvProgressBar(
+                        processed: _csvProgress!.processed,
+                        notFound: _csvProgress!.notFound,
+                        total: _csvProgress!.total,
+                        status: _csvProgress!.status,
+                        progress: _csvProgress!.progress,
+                      ),
+                    ServerDownloadPanel(service: _serverDownloads),
+                    // Persistent now-playing bar (full width). Listen to BOTH the player
+                    // state and the queue so track changes (e.g. Next) refresh the bar's
+                    // artwork/title even when only the queue's currentItem changed.
+                    ListenableBuilder(
+                      listenable: _songRadio,
+                      builder: (context, _) => _songRadio.busy
+                          ? const LinearProgressIndicator(
+                              semanticsLabel: 'Finding songs for your radio',
+                              minHeight: 2,
+                            )
+                          : const SizedBox.shrink(),
                     ),
-                  ServerDownloadPanel(service: _serverDownloads),
-                  // Persistent now-playing bar (full width). Listen to BOTH the player
-                  // state and the queue so track changes (e.g. Next) refresh the bar's
-                  // artwork/title even when only the queue's currentItem changed.
-                  ListenableBuilder(
-                    listenable:
-                        Listenable.merge([_playerStateService, _queueService]),
-                    builder: (context, _) {
-                      return BottomPlayer(
-                        playerService: _playerStateService.audioPlayer,
-                        currentTrackName: _playerStateService.currentTrackName,
-                        currentTrackArtist:
-                            _playerStateService.currentTrackArtist,
-                        queueService: _queueService,
-                        playerStateService: _playerStateService,
-                        padBottom: !compact,
-                        onOpenPlayer: _openNowPlaying,
-                        onQueueToggle: _toggleQueue,
-                        onLyricsToggle: _toggleLyrics,
-                        onDownload: _downloadCurrentTrack,
-                        onAddToPlaylist: _addCurrentTrackToPlaylist,
-                      );
-                    },
-                  ),
-                ],
+                    ListenableBuilder(
+                      listenable: Listenable.merge(
+                          [_playerStateService, _queueService]),
+                      builder: (context, _) {
+                        return BottomPlayer(
+                          playerService: _playerStateService.audioPlayer,
+                          currentTrackName:
+                              _playerStateService.currentTrackName,
+                          currentTrackArtist:
+                              _playerStateService.currentTrackArtist,
+                          queueService: _queueService,
+                          playerStateService: _playerStateService,
+                          padBottom: !compact,
+                          onOpenPlayer: _openNowPlaying,
+                          onQueueToggle: _toggleQueue,
+                          onLyricsToggle: _toggleLyrics,
+                          onDownload: _downloadCurrentTrack,
+                          onAddToPlaylist: _addCurrentTrackToPlaylist,
+                        );
+                      },
+                    ),
+                  ],
+                ),
               ),
+              bottomNavigationBar: compact && !keyboardVisible
+                  ? NavigationBar(
+                      selectedIndex: _currentIndex,
+                      onDestinationSelected: _onNavDestinationSelected,
+                      destinations: _navDestinations,
+                      labelBehavior:
+                          NavigationDestinationLabelBehavior.onlyShowSelected,
+                    )
+                  : null,
             ),
-            bottomNavigationBar: compact && !keyboardVisible
-                ? NavigationBar(
-                    selectedIndex: _currentIndex,
-                    onDestinationSelected: _onNavDestinationSelected,
-                    destinations: _navDestinations,
-                    labelBehavior:
-                        NavigationDestinationLabelBehavior.onlyShowSelected,
-                  )
-                : null,
-          ),
-          // Account-owned overlay: logout removes it together with the player.
-          if (compact &&
-              _showLyrics &&
-              _playerStateService.currentTrackName != null)
-            BlockSemantics(
-              child: Material(
-                color: Theme.of(context).scaffoldBackgroundColor,
-                child: SafeArea(child: _buildLyricsOverlay()),
+            // Account-owned overlay: logout removes it together with the player.
+            if (compact &&
+                _showLyrics &&
+                _playerStateService.currentTrackName != null)
+              BlockSemantics(
+                child: Material(
+                  color: Theme.of(context).scaffoldBackgroundColor,
+                  child: SafeArea(child: _buildLyricsOverlay()),
+                ),
               ),
-            ),
-          if (_showNowPlaying) BlockSemantics(child: _buildNowPlaying()),
-        ]),
+            if (_showNowPlaying) BlockSemantics(child: _buildNowPlaying()),
+          ]),
+        ),
       ),
     );
   }
@@ -2853,6 +2966,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _recentlyPlayedService.removeListener(_onRecentlyPlayedChanged);
     _playerStateService.removeListener(_onTrackChanged);
     _recommendationService.dispose();
+    _songRadio.dispose();
+    _discoveryService.removeListener(_onDiscoveryChanged);
+    _discoveryService.dispose();
     _queueService.dispose();
     _playerStateService.dispose();
     super.dispose();

@@ -31,6 +31,7 @@ from stream_cache import StreamCache
 from saved_library import normalize_item, validate_identity, clean_thumbnail
 from listening_history import validate_report
 from recommendation_ranking import ListeningPreferences, safe_track, available, normalized, recommendation_identity, merge_tracks, same_recommendation_recording
+import discovery_preferences as discovery_inputs
 from mutagen.mp4 import MP4
 from mutagen.easyid3 import EasyID3
 from mutagen.id3 import ID3, APIC
@@ -64,7 +65,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # Allow all origins for Flutter desktop/mobile apps
     allow_credentials=True,
-    allow_methods=["GET", "HEAD", "POST", "PUT", "DELETE", "OPTIONS"],  # Explicitly list allowed methods
+    allow_methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],  # Explicitly list allowed methods
     allow_headers=["Content-Type", "Authorization", "Range", "If-Range", "Accept"],  # Only needed headers
     expose_headers=["Content-Length", "Content-Range", "Accept-Ranges"],  # For streaming support
 )
@@ -1778,7 +1779,9 @@ def get_analytics_recap(request: Request, period: str = "weekly"):
 def _recommendation_context(request):
     user_id = _require_current_user(request)['id']
     library = get_saved_library(request)
-    preferences = ListeningPreferences(db.get_listening_signals(user_id), library)
+    preferences = ListeningPreferences(db.get_listening_signals(user_id), library,
+                                      settings=db.get_discovery_preferences(user_id),
+                                      feedback=db.get_discovery_feedback(user_id))
     filenames = db.owned_downloads(user_id)
 
     def owns_filename(filename):
@@ -1812,7 +1815,7 @@ def _recommendation_context(request):
     return user_id, library, preferences, local, clean
 
 
-def _recommendation_seeds(user_id, preferences):
+def _recommendation_seeds(user_id, preferences, shelf='daily'):
     tracks, artists, genre_weights = [], [], {}
     for track in preferences.top_tracks(limit=3):
         spotify_id = track.get('spotify_id')
@@ -1836,13 +1839,24 @@ def _recommendation_seeds(user_id, preferences):
             preferences.catalog_tracks.append({**info, 'spotify_id': info.get('id') or ''})
         if spotify_id and spotify_id not in tracks:
             tracks.append(spotify_id)
-    for artist in preferences.top_artists(limit=3):
+    # Supported catalog discovery searches two exact artists per request. Rotate
+    # explicit choices through those slots so all five matter, even when older
+    # listening history has much greater weight. Other shelves use a fresh pair.
+    chosen = preferences.seed_artists
+    if chosen:
+        offset = (datetime.now(timezone.utc).date().toordinal() + user_id +
+                  (2 if shelf == 'for-you' else 0)) % len(chosen)
+        chosen = (chosen[offset:] + chosen[:offset])[:2]
+    artist_pool = chosen + preferences.top_artists(limit=3)
+    for artist in artist_pool:
         artist_id = artist.get('id')
         if artist_id and artist_id not in artists:
             artists.append(artist_id)
             for genre in available(spotify_service.get_artist_genres, artist_id):
                 if isinstance(genre, str) and len(genre) <= 80:
                     genre_weights[genre] = genre_weights.get(genre, 0) + preferences.artists[normalized(artist['name'])]
+            if len(artists) >= 3:
+                break
     genres = sorted(genre_weights, key=lambda genre: (-genre_weights[genre], genre))[:5]
     db.set_cache(f'listening_genres:{user_id}', genres, ttl_seconds=3600)
     track_seeds, artist_seeds = tracks[:3], artists[:2]
@@ -1851,9 +1865,9 @@ def _recommendation_seeds(user_id, preferences):
             'seed_genres': genres[:remaining] or None}
 
 
-def _personalized_tracks(request, limit):
+def _personalized_tracks(request, limit, shelf='daily'):
     user_id, library, preferences, local, clean = _recommendation_context(request)
-    seeds = _recommendation_seeds(user_id, preferences)
+    seeds = _recommendation_seeds(user_id, preferences, shelf=shelf)
     # Rotation uses saved/played songs. Discovery searches a wider catalog pool
     # and prioritizes unheard recordings rather than re-ranking those favorites.
     candidates = available(spotify_service.get_recommendations, **seeds, limit=max(40, limit * 2))
@@ -1867,7 +1881,113 @@ def _personalized_tracks(request, limit):
     merged = merge_tracks(local + enriched + candidates)
     rotation = preferences.rotation(local)
     return preferences.discover(merged, limit=limit, exclude=rotation,
-                                day_seed=f'{user_id}:{datetime.now(timezone.utc).date().isoformat()}')
+                                day_seed=f'{user_id}:{datetime.now(timezone.utc).date().isoformat()}:{shelf}')
+
+
+@app.get('/discovery/preferences')
+def get_discovery_preferences(request: Request):
+    return db.get_discovery_preferences(_require_current_user(request)['id'])
+
+
+@app.patch('/discovery/preferences')
+def update_discovery_preferences(payload: Dict, request: Request):
+    changes = discovery_inputs.preference_patch(payload)
+    return db.update_discovery_preferences(_require_current_user(request)['id'], changes)
+
+
+@app.get('/discovery/artists')
+def search_discovery_artists(request: Request, q: str = ''):
+    _require_current_user(request)
+    query = discovery_inputs.text(q, 'artist search', 200, required=True)
+    if spotify_service.sp is None:
+        raise HTTPException(503, 'Artist search is unavailable. You can skip this step and choose artists later.')
+    try:
+        rows = spotify_service._search_items(query, 'artist', 10)
+        artists = []
+        for raw in rows:
+            formatted = spotify_service._format_artist(raw)
+            if formatted and formatted.get('id') and formatted.get('name'):
+                artists.append(discovery_inputs.artist({key: formatted.get(key) for key in ('id', 'name', 'thumbnail')}))
+        return {'artists': artists}
+    except Exception:
+        raise HTTPException(503, 'Artist search could not load. Please retry or choose artists later.') from None
+
+
+@app.get('/discovery/feedback')
+def get_discovery_feedback(request: Request):
+    return {'feedback': db.get_discovery_feedback(_require_current_user(request)['id'])}
+
+
+@app.post('/discovery/feedback')
+def add_discovery_feedback(payload: Dict, request: Request):
+    if set(payload) != {'action', 'track'} or payload['action'] != 'less_like_this':
+        raise HTTPException(400, 'Choose less_like_this feedback for a track')
+    track = discovery_inputs.feedback_track(payload['track'])
+    key = repr(('spotify', track['spotify_id'], track.get('artist_id', ''))) if track.get('spotify_id') else repr(recommendation_identity(track))
+    try:
+        identity = db.add_discovery_feedback(_require_current_user(request)['id'], key, track)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
+    return {'feedback_id': identity}
+
+
+@app.delete('/discovery/feedback/{feedback_id}')
+def delete_discovery_feedback(feedback_id: str, request: Request):
+    if not db.delete_discovery_feedback(_require_current_user(request)['id'], feedback_id):
+        raise HTTPException(404, 'Discovery feedback not found')
+    return {'success': True}
+
+
+@app.post('/discovery/radio')
+def get_song_radio(payload: Dict, request: Request):
+    if set(payload) - {'seed', 'exclude', 'limit'} or 'seed' not in payload:
+        raise HTTPException(400, 'A radio seed track is required')
+    seed = discovery_inputs.track(payload['seed'])
+    excluded = payload.get('exclude', [])
+    limit = payload.get('limit', 20)
+    if not isinstance(excluded, list) or len(excluded) > 100:
+        raise HTTPException(400, 'Radio accepts up to 100 excluded tracks')
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 30:
+        raise HTTPException(400, 'Radio limit must be between 1 and 30')
+    excluded = [discovery_inputs.track(track) for track in excluded]
+    user_id, library, preferences, local, clean = _recommendation_context(request)
+    seed = clean(seed)
+    if seed is None:
+        raise HTTPException(400, 'A valid radio seed is required')
+    spotify_id, artist_id = seed.get('spotify_id'), seed.get('artist_id')
+    if not spotify_id and seed.get('url', '').startswith('https://open.spotify.com/track/'):
+        spotify_id = seed['url'].rsplit('/', 1)[-1]
+    # Metadata-only local recordings resolve at most one seed. A same-name
+    # artist or different recording must not silently become the radio seed.
+    if not spotify_id and not artist_id:
+        found = available(spotify_service.search_track, seed['title'], seed['artist'])
+        if isinstance(found, dict) and same_recommendation_recording(seed, found):
+            spotify_id = found.get('spotify_id') or found.get('id')
+            artist_id = found.get('artist_id')
+    if spotify_id:
+        seed['spotify_id'] = spotify_id
+    if artist_id:
+        seed['artist_id'] = artist_id
+    candidates = []
+    if spotify_id or artist_id:
+        candidates = available(spotify_service.get_recommendations,
+                               seed_tracks=[spotify_id] if spotify_id else None,
+                               seed_artists=[artist_id] if artist_id else None,
+                               limit=50)
+    # During a provider outage radio can continue through other recordings by
+    # its seed artist. Never fill it with unrelated liked/downloaded music.
+    related_local = [track for track in local if normalized(track.get('artist')) == normalized(seed['artist'])
+                     and not (artist_id and track.get('artist_id') and artist_id != track['artist_id'])]
+    cleaned = [track for candidate in candidates if (track := clean(candidate)) is not None]
+    tracks = preferences.discover(related_local + cleaned, limit=limit, exclude=[seed, *excluded],
+                                 strict_exclude=True,
+                                 day_seed=f"{user_id}:{datetime.now(timezone.utc).date().isoformat()}:radio:{recommendation_identity(seed)}")
+    result = {'tracks': tracks}
+    if not tracks:
+        result['message'] = 'No more related songs are available right now. Try another song or retry later.'
+    elif not candidates:
+        result['message'] = 'Playing related music from your library while the catalog is unavailable.'
+    return result
 
 
 @app.get("/recommendations/daily")
@@ -1877,7 +1997,7 @@ def get_daily_mix(request: Request):
 
 @app.get("/recommendations/for-you")
 def get_personalized_recommendations(request: Request):
-    return _personalized_tracks(request, 30)
+    return _personalized_tracks(request, 30, shelf='for-you')
 
 @app.get("/recommendations/new-releases")
 def get_new_releases(request: Request):
@@ -1897,15 +2017,13 @@ def get_new_releases(request: Request):
     return sorted(releases.values(), key=lambda item: item.get('release_date') or '', reverse=True)[:20]
 
 @app.get("/recommendations/genre/{genre}")
-def get_genre_content(genre: str):
-    """Get recommended tracks for a genre (using Spotify's recommendation engine)"""
-    try:
-        # Use genre recommendations instead of searching for user playlists
-        tracks = spotify_service.get_genre_recommendations(genre, limit=30)
-        return tracks
-    except Exception as e:
-        print(f"Error getting genre content: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+def get_genre_content(genre: str, request: Request):
+    """Apply the listener's discovery choices to supported genre search."""
+    user_id, _, preferences, _, clean = _recommendation_context(request)
+    tracks = available(spotify_service.get_genre_recommendations, genre, limit=30)
+    safe = [track for raw in tracks if (track := clean(raw)) is not None]
+    return preferences.discover(safe, limit=30,
+                                day_seed=f'{user_id}:{datetime.now(timezone.utc).date().isoformat()}:{genre}')
 
 @app.get("/recommendations/genre/{genre}/playlists")
 def get_genre_playlists(genre: str):
@@ -1995,6 +2113,7 @@ def get_made_for_you_mixes(request: Request):
         if tracks:
             tracks = preferences.discover(tracks, limit=15,
                                            day_seed=f'{user_id}:{datetime.now(timezone.utc).date().isoformat()}:{genre}')
+        if tracks:
             mixes.append({'id': f'mix_{genre.lower().replace(" ", "-")}', 'title': f'{genre.title()} Mix',
                           'genre': genre, 'tracks': tracks})
             used.extend(tracks)

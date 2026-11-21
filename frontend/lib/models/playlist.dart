@@ -76,6 +76,7 @@ class PlaylistTrack {
   final String? url; // For YouTube videos
   final String? thumbnail;
   final double? duration;
+  final String? spotifyId;
 
   PlaylistTrack({
     required this.id,
@@ -86,6 +87,7 @@ class PlaylistTrack {
     this.url,
     this.thumbnail,
     this.duration,
+    this.spotifyId,
   });
 
   Map<String, dynamic> toJson() {
@@ -98,6 +100,7 @@ class PlaylistTrack {
       'url': url,
       'thumbnail': thumbnail,
       'duration': duration,
+      if (spotifyId != null) 'spotify_id': spotifyId,
     };
   }
 
@@ -111,6 +114,7 @@ class PlaylistTrack {
       url: json['url'],
       thumbnail: json['thumbnail'],
       duration: json['duration']?.toDouble(),
+      spotifyId: json['spotify_id'] as String?,
     );
   }
 
@@ -124,6 +128,7 @@ class PlaylistTrack {
       filename: videoInfo.filename ?? '',
       url: videoInfo.url,
       thumbnail: videoInfo.thumbnail,
+      spotifyId: videoInfo.spotifyId,
       duration: videoInfo.duration is double
           ? videoInfo.duration
           : (videoInfo.duration?.toDouble()),

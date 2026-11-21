@@ -709,6 +709,7 @@ class VideoInfo {
   final String thumbnail;
   final String? filename;
   final String? album;
+  final String? spotifyId;
   final String? recordingType;
   final String? recordingLabel;
 
@@ -721,6 +722,7 @@ class VideoInfo {
     required this.thumbnail,
     this.filename,
     this.album,
+    this.spotifyId,
     this.recordingType,
     this.recordingLabel,
   });
@@ -735,6 +737,7 @@ class VideoInfo {
       thumbnail: json['thumbnail'] ?? '',
       filename: json['filename'] as String?,
       album: json['album'] as String?,
+      spotifyId: json['spotify_id'] as String?,
       recordingType: json['recording_type'] as String?,
       recordingLabel: json['recording_label'] as String?,
     );
@@ -749,6 +752,7 @@ class VideoInfo {
         thumbnail: track.thumbnail ?? '',
         filename: track.filename.isEmpty ? null : track.filename,
         album: track.album,
+        spotifyId: track.spotifyId,
       );
 
   String get formattedDuration {

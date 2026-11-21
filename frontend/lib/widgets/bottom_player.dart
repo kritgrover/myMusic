@@ -9,6 +9,7 @@ import 'save_track_button.dart';
 import '../services/saved_music_service.dart';
 import '../models/playlist.dart';
 import 'playback_settings_sheet.dart';
+import 'discovery_actions.dart';
 
 class BottomPlayer extends StatefulWidget {
   final AudioPlayerService playerService;
@@ -372,6 +373,19 @@ class _BottomPlayerState extends State<BottomPlayer> {
         tooltip: 'More player options',
         icon: const Icon(Icons.more_horiz),
         onSelected: (value) {
+          final track = _savedTrack;
+          if (track != null &&
+              (value == 'start_radio' || value == 'less_like_this')) {
+            final player = widget.playerStateService;
+            final currentItem =
+                player != null && (queue?.ownsCurrentPlayback(player) ?? false)
+                    ? queue?.currentItem
+                    : null;
+            if (handleDiscoveryAction(
+                context, value, currentItem ?? discoveryTrack(track))) {
+              return;
+            }
+          }
           switch (value) {
             case 'previous':
               _run(_previous);
@@ -414,6 +428,8 @@ class _BottomPlayerState extends State<BottomPlayer> {
           }
         },
         itemBuilder: (_) => [
+              if (_hasTrack && _savedTrack != null)
+                ...discoveryMenuItems(context),
               PopupMenuItem(
                   value: 'previous',
                   enabled: _hasTrack,

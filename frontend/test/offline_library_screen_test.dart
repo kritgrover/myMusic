@@ -110,7 +110,8 @@ class _Queue extends ChangeNotifier implements QueueService {
 
   @override
   Future<void> playItem(int index, PlayerStateService playerService,
-      {Future<String?> Function(QueueItem)? loadStreamingUrl}) async {
+      {Future<String?> Function(QueueItem)? loadStreamingUrl,
+      bool Function()? canStartPlayback}) async {
     playedIndex = index;
   }
 

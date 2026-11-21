@@ -93,6 +93,7 @@ class _AlbumDetailScreenState extends State<AlbumDetailScreen> {
                     ? t.thumbnail
                     : (album?.thumbnail ?? widget.coverUrl),
                 duration: t.duration,
+                spotifyId: t.spotifyId,
               ))
           .toList();
       if (mounted) {

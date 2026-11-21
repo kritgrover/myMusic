@@ -9,6 +9,7 @@ import '../services/api_service.dart';
 import '../services/playlist_service.dart';
 import '../models/playlist.dart';
 import '../services/track_playback_helper.dart';
+import '../widgets/discovery_actions.dart';
 
 class GenreScreen extends StatefulWidget {
   final String genre;
@@ -41,6 +42,8 @@ class _GenreScreenState extends State<GenreScreen> {
   final PlaylistService _playlistService = PlaylistService();
   List<PlaylistTrack> _tracks = [];
   bool _isLoading = true;
+  List<PlaylistTrack> get _visibleTracks =>
+      _tracks.where((track) => !recommendationHidden(context, track)).toList();
 
   @override
   void initState() {
@@ -91,23 +94,25 @@ class _GenreScreenState extends State<GenreScreen> {
       _playback.addToPlaylist(context, track);
 
   Future<void> _playAll() async {
-    if (_tracks.isEmpty) return;
+    final tracks = _visibleTracks;
+    if (tracks.isEmpty) return;
 
     // Play first track
-    await _playTrack(_tracks.first);
+    await _playTrack(tracks.first);
 
     // Add rest to queue (silently, without snackbar messages)
-    for (int i = 1; i < _tracks.length && i < 20; i++) {
-      await _addToQueue(_tracks[i], showSnackbar: false);
+    for (int i = 1; i < tracks.length && i < 20; i++) {
+      await _addToQueue(tracks[i], showSnackbar: false);
     }
   }
 
   Widget _buildContent() {
+    final tracks = _visibleTracks;
     if (_isLoading) {
       return const Center(child: CircularProgressIndicator());
     }
 
-    if (_tracks.isEmpty) {
+    if (tracks.isEmpty) {
       return Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -165,7 +170,7 @@ class _GenreScreenState extends State<GenreScreen> {
                 ),
                 const SizedBox(width: 8),
                 Text(
-                  '${_tracks.length} tracks',
+                  '${tracks.length} tracks',
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                         color: Theme.of(context)
                             .colorScheme
@@ -180,9 +185,9 @@ class _GenreScreenState extends State<GenreScreen> {
           Expanded(
             child: ListView.builder(
               padding: ResponsiveUtils.responsiveHorizontalPadding(context),
-              itemCount: _tracks.length,
+              itemCount: tracks.length,
               itemBuilder: (context, index) {
-                final track = _tracks[index];
+                final track = tracks[index];
                 return Card(
                   margin: const EdgeInsets.symmetric(vertical: 4.0),
                   child: ListTile(
@@ -249,6 +254,7 @@ class _GenreScreenState extends State<GenreScreen> {
                     trailing: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
+                        DiscoveryTrackMenu(track: track),
                         IconButton(
                           icon: const Icon(Icons.playlist_add),
                           tooltip: 'Add to playlist',

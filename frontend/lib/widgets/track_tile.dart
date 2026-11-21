@@ -4,6 +4,7 @@ import '../models/playlist.dart';
 import '../services/api_service.dart';
 import 'save_track_button.dart';
 import 'source_selection_dialog.dart';
+import 'discovery_actions.dart';
 
 /// A reusable track row (thumbnail + title/artist + play + overflow menu) used by
 /// the album and artist detail screens. Track metadata is already clean (Spotify),
@@ -115,6 +116,10 @@ class TrackTile extends StatelessWidget {
                     icon: const Icon(Icons.more_vert),
                     tooltip: 'More actions',
                     onSelected: (value) {
+                      if (handleDiscoveryAction(
+                          context, value, discoveryTrack(track))) {
+                        return;
+                      }
                       switch (value) {
                         case 'download':
                           onDownload();
@@ -141,6 +146,7 @@ class TrackTile extends StatelessWidget {
                       }
                     },
                     itemBuilder: (context) => [
+                      ...discoveryMenuItems(context),
                       const PopupMenuItem(
                         value: 'download',
                         child: Row(children: [

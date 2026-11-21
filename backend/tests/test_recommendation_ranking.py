@@ -301,7 +301,9 @@ class RecommendationRankingTests(unittest.TestCase):
             songs = self.client.get('/recommendations/daily', headers=self.headers).json()
         rotation = next(mix for mix in mixes if mix['id'] == 'mix_library')['tracks']
         self.assertFalse({t['title'] for t in rotation} & {t['title'] for t in songs})
-        self.assertTrue(all(track['title'].startswith('New ') for track in songs[:6]))
+        # Balanced mode now introduces some familiar songs, while the Home
+        # discovery shelf still favors new songs and never repeats Rotation.
+        self.assertGreaterEqual(sum(track['title'].startswith('New ') for track in songs[:6]), 4)
         genre_titles = [track['title'] for mix in mixes if mix['id'] != 'mix_library' for track in mix['tracks']]
         self.assertEqual(len(genre_titles), len(set(genre_titles)))
 

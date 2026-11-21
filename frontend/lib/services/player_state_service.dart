@@ -101,6 +101,7 @@ class PlayerStateService extends ChangeNotifier {
         filename: item.filename ?? '',
         url: source,
         thumbnail: item.thumbnail,
+        spotifyId: item.spotifyId,
         duration: _audioPlayerService.duration.inMilliseconds / 1000);
     _listening.start(
         title: item.displayTitle,
@@ -144,6 +145,7 @@ class PlayerStateService extends ChangeNotifier {
       filename: filename ?? '',
       url: item.originalUrl,
       thumbnail: item.thumbnail,
+      spotifyId: item.spotifyId,
       duration: duration.inMilliseconds / 1000,
     );
     _playbackError = null;
@@ -248,6 +250,7 @@ class PlayerStateService extends ChangeNotifier {
         album: album,
         duration: duration,
         filename: recoveredDownload ? '' : filename ?? '',
+        spotifyId: spotifyId,
         url: source == null ? null : ApiService.canonicalMediaUrl(source),
       );
       _listening.start(
@@ -392,6 +395,7 @@ class PlayerStateService extends ChangeNotifier {
               filename: '',
               url: track.url,
               thumbnail: track.thumbnail,
+              spotifyId: track.spotifyId,
               duration: track.duration);
         }
         await _audioPlayerService.resume();

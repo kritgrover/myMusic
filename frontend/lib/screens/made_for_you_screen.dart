@@ -1,5 +1,6 @@
 import '../services/auth_http_client.dart';
 import 'package:flutter/material.dart';
+import '../widgets/discovery_actions.dart';
 import '../utils/responsive_utils.dart';
 import '../services/player_state_service.dart';
 import '../services/queue_service.dart';
@@ -41,6 +42,10 @@ class _MadeForYouScreenState extends State<MadeForYouScreen> {
       widget.playlistService ?? PlaylistService();
 
   bool _isDownloaded(VideoInfo song) => (song.filename ?? '').isNotEmpty;
+  List<VideoInfo> get _visibleSongs => widget.songs
+      .where((song) =>
+          !recommendationHidden(context, PlaylistTrack.fromVideoInfo(song)))
+      .toList();
   TrackPlaybackHelper get _playback => TrackPlaybackHelper(
         apiService: _apiService,
         queueService: widget.queueService,
@@ -64,19 +69,21 @@ class _MadeForYouScreenState extends State<MadeForYouScreen> {
   }
 
   Future<void> _playAll() async {
-    if (widget.songs.isEmpty) return;
+    final songs = _visibleSongs;
+    if (songs.isEmpty) return;
 
     // Play first track
-    await _playTrack(widget.songs.first);
+    await _playTrack(songs.first);
 
     // Add rest to queue (silently, without snackbar messages)
-    for (int i = 1; i < widget.songs.length && i < 20; i++) {
-      await _addToQueue(widget.songs[i], showSnackbar: false);
+    for (int i = 1; i < songs.length && i < 20; i++) {
+      await _addToQueue(songs[i], showSnackbar: false);
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final songs = _visibleSongs;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -104,7 +111,7 @@ class _MadeForYouScreenState extends State<MadeForYouScreen> {
           ),
         ),
         // Content
-        if (widget.songs.isEmpty)
+        if (songs.isEmpty)
           Expanded(
             child: Center(
               child: Column(
@@ -161,7 +168,7 @@ class _MadeForYouScreenState extends State<MadeForYouScreen> {
                       ),
                       const SizedBox(width: 8),
                       Text(
-                        '${widget.songs.length} tracks',
+                        '${songs.length} tracks',
                         style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                               color: Theme.of(context)
                                   .colorScheme
@@ -177,9 +184,9 @@ class _MadeForYouScreenState extends State<MadeForYouScreen> {
                   child: ListView.builder(
                     padding:
                         ResponsiveUtils.responsiveHorizontalPadding(context),
-                    itemCount: widget.songs.length,
+                    itemCount: songs.length,
                     itemBuilder: (context, index) {
-                      final song = widget.songs[index];
+                      final song = songs[index];
                       return Card(
                         margin: const EdgeInsets.symmetric(vertical: 4.0),
                         child: InkWell(
@@ -276,6 +283,14 @@ class _MadeForYouScreenState extends State<MadeForYouScreen> {
                                       icon: const Icon(Icons.more_vert),
                                       tooltip: 'More actions',
                                       onSelected: (value) {
+                                        if (handleDiscoveryAction(
+                                            context,
+                                            value,
+                                            discoveryTrack(
+                                                PlaylistTrack.fromVideoInfo(
+                                                    song)))) {
+                                          return;
+                                        }
                                         switch (value) {
                                           case 'download':
                                             _downloadTrack(song);
@@ -289,6 +304,7 @@ class _MadeForYouScreenState extends State<MadeForYouScreen> {
                                         }
                                       },
                                       itemBuilder: (context) => [
+                                        ...discoveryMenuItems(context),
                                         PopupMenuItem(
                                           value: 'download',
                                           enabled: !_isDownloaded(song),

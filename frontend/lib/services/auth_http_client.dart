@@ -129,6 +129,17 @@ class AuthHttpClient {
     return response;
   }
 
+  Future<http.Response> patch(Uri url,
+      {Map<String, String>? headers, Object? body, Encoding? encoding}) async {
+    final session = cacheScope;
+    final requestHeaders = _headers(url, headers);
+    final response = await _client.patch(url,
+        headers: requestHeaders, body: body, encoding: encoding);
+    await _handleUnauthorized(
+        response, url, session, requestHeaders['Authorization']);
+    return response;
+  }
+
   Future<http.Response> delete(Uri url,
       {Map<String, String>? headers, Object? body, Encoding? encoding}) async {
     final session = cacheScope;

@@ -9,6 +9,7 @@ import '../services/saved_music_service.dart';
 import '../widgets/album_cover.dart';
 import '../widgets/playback_settings_sheet.dart';
 import '../widgets/save_track_button.dart';
+import '../widgets/discovery_actions.dart';
 
 /// A view of the existing listening session. Closing it never stops playback.
 class PlayerScreen extends StatefulWidget {
@@ -217,6 +218,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
               title: const Text('Now playing',
                   maxLines: 1, overflow: TextOverflow.ellipsis),
               actions: [
+                if (track != null &&
+                    DiscoveryActionScope.maybeOf(context) != null)
+                  DiscoveryTrackMenu(
+                    track: track,
+                    queueItem: widget.queue.ownsCurrentPlayback(widget.player)
+                        ? queued
+                        : null,
+                  ),
                 IconButton(
                   tooltip: 'Playback settings',
                   onPressed: () => showModalBottomSheet<void>(

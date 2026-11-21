@@ -51,6 +51,7 @@ class _Playlists extends Fake implements PlaylistService {
 void main() {
   final song = VideoInfo(
       id: 'owned-1',
+      spotifyId: '1234567890123456789012',
       title: 'Owned recording',
       uploader: 'Local artist',
       duration: 92,
@@ -77,6 +78,7 @@ void main() {
     await tester.tap(find.byTooltip('Play'));
     await tester.pumpAndSettle();
     expect(queue.played.single.filename, song.filename);
+    expect(queue.played.single.spotifyId, song.spotifyId);
     expect(queue.played.single.album, song.album);
     expect(queue.played.single.originalUrl, isNull);
     await tester.tap(find.byTooltip('More actions'));
@@ -84,6 +86,7 @@ void main() {
     await tester.tap(find.text('Add to queue'));
     await tester.pumpAndSettle();
     expect(queue.queued.single.filename, song.filename);
+    expect(queue.queued.single.spotifyId, song.spotifyId);
     expect(api.searches, 0);
   });
 

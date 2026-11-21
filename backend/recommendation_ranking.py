@@ -111,7 +111,7 @@ def merge_tracks(candidates):
 
 
 class ListeningPreferences:
-    def __init__(self, history, library, now=None):
+    def __init__(self, history, library, now=None, *, settings=None, feedback=()):
         self.tracks = defaultdict(float)
         self.artists = defaultdict(float)
         self.track_metadata = {}
@@ -120,6 +120,17 @@ class ListeningPreferences:
         self.heard = set()
         self.recent = set()
         self.catalog_tracks = []
+        self.seed_artists = list((settings or {}).get('seed_artists', []))
+        self.mode = (settings or {}).get('mode', 'balanced')
+        self.artist_cap = {'familiar': 4, 'balanced': 3, 'discover': 2}.get(self.mode, 3)
+        recent_days = {'familiar': 2, 'balanced': 7, 'discover': 14}.get(self.mode, 7)
+        self.dismissed = [row.get('track', row) for row in feedback if isinstance(row, dict)]
+        self.dismissed_by_catalog = defaultdict(list)
+        self.dismissed_by_metadata = defaultdict(list)
+        for track in self.dismissed:
+            if _catalog_id(track):
+                self.dismissed_by_catalog[_catalog_id(track)].append(track)
+            self.dismissed_by_metadata[recommendation_identity(track)].append(track)
         now = now or datetime.now(timezone.utc)
         for row in history:
             key = track_key(row['song_title'], row['artist'])
@@ -137,7 +148,7 @@ class ListeningPreferences:
             decay = 0.5 ** (age / 30)
             if is_qualified:
                 self.heard.add(key)
-                if age <= 7:
+                if age <= recent_days:
                     self.recent.add(key)
                 ratio = min(1, listened / duration) if duration else 0
                 score = 1 + min(2, listened / 180) + 0.75 * ratio
@@ -167,10 +178,25 @@ class ListeningPreferences:
             key = normalized(artist.get('name'))
             self.artists[key] += 3
             self.artist_metadata[key] = dict(artist)
+        for artist in self.seed_artists:
+            key = normalized(artist.get('name'))
+            self.artists[key] += 3
+            self.artist_metadata[key] = dict(artist)
+        # Explicit track feedback is stronger than passive skips, while the
+        # artist-level penalty stays gentle and does not hide their whole work.
+        penalties = defaultdict(int)
+        for track in self.dismissed:
+            penalties[normalized(track.get('artist'))] += 1
+        for artist, count in penalties.items():
+            self.artists[artist] -= min(3, count * 0.75)
+
+    def allows(self, track):
+        matches = self.dismissed_by_catalog.get(_catalog_id(track), []) + self.dismissed_by_metadata.get(recommendation_identity(track), [])
+        return not any(same_recommendation_recording(track, dismissed) for dismissed in matches)
 
     def top_tracks(self, limit=3):
         return [self.track_metadata[key] for key in sorted(self.tracks, key=lambda key: (-self.tracks[key], key))
-                if self.tracks[key] > 0 and key in self.track_metadata][:limit]
+                if self.tracks[key] > 0 and key in self.track_metadata and self.allows(self.track_metadata[key])][:limit]
 
     def top_artists(self, limit=5):
         return [self.artist_metadata[key] for key in sorted(self.artists, key=lambda key: (-self.artists[key], key))
@@ -181,7 +207,8 @@ class ListeningPreferences:
         return self.tracks[key] + self.artists[key[1]]
 
     def rank(self, candidates, limit=30):
-        return sorted(merge_tracks(candidates), key=lambda item: (-self.score(item), recommendation_identity(item)))[:limit]
+        return sorted((track for track in merge_tracks(candidates) if self.allows(track)),
+                      key=lambda item: (-self.score(item), recommendation_identity(item)))[:limit]
 
     def rotation(self, candidates, limit=15):
         """A familiar collection, leaving some local music for discovery fallback."""
@@ -192,14 +219,14 @@ class ListeningPreferences:
         size = min(limit, max(1, len(ranked) // 2))
         return ranked[:size]
 
-    def discover(self, candidates, *, limit=20, exclude=(), day_seed=''):
-        """Unheard music first, stable for a day, with a soft per-artist limit."""
-        candidates = merge_tracks(candidates)
+    def discover(self, candidates, *, limit=20, exclude=(), day_seed='', strict_exclude=False):
+        """Mix familiar/unheard music with recency and artist diversification."""
+        candidates = [track for track in merge_tracks(candidates) if self.allows(track)]
         excluded = list(exclude)
         fresh = [track for track in candidates if not any(same_recommendation_recording(track, previous)
                                                         for previous in excluded)]
         # Keep a one-song/offline library useful; otherwise never pad with Rotation.
-        pool = fresh or candidates
+        pool = fresh if strict_exclude else (fresh or candidates)
 
         def rank_key(track):
             key = track_key(track.get('title'), track.get('artist'))
@@ -210,10 +237,30 @@ class ListeningPreferences:
             return familiarity, -affinity, jitter
 
         ordered = sorted(pool, key=rank_key)
+        unheard, familiar, recent, skipped = [], [], [], []
+        for track in ordered:
+            key = track_key(track.get('title'), track.get('artist'))
+            target = (skipped if self.tracks[key] < 0 else recent if key in self.recent else
+                      familiar if key in self.heard or key in self.liked else unheard)
+            target.append(track)
+        if self.mode == 'familiar':
+            ordered = familiar + unheard + recent + skipped
+        elif self.mode == 'discover':
+            ordered = unheard + familiar + recent + skipped
+        else:
+            # A balanced shelf introduces two unfamiliar recordings per familiar
+            # selection, without promoting a song heard in the past week.
+            ordered = []
+            while unheard or familiar:
+                ordered.extend(unheard[:2])
+                del unheard[:2]
+                if familiar:
+                    ordered.append(familiar.pop(0))
+            ordered += recent + skipped
         selected, deferred, counts = [], [], defaultdict(int)
         for track in ordered:
             artist = normalized(track.get('artist'))
-            if counts[artist] >= 3:
+            if counts[artist] >= self.artist_cap:
                 deferred.append(track)
             else:
                 selected.append(track)
